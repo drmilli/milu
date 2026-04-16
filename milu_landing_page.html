@@ -1,0 +1,794 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Milu — AI Voice Customer Service for African Businesses</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=DM+Sans:ital,wght@0,300;0,400;0,500;1,300&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --ink: #0A0D14;
+    --ink-2: #1E2433;
+    --ink-3: #3A4157;
+    --fog: #F4F3EF;
+    --fog-2: #E8E6DF;
+    --fog-3: #D4D1C8;
+    --gold: #E8A832;
+    --gold-light: #F5C96B;
+    --gold-dark: #B07E1A;
+    --teal: #1ABDA0;
+    --teal-light: #4DCEBC;
+    --white: #FAFAF7;
+    --radius: 16px;
+  }
+
+  html { scroll-behavior: smooth; }
+
+  body {
+    font-family: 'DM Sans', sans-serif;
+    background: var(--fog);
+    color: var(--ink);
+    overflow-x: hidden;
+  }
+
+  /* NAV */
+  nav {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 20px 60px;
+    background: rgba(244, 243, 239, 0.85);
+    backdrop-filter: blur(16px);
+    border-bottom: 1px solid var(--fog-2);
+  }
+  .nav-logo {
+    font-family: 'Syne', sans-serif;
+    font-weight: 800; font-size: 24px;
+    color: var(--ink);
+    letter-spacing: -0.5px;
+  }
+  .nav-logo span { color: var(--gold); }
+  .nav-links { display: flex; gap: 36px; list-style: none; }
+  .nav-links a {
+    font-size: 15px; font-weight: 400; color: var(--ink-3);
+    text-decoration: none; transition: color 0.2s;
+  }
+  .nav-links a:hover { color: var(--ink); }
+  .nav-cta {
+    background: var(--ink); color: var(--white);
+    font-family: 'DM Sans', sans-serif; font-size: 14px; font-weight: 500;
+    padding: 10px 24px; border-radius: 100px; border: none;
+    cursor: pointer; transition: background 0.2s;
+    text-decoration: none;
+  }
+  .nav-cta:hover { background: var(--ink-2); }
+
+  /* HERO */
+  .hero {
+    min-height: 100vh;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    align-items: center;
+    padding: 120px 60px 80px;
+    gap: 60px;
+    position: relative;
+    overflow: hidden;
+  }
+  .hero::before {
+    content: '';
+    position: absolute;
+    top: -200px; right: -200px;
+    width: 600px; height: 600px;
+    background: radial-gradient(circle, rgba(232,168,50,0.12) 0%, transparent 70%);
+    pointer-events: none;
+  }
+  .hero::after {
+    content: '';
+    position: absolute;
+    bottom: -100px; left: 30%;
+    width: 400px; height: 400px;
+    background: radial-gradient(circle, rgba(26,189,160,0.08) 0%, transparent 70%);
+    pointer-events: none;
+  }
+
+  .hero-badge {
+    display: inline-flex; align-items: center; gap: 8px;
+    background: var(--white); border: 1px solid var(--fog-3);
+    border-radius: 100px; padding: 6px 14px 6px 6px;
+    font-size: 13px; font-weight: 500; color: var(--ink-3);
+    margin-bottom: 28px;
+  }
+  .hero-badge-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--teal);
+    animation: pulse 2s ease-in-out infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.6; transform: scale(0.8); }
+  }
+
+  .hero-title {
+    font-family: 'Syne', sans-serif;
+    font-size: clamp(44px, 5.5vw, 72px);
+    font-weight: 800;
+    line-height: 1.05;
+    letter-spacing: -2px;
+    color: var(--ink);
+    margin-bottom: 24px;
+  }
+  .hero-title .accent { color: var(--gold); }
+  .hero-title .line-2 {
+    display: block;
+    color: var(--ink-3);
+    font-weight: 600;
+  }
+
+  .hero-sub {
+    font-size: 18px; font-weight: 300; line-height: 1.7;
+    color: var(--ink-3); max-width: 480px; margin-bottom: 40px;
+  }
+
+  .hero-actions { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+  .btn-primary {
+    background: var(--gold); color: var(--ink);
+    font-family: 'DM Sans', sans-serif; font-size: 16px; font-weight: 500;
+    padding: 14px 32px; border-radius: 100px; border: none;
+    cursor: pointer; transition: all 0.2s; text-decoration: none;
+    display: inline-block;
+  }
+  .btn-primary:hover { background: var(--gold-light); transform: translateY(-1px); }
+  .btn-ghost {
+    background: transparent; color: var(--ink);
+    font-family: 'DM Sans', sans-serif; font-size: 15px; font-weight: 400;
+    border: 1.5px solid var(--fog-3); padding: 14px 28px;
+    border-radius: 100px; cursor: pointer; transition: all 0.2s;
+    text-decoration: none; display: inline-block;
+  }
+  .btn-ghost:hover { border-color: var(--ink-3); }
+
+  /* HERO VISUAL */
+  .hero-visual { position: relative; }
+  .phone-card {
+    background: var(--ink);
+    border-radius: 24px;
+    padding: 32px;
+    color: var(--white);
+    position: relative;
+    overflow: hidden;
+    box-shadow: 0 40px 80px rgba(10,13,20,0.25);
+    animation: float 4s ease-in-out infinite;
+  }
+  @keyframes float {
+    0%, 100% { transform: translateY(0px); }
+    50% { transform: translateY(-10px); }
+  }
+  .phone-card::before {
+    content: '';
+    position: absolute; top: 0; right: 0;
+    width: 200px; height: 200px;
+    background: radial-gradient(circle at top right, rgba(232,168,50,0.15) 0%, transparent 60%);
+  }
+  .card-header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 28px;
+  }
+  .card-logo {
+    font-family: 'Syne', sans-serif; font-weight: 800; font-size: 18px;
+  }
+  .card-logo span { color: var(--gold); }
+  .call-indicator {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 12px; color: var(--teal-light);
+    font-weight: 500;
+  }
+  .call-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--teal);
+    animation: pulse 1.5s ease-in-out infinite;
+  }
+  .transcript {
+    display: flex; flex-direction: column; gap: 16px;
+    margin-bottom: 28px;
+  }
+  .msg {
+    font-size: 14px; line-height: 1.55;
+    max-width: 85%;
+  }
+  .msg-caller {
+    align-self: flex-start;
+    background: rgba(255,255,255,0.08);
+    border-radius: 0 14px 14px 14px;
+    padding: 10px 14px;
+    color: rgba(255,255,255,0.75);
+  }
+  .msg-milu {
+    align-self: flex-end;
+    background: var(--gold);
+    color: var(--ink);
+    border-radius: 14px 0 14px 14px;
+    padding: 10px 14px;
+    font-weight: 500;
+  }
+  .msg-label {
+    font-size: 11px; font-weight: 500; opacity: 0.5;
+    margin-bottom: 4px; letter-spacing: 0.5px;
+    text-transform: uppercase;
+  }
+  .card-stats {
+    display: grid; grid-template-columns: 1fr 1fr 1fr;
+    gap: 12px; border-top: 1px solid rgba(255,255,255,0.08); padding-top: 20px;
+  }
+  .stat-item { text-align: center; }
+  .stat-num {
+    font-family: 'Syne', sans-serif; font-size: 22px; font-weight: 700;
+    color: var(--gold);
+  }
+  .stat-label { font-size: 11px; color: rgba(255,255,255,0.4); margin-top: 2px; }
+
+  .floating-tag {
+    position: absolute;
+    background: var(--white); border: 1px solid var(--fog-2);
+    border-radius: 12px; padding: 10px 16px;
+    font-size: 13px; font-weight: 500; color: var(--ink);
+    box-shadow: 0 8px 24px rgba(10,13,20,0.1);
+    white-space: nowrap;
+  }
+  .tag-1 { top: -20px; left: -40px; animation: float 3.5s ease-in-out infinite; }
+  .tag-2 { bottom: 40px; left: -60px; animation: float 4.5s ease-in-out infinite 0.5s; }
+  .tag-icon { margin-right: 6px; }
+
+  /* LOGOS */
+  .logos-section {
+    padding: 40px 60px;
+    border-top: 1px solid var(--fog-2);
+    border-bottom: 1px solid var(--fog-2);
+    background: var(--white);
+  }
+  .logos-label {
+    text-align: center; font-size: 13px; font-weight: 400;
+    color: var(--ink-3); margin-bottom: 24px; letter-spacing: 0.3px;
+  }
+  .logos-row {
+    display: flex; align-items: center; justify-content: center;
+    gap: 48px; flex-wrap: wrap;
+  }
+  .logo-item {
+    font-family: 'Syne', sans-serif; font-weight: 700; font-size: 16px;
+    color: var(--fog-3); letter-spacing: -0.5px;
+    transition: color 0.2s;
+  }
+  .logo-item:hover { color: var(--ink-3); }
+
+  /* HOW IT WORKS */
+  .section { padding: 100px 60px; }
+  .section-label {
+    font-size: 12px; font-weight: 600; letter-spacing: 2px;
+    text-transform: uppercase; color: var(--gold-dark);
+    margin-bottom: 16px;
+  }
+  .section-title {
+    font-family: 'Syne', sans-serif;
+    font-size: clamp(32px, 4vw, 52px);
+    font-weight: 800; line-height: 1.1;
+    letter-spacing: -1.5px; color: var(--ink);
+    margin-bottom: 20px;
+  }
+  .section-sub {
+    font-size: 17px; font-weight: 300; line-height: 1.7;
+    color: var(--ink-3); max-width: 520px; margin-bottom: 60px;
+  }
+
+  .steps-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 24px;
+    position: relative;
+  }
+  .steps-grid::before {
+    content: '';
+    position: absolute; top: 40px; left: 10%; right: 10%;
+    height: 1px; background: var(--fog-2); z-index: 0;
+  }
+  .step-card {
+    background: var(--white);
+    border: 1px solid var(--fog-2);
+    border-radius: var(--radius);
+    padding: 28px 24px;
+    position: relative; z-index: 1;
+    transition: border-color 0.2s, transform 0.2s;
+  }
+  .step-card:hover { border-color: var(--gold); transform: translateY(-4px); }
+  .step-num {
+    font-family: 'Syne', sans-serif; font-size: 13px; font-weight: 700;
+    color: var(--white); background: var(--gold); width: 32px; height: 32px;
+    border-radius: 50%; display: flex; align-items: center; justify-content: center;
+    margin-bottom: 20px;
+  }
+  .step-title {
+    font-family: 'Syne', sans-serif; font-size: 17px; font-weight: 700;
+    color: var(--ink); margin-bottom: 10px;
+  }
+  .step-body { font-size: 14px; line-height: 1.65; color: var(--ink-3); font-weight: 300; }
+
+  /* FEATURES */
+  .features-section { background: var(--ink); color: var(--white); }
+  .features-section .section-title { color: var(--white); }
+  .features-section .section-sub { color: rgba(255,255,255,0.55); }
+  .features-section .section-label { color: var(--gold); }
+
+  .features-grid {
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 2px;
+    background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.08);
+    border-radius: var(--radius); overflow: hidden;
+  }
+  .feature-cell {
+    padding: 40px 32px;
+    background: var(--ink-2);
+    transition: background 0.2s;
+  }
+  .feature-cell:hover { background: var(--ink-3); }
+  .feature-icon {
+    width: 44px; height: 44px; border-radius: 12px;
+    background: rgba(232,168,50,0.15); border: 1px solid rgba(232,168,50,0.25);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 20px; margin-bottom: 20px;
+  }
+  .feature-title {
+    font-family: 'Syne', sans-serif; font-size: 17px; font-weight: 700;
+    color: var(--white); margin-bottom: 10px;
+  }
+  .feature-body { font-size: 14px; line-height: 1.7; color: rgba(255,255,255,0.5); font-weight: 300; }
+
+  /* PRICING */
+  .pricing-grid {
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px;
+  }
+  .price-card {
+    background: var(--white); border: 1.5px solid var(--fog-2);
+    border-radius: var(--radius); padding: 36px 28px;
+    position: relative; transition: border-color 0.2s, transform 0.2s;
+  }
+  .price-card:hover { transform: translateY(-4px); }
+  .price-card.featured {
+    border-color: var(--gold); background: var(--ink);
+    color: var(--white);
+  }
+  .featured-badge {
+    position: absolute; top: -14px; left: 50%; transform: translateX(-50%);
+    background: var(--gold); color: var(--ink);
+    font-size: 12px; font-weight: 600; padding: 4px 16px;
+    border-radius: 100px; white-space: nowrap;
+  }
+  .plan-name {
+    font-family: 'Syne', sans-serif; font-size: 14px; font-weight: 600;
+    letter-spacing: 1.5px; text-transform: uppercase;
+    color: var(--ink-3); margin-bottom: 12px;
+  }
+  .price-card.featured .plan-name { color: rgba(255,255,255,0.55); }
+  .plan-price {
+    font-family: 'Syne', sans-serif; font-size: 42px; font-weight: 800;
+    line-height: 1; color: var(--ink); margin-bottom: 4px;
+  }
+  .price-card.featured .plan-price { color: var(--white); }
+  .plan-price sup { font-size: 20px; vertical-align: super; }
+  .plan-cadence {
+    font-size: 13px; color: var(--ink-3); margin-bottom: 28px;
+  }
+  .price-card.featured .plan-cadence { color: rgba(255,255,255,0.45); }
+  .plan-features { list-style: none; margin-bottom: 32px; display: flex; flex-direction: column; gap: 12px; }
+  .plan-feature {
+    font-size: 14px; color: var(--ink-3);
+    display: flex; align-items: flex-start; gap: 10px; line-height: 1.4;
+  }
+  .price-card.featured .plan-feature { color: rgba(255,255,255,0.65); }
+  .check { color: var(--teal); font-size: 16px; flex-shrink: 0; }
+  .btn-plan {
+    width: 100%; padding: 14px; border-radius: 100px;
+    font-family: 'DM Sans', sans-serif; font-size: 15px; font-weight: 500;
+    cursor: pointer; border: 1.5px solid var(--fog-3);
+    background: transparent; color: var(--ink); transition: all 0.2s;
+  }
+  .btn-plan:hover { border-color: var(--ink); }
+  .price-card.featured .btn-plan {
+    background: var(--gold); border-color: var(--gold); color: var(--ink);
+  }
+  .price-card.featured .btn-plan:hover { background: var(--gold-light); }
+
+  /* TESTIMONIALS */
+  .testimonials-section { background: var(--fog-2); }
+  .testi-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; }
+  .testi-card {
+    background: var(--white); border-radius: var(--radius);
+    border: 1px solid var(--fog-3); padding: 32px 28px;
+  }
+  .testi-quote {
+    font-size: 15px; line-height: 1.75; color: var(--ink-2);
+    font-weight: 300; margin-bottom: 24px; font-style: italic;
+  }
+  .testi-author { display: flex; align-items: center; gap: 12px; }
+  .testi-avatar {
+    width: 40px; height: 40px; border-radius: 50%;
+    background: var(--gold); display: flex; align-items: center;
+    justify-content: center; font-family: 'Syne', sans-serif;
+    font-weight: 700; font-size: 14px; color: var(--ink); flex-shrink: 0;
+  }
+  .testi-name { font-weight: 500; font-size: 14px; color: var(--ink); }
+  .testi-biz { font-size: 12px; color: var(--ink-3); }
+
+  /* CTA SECTION */
+  .cta-section {
+    background: var(--ink);
+    text-align: center;
+    padding: 120px 60px;
+    position: relative; overflow: hidden;
+  }
+  .cta-section::before {
+    content: '';
+    position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    width: 800px; height: 400px;
+    background: radial-gradient(ellipse, rgba(232,168,50,0.12) 0%, transparent 70%);
+    pointer-events: none;
+  }
+  .cta-title {
+    font-family: 'Syne', sans-serif; font-size: clamp(36px, 5vw, 64px);
+    font-weight: 800; line-height: 1.05; letter-spacing: -2px;
+    color: var(--white); margin-bottom: 20px;
+  }
+  .cta-title .accent { color: var(--gold); }
+  .cta-sub {
+    font-size: 17px; font-weight: 300; color: rgba(255,255,255,0.55);
+    margin-bottom: 40px; max-width: 480px; margin-left: auto; margin-right: auto;
+    line-height: 1.7;
+  }
+  .cta-actions { display: flex; justify-content: center; gap: 16px; flex-wrap: wrap; }
+  .btn-cta-primary {
+    background: var(--gold); color: var(--ink);
+    font-family: 'DM Sans', sans-serif; font-size: 16px; font-weight: 500;
+    padding: 16px 40px; border-radius: 100px; border: none;
+    cursor: pointer; transition: all 0.2s; text-decoration: none; display: inline-block;
+  }
+  .btn-cta-primary:hover { background: var(--gold-light); transform: translateY(-2px); }
+  .btn-cta-ghost {
+    background: transparent; color: rgba(255,255,255,0.7);
+    font-family: 'DM Sans', sans-serif; font-size: 15px; font-weight: 400;
+    border: 1.5px solid rgba(255,255,255,0.2); padding: 16px 32px;
+    border-radius: 100px; cursor: pointer; transition: all 0.2s;
+    text-decoration: none; display: inline-block;
+  }
+  .btn-cta-ghost:hover { border-color: rgba(255,255,255,0.5); color: var(--white); }
+
+  /* FOOTER */
+  footer {
+    background: var(--ink-2); color: rgba(255,255,255,0.45);
+    padding: 48px 60px; font-size: 14px;
+    display: flex; align-items: center; justify-content: space-between;
+    flex-wrap: wrap; gap: 20px;
+  }
+  .footer-logo { font-family: 'Syne', sans-serif; font-weight: 800; font-size: 18px; color: var(--white); }
+  .footer-logo span { color: var(--gold); }
+  .footer-links { display: flex; gap: 28px; }
+  .footer-links a { color: rgba(255,255,255,0.45); text-decoration: none; transition: color 0.2s; }
+  .footer-links a:hover { color: var(--white); }
+  .footer-copy { font-size: 13px; }
+
+  /* ANIMATIONS ON SCROLL */
+  [data-reveal] { opacity: 0; transform: translateY(24px); transition: opacity 0.6s ease, transform 0.6s ease; }
+  [data-reveal].visible { opacity: 1; transform: translateY(0); }
+  [data-reveal-delay="1"] { transition-delay: 0.1s; }
+  [data-reveal-delay="2"] { transition-delay: 0.2s; }
+  [data-reveal-delay="3"] { transition-delay: 0.3s; }
+  [data-reveal-delay="4"] { transition-delay: 0.4s; }
+
+  @media (max-width: 900px) {
+    nav { padding: 16px 24px; }
+    .nav-links { display: none; }
+    .hero { grid-template-columns: 1fr; padding: 100px 24px 60px; }
+    .hero-visual { display: none; }
+    .section { padding: 60px 24px; }
+    .steps-grid, .features-grid, .pricing-grid, .testi-grid { grid-template-columns: 1fr; }
+    .steps-grid::before { display: none; }
+    .features-grid { border: none; background: transparent; gap: 16px; }
+    .feature-cell { border: 1px solid rgba(255,255,255,0.08); border-radius: var(--radius); }
+    .logos-section { padding: 32px 24px; }
+    .cta-section { padding: 80px 24px; }
+    footer { padding: 32px 24px; flex-direction: column; text-align: center; }
+  }
+</style>
+</head>
+<body>
+
+<!-- NAV -->
+<nav>
+  <div class="nav-logo">milu<span>.</span></div>
+  <ul class="nav-links">
+    <li><a href="#how">How it works</a></li>
+    <li><a href="#features">Features</a></li>
+    <li><a href="#pricing">Pricing</a></li>
+    <li><a href="#docs">Docs</a></li>
+  </ul>
+  <a href="#pricing" class="nav-cta">Start free trial</a>
+</nav>
+
+<!-- HERO -->
+<section class="hero">
+  <div class="hero-content">
+    <div class="hero-badge">
+      <div class="hero-badge-dot"></div>
+      Now live across Nigeria
+    </div>
+    <h1 class="hero-title">
+      Every call,<br>
+      <span class="accent">answered.</span>
+      <span class="line-2">Every customer,<br>kept.</span>
+    </h1>
+    <p class="hero-sub">
+      Milu is an AI voice agent that picks up every inbound call for your business — 24/7 — books appointments, answers questions, and hands off to you only when it truly needs to.
+    </p>
+    <div class="hero-actions">
+      <a href="#pricing" class="btn-primary">Get started free</a>
+      <a href="#how" class="btn-ghost">See how it works →</a>
+    </div>
+  </div>
+
+  <div class="hero-visual">
+    <div class="floating-tag tag-1">
+      <span class="tag-icon">📞</span> Incoming call — Emeka O.
+    </div>
+    <div class="phone-card">
+      <div class="card-header">
+        <div class="card-logo">milu<span>.</span></div>
+        <div class="call-indicator">
+          <div class="call-dot"></div>
+          Live call · 0:42
+        </div>
+      </div>
+      <div class="transcript">
+        <div class="msg msg-caller">
+          <div class="msg-label">Caller</div>
+          Hello, I want to book a delivery for tomorrow morning to Lekki.
+        </div>
+        <div class="msg msg-milu">
+          <div class="msg-label">Milu</div>
+          Sure! What time works best — before or after 10am?
+        </div>
+        <div class="msg msg-caller">
+          <div class="msg-label">Caller</div>
+          Before 10 please. And how much for Lekki Phase 1?
+        </div>
+        <div class="msg msg-milu">
+          <div class="msg-label">Milu</div>
+          That's ₦4,500. I've booked you in for 8:30am tomorrow. You'll get a confirmation SMS now.
+        </div>
+      </div>
+      <div class="card-stats">
+        <div class="stat-item">
+          <div class="stat-num">100%</div>
+          <div class="stat-label">Calls answered</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-num">0.8s</div>
+          <div class="stat-label">Response time</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-num">73%</div>
+          <div class="stat-label">Resolved by AI</div>
+        </div>
+      </div>
+    </div>
+    <div class="floating-tag tag-2">
+      ✅ Booking confirmed · sent to owner
+    </div>
+  </div>
+</section>
+
+<!-- LOGOS -->
+<div class="logos-section">
+  <p class="logos-label">Trusted by businesses across Lagos, Abuja, and Port Harcourt</p>
+  <div class="logos-row">
+    <div class="logo-item">QuickDelivery NG</div>
+    <div class="logo-item">Salon by Temi</div>
+    <div class="logo-item">MedFirst Clinic</div>
+    <div class="logo-item">AutoFix Lagos</div>
+    <div class="logo-item">FreshBox Grocers</div>
+  </div>
+</div>
+
+<!-- HOW IT WORKS -->
+<section class="section" id="how">
+  <p class="section-label" data-reveal>How Milu works</p>
+  <h2 class="section-title" data-reveal>From signup to<br>live in 30 minutes</h2>
+  <p class="section-sub" data-reveal>No engineers needed. No call centre to set up. Just tell Milu about your business and it handles the rest.</p>
+
+  <div class="steps-grid">
+    <div class="step-card" data-reveal data-reveal-delay="1">
+      <div class="step-num">1</div>
+      <div class="step-title">Connect your number</div>
+      <p class="step-body">Get a new local Nigerian number instantly, or port your existing business line to Milu in under a day.</p>
+    </div>
+    <div class="step-card" data-reveal data-reveal-delay="2">
+      <div class="step-num">2</div>
+      <div class="step-title">Train your agent</div>
+      <p class="step-body">Tell Milu your business name, services, prices, and top FAQs. It learns in minutes — no coding, no CSV uploads.</p>
+    </div>
+    <div class="step-card" data-reveal data-reveal-delay="3">
+      <div class="step-num">3</div>
+      <div class="step-title">Test, then go live</div>
+      <p class="step-body">Call your own number and hear exactly how Milu sounds. Adjust anything you want, then flip the switch.</p>
+    </div>
+    <div class="step-card" data-reveal data-reveal-delay="4">
+      <div class="step-num">4</div>
+      <div class="step-title">Watch your dashboard</div>
+      <p class="step-body">Every call logged, every question recorded. See what customers are asking and what Milu resolved — in real time.</p>
+    </div>
+  </div>
+</section>
+
+<!-- FEATURES -->
+<section class="section features-section" id="features">
+  <p class="section-label" data-reveal>Built for Nigeria</p>
+  <h2 class="section-title" data-reveal>Everything your<br>phone line was missing</h2>
+  <p class="section-sub" data-reveal>Milu is not a chatbot. It's a voice-first AI built for how Nigerian customers actually communicate.</p>
+
+  <div class="features-grid">
+    <div class="feature-cell" data-reveal>
+      <div class="feature-icon">🎙️</div>
+      <div class="feature-title">Nigerian accent ready</div>
+      <p class="feature-body">Trained on Nigerian English, Pidgin phrases, and regional greeting styles. Understands your customers the first time.</p>
+    </div>
+    <div class="feature-cell" data-reveal data-reveal-delay="1">
+      <div class="feature-icon">📅</div>
+      <div class="feature-title">Automatic bookings</div>
+      <p class="feature-body">Milu books appointments, logs them to your dashboard, and sends the customer a confirmation SMS — without you lifting a finger.</p>
+    </div>
+    <div class="feature-cell" data-reveal data-reveal-delay="2">
+      <div class="feature-icon">🔁</div>
+      <div class="feature-title">Smart escalation</div>
+      <p class="feature-body">When a call is too complex, Milu transfers to your phone and sends you a WhatsApp summary of the full conversation so far.</p>
+    </div>
+    <div class="feature-cell" data-reveal>
+      <div class="feature-icon">📊</div>
+      <div class="feature-title">Real-time analytics</div>
+      <p class="feature-body">Track calls received, resolution rates, peak hours, and common customer questions — all in one clean dashboard.</p>
+    </div>
+    <div class="feature-cell" data-reveal data-reveal-delay="1">
+      <div class="feature-icon">🌙</div>
+      <div class="feature-title">24 / 7 coverage</div>
+      <p class="feature-body">Milu never sleeps. Calls at 2am on a Sunday are answered the same as Monday morning. Zero missed opportunities.</p>
+    </div>
+    <div class="feature-cell" data-reveal data-reveal-delay="2">
+      <div class="feature-icon">🔐</div>
+      <div class="feature-title">Private by design</div>
+      <p class="feature-body">Call transcripts stored securely. You control what Milu knows and can delete any record from your dashboard at any time.</p>
+    </div>
+  </div>
+</section>
+
+<!-- PRICING -->
+<section class="section" id="pricing">
+  <p class="section-label" data-reveal>Simple pricing</p>
+  <h2 class="section-title" data-reveal>Pay for what<br>your business needs</h2>
+  <p class="section-sub" data-reveal>All plans include a 14-day free trial. No credit card required to start.</p>
+
+  <div class="pricing-grid">
+    <div class="price-card" data-reveal>
+      <div class="plan-name">Starter</div>
+      <div class="plan-price"><sup>₦</sup>15,000</div>
+      <div class="plan-cadence">per month</div>
+      <ul class="plan-features">
+        <li class="plan-feature"><span class="check">✓</span> 300 minutes included</li>
+        <li class="plan-feature"><span class="check">✓</span> 2 concurrent calls</li>
+        <li class="plan-feature"><span class="check">✓</span> Basic dashboard</li>
+        <li class="plan-feature"><span class="check">✓</span> Email support</li>
+        <li class="plan-feature"><span class="check">✓</span> ₦25 per extra minute</li>
+      </ul>
+      <button class="btn-plan">Start free trial</button>
+    </div>
+
+    <div class="price-card featured" data-reveal data-reveal-delay="1">
+      <div class="featured-badge">Most popular</div>
+      <div class="plan-name">Growth</div>
+      <div class="plan-price"><sup>₦</sup>35,000</div>
+      <div class="plan-cadence">per month</div>
+      <ul class="plan-features">
+        <li class="plan-feature"><span class="check">✓</span> 1,000 minutes included</li>
+        <li class="plan-feature"><span class="check">✓</span> 5 concurrent calls</li>
+        <li class="plan-feature"><span class="check">✓</span> Full analytics dashboard</li>
+        <li class="plan-feature"><span class="check">✓</span> WhatsApp notifications</li>
+        <li class="plan-feature"><span class="check">✓</span> Chat + email support</li>
+        <li class="plan-feature"><span class="check">✓</span> ₦20 per extra minute</li>
+      </ul>
+      <button class="btn-plan">Start free trial</button>
+    </div>
+
+    <div class="price-card" data-reveal data-reveal-delay="2">
+      <div class="plan-name">Pro</div>
+      <div class="plan-price"><sup>₦</sup>75,000</div>
+      <div class="plan-cadence">per month</div>
+      <ul class="plan-features">
+        <li class="plan-feature"><span class="check">✓</span> 3,000 minutes included</li>
+        <li class="plan-feature"><span class="check">✓</span> 10 concurrent calls</li>
+        <li class="plan-feature"><span class="check">✓</span> Full analytics + API access</li>
+        <li class="plan-feature"><span class="check">✓</span> CRM webhook integration</li>
+        <li class="plan-feature"><span class="check">✓</span> Dedicated account manager</li>
+        <li class="plan-feature"><span class="check">✓</span> ₦15 per extra minute</li>
+      </ul>
+      <button class="btn-plan">Start free trial</button>
+    </div>
+  </div>
+</section>
+
+<!-- TESTIMONIALS -->
+<section class="section testimonials-section">
+  <p class="section-label" data-reveal>What businesses say</p>
+  <h2 class="section-title" data-reveal>Real results,<br>real businesses</h2>
+
+  <div class="testi-grid">
+    <div class="testi-card" data-reveal>
+      <p class="testi-quote">"We used to miss at least 15 calls a day because our dispatch team was always busy. Milu answered everything. We recovered two major clients we had lost the week before."</p>
+      <div class="testi-author">
+        <div class="testi-avatar">CO</div>
+        <div>
+          <div class="testi-name">Chukwuemeka Obi</div>
+          <div class="testi-biz">QuickDelivery NG, Lagos</div>
+        </div>
+      </div>
+    </div>
+    <div class="testi-card" data-reveal data-reveal-delay="1">
+      <p class="testi-quote">"My salon is busy from morning to night. I couldn't answer calls while doing someone's hair. Milu books appointments by itself now. My booking rate went up by 40%."</p>
+      <div class="testi-author">
+        <div class="testi-avatar">TF</div>
+        <div>
+          <div class="testi-name">Temitope Fasanya</div>
+          <div class="testi-biz">Salon by Temi, Abuja</div>
+        </div>
+      </div>
+    </div>
+    <div class="testi-card" data-reveal data-reveal-delay="2">
+      <p class="testi-quote">"Our front desk was spending 60% of their time answering the same three questions. Milu handles all of that now. Our staff finally focuses on patients in front of them."</p>
+      <div class="testi-author">
+        <div class="testi-avatar">AE</div>
+        <div>
+          <div class="testi-name">Dr. Adaeze Eze</div>
+          <div class="testi-biz">MedFirst Clinic, Port Harcourt</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- CTA -->
+<section class="cta-section">
+  <h2 class="cta-title" data-reveal>Stop missing calls.<br><span class="accent">Start with Milu.</span></h2>
+  <p class="cta-sub" data-reveal>14-day free trial. No credit card. Live in 30 minutes.</p>
+  <div class="cta-actions" data-reveal>
+    <a href="#" class="btn-cta-primary">Get started free</a>
+    <a href="#" class="btn-cta-ghost">Talk to our team</a>
+  </div>
+</section>
+
+<!-- FOOTER -->
+<footer>
+  <div class="footer-logo">milu<span>.</span></div>
+  <div class="footer-links">
+    <a href="#">Privacy</a>
+    <a href="#">Terms</a>
+    <a href="#">Docs</a>
+    <a href="#">Blog</a>
+    <a href="#">Contact</a>
+  </div>
+  <div class="footer-copy">© 2026 Milu Technologies. All rights reserved.</div>
+</footer>
+
+<script>
+  const reveals = document.querySelectorAll('[data-reveal]');
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach(e => { if (e.isIntersecting) { e.target.classList.add('visible'); observer.unobserve(e.target); } });
+  }, { threshold: 0.1 });
+  reveals.forEach(el => observer.observe(el));
+</script>
+</body>
+</html>

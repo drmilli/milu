@@ -1,0 +1,59 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: milu
+      POSTGRES_PASSWORD: milu
+      POSTGRES_DB: milu
+    ports:
+      - '5432:5432'
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - '6379:6379'
+    volumes:
+      - redis_data:/data
+
+  api:
+    build:
+      context: ..
+      dockerfile: infra/docker/Dockerfile.api
+    ports:
+      - '4000:4000'
+    env_file:
+      - ../.env
+    depends_on:
+      - postgres
+      - redis
+
+  dashboard:
+    build:
+      context: ..
+      dockerfile: infra/docker/Dockerfile.dashboard
+    ports:
+      - '3000:3000'
+    env_file:
+      - ../.env
+
+  admin:
+    build:
+      context: ..
+      dockerfile: infra/docker/Dockerfile.admin
+    ports:
+      - '3002:3002'
+    env_file:
+      - ../.env
+
+  website:
+    build:
+      context: ..
+      dockerfile: infra/docker/Dockerfile.website
+    ports:
+      - '3003:3003'
+
+volumes:
+  postgres_data:
+  redis_data:

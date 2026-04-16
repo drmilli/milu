@@ -1,0 +1,136 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum SubscriptionTier {
+  STARTER
+  GROWTH
+  ENTERPRISE
+}
+
+enum CallStatus {
+  ACTIVE
+  COMPLETED
+  FAILED
+}
+
+enum Resolution {
+  AI
+  HUMAN
+  ABANDONED
+}
+
+enum Intent {
+  FAQ
+  BOOKING
+  ORDER_STATUS
+  COMPLAINT
+  ESCALATE
+  UNKNOWN
+}
+
+enum UserRole {
+  OWNER
+  ADMIN
+}
+
+model Business {
+  id               String           @id @default(cuid())
+  name             String
+  industry         String?
+  subscriptionTier SubscriptionTier @default(STARTER)
+  config           Json             @default("{}")
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  phoneNumbers PhoneNumber[]
+  knowledgeBase KnowledgeBase?
+  calls        Call[]
+  users        User[]
+
+  @@map("businesses")
+}
+
+model PhoneNumber {
+  id         String   @id @default(cuid())
+  number     String   @unique
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now())
+
+  @@map("phone_numbers")
+}
+
+model KnowledgeBase {
+  id             String   @id @default(cuid())
+  businessId     String   @unique
+  business       Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  businessName   String
+  operatingHours Json     @default("{}")
+  faqs           Json     @default("[]")
+  escalationNumber String?
+  voiceId        String?
+  updatedAt      DateTime @updatedAt
+
+  @@map("knowledge_base")
+}
+
+model Call {
+  id           String     @id @default(cuid())
+  businessId   String
+  business     Business   @relation(fields: [businessId], references: [id])
+  callerNumber String
+  status       CallStatus @default(ACTIVE)
+  resolution   Resolution?
+  intent       Intent?
+  duration     Int?       // seconds
+  recordingUrl String?
+  startedAt    DateTime   @default(now())
+  endedAt      DateTime?
+
+  transcripts  Transcript[]
+  escalation   Escalation?
+
+  @@map("calls")
+}
+
+model Transcript {
+  id        String   @id @default(cuid())
+  callId    String
+  call      Call     @relation(fields: [callId], references: [id], onDelete: Cascade)
+  speaker   String   // "caller" | "agent"
+  text      String
+  intent    Intent?
+  createdAt DateTime @default(now())
+
+  @@map("transcripts")
+}
+
+model Escalation {
+  id        String   @id @default(cuid())
+  callId    String   @unique
+  call      Call     @relation(fields: [callId], references: [id], onDelete: Cascade)
+  reason    String
+  summary   String
+  createdAt DateTime @default(now())
+
+  @@map("escalations")
+}
+
+model User {
+  id         String   @id @default(cuid())
+  email      String   @unique
+  password   String
+  role       UserRole @default(OWNER)
+  businessId String?
+  business   Business? @relation(fields: [businessId], references: [id])
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@map("users")
+}

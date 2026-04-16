@@ -1,0 +1,21 @@
+{
+  "name": "@milu/db",
+  "version": "0.1.0",
+  "private": true,
+  "main": "./src/client.ts",
+  "scripts": {
+    "db:migrate": "prisma migrate dev",
+    "db:migrate:deploy": "prisma migrate deploy",
+    "db:generate": "prisma generate",
+    "db:seed": "tsx src/seed.ts",
+    "db:studio": "prisma studio"
+  },
+  "dependencies": {
+    "@prisma/client": "^5.14.0"
+  },
+  "devDependencies": {
+    "prisma": "^5.14.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.4.0"
+  }
+}
