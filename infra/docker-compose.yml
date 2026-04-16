@@ -51,6 +51,9 @@ services:
     build:
       context: ..
       dockerfile: infra/docker/Dockerfile.website
+      args:
+        NEXT_PUBLIC_DASHBOARD_URL: ${NEXT_PUBLIC_DASHBOARD_URL:-http://localhost:3000}
+        NEXT_PUBLIC_SITE_URL: ${NEXT_PUBLIC_SITE_URL:-https://www.miluai.app}
     ports:
       - '3003:3003'
 
