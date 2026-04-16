@@ -99,7 +99,7 @@ export default function AboutPage() {
           </AnimateIn>
           <StaggerContainer className="grid md:grid-cols-3 gap-8" staggerDelay={0.12}>
             {team.map((member) => (
-              <StaggerItem key={member.name}>
+              <StaggerItem key={member.role}>
                 <div className="text-center p-6 rounded-2xl border border-cream-dark bg-cream-light">
                   <div className="w-16 h-16 rounded-full bg-primary/10 border-2 border-primary/15 flex items-center justify-center text-lg font-bold text-primary mx-auto mb-4">
                     {member.initials}
