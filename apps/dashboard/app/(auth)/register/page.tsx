@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import Link from 'next/link';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -12,24 +12,28 @@ interface FormData {
   lastName: string;
   email: string;
   password: string;
-  // Step 2
+  confirmPassword: string;
+  // Step 2 (verify email)
+  verificationCode: string;
+  // Step 3
   businessName: string;
   industry: string;
   weekdays: string;
   saturday: string;
   sunday: string;
-  // Step 3
-  faqs: { question: string; answer: string }[];
   // Step 4
+  faqs: { question: string; answer: string }[];
+  // Step 5
   phoneNumber: string;
   phoneOption: 'existing' | 'new';
-  // Step 5
+  // Step 6
   voiceStyle: string;
   agentTone: string;
 }
 
 const INITIAL: FormData = {
-  firstName: '', lastName: '', email: '', password: '',
+  firstName: '', lastName: '', email: '', password: '', confirmPassword: '',
+  verificationCode: '',
   businessName: '', industry: '', weekdays: '8:00 AM – 8:00 PM', saturday: '9:00 AM – 6:00 PM', sunday: 'Closed',
   faqs: [{ question: '', answer: '' }],
   phoneNumber: '', phoneOption: 'existing',
@@ -38,10 +42,11 @@ const INITIAL: FormData = {
 
 const STEPS = [
   { number: 1, label: 'Account' },
-  { number: 2, label: 'Business' },
-  { number: 3, label: 'Knowledge base' },
-  { number: 4, label: 'Phone number' },
-  { number: 5, label: 'Agent setup' },
+  { number: 2, label: 'Verify email' },
+  { number: 3, label: 'Business' },
+  { number: 4, label: 'Knowledge base' },
+  { number: 5, label: 'Phone number' },
+  { number: 6, label: 'Agent setup' },
 ];
 
 const INDUSTRIES = [
@@ -82,9 +87,30 @@ function Field({
 
 const inputCls = 'w-full px-4 py-3 rounded-xl border border-cream-dark bg-cream text-primary-dark placeholder:text-cream-dark focus:outline-none focus:border-primary/50 focus:ring-2 focus:ring-primary/10 transition-all text-sm';
 
+function EyeIcon() {
+  return (
+    <svg className="w-4.5 h-4.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
+      <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+    </svg>
+  );
+}
+
+function EyeOffIcon() {
+  return (
+    <svg className="w-4.5 h-4.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65m0 0a3 3 0 10-4.243-4.243m4.242 4.242L9.88 9.88" />
+    </svg>
+  );
+}
+
 // ─── Steps ────────────────────────────────────────────────────────────────────
 
 function Step1({ data, set }: { data: FormData; set: (k: keyof FormData, v: string) => void }) {
+  const [showPw, setShowPw] = useState(false);
+  const [showConfirm, setShowConfirm] = useState(false);
+  const mismatch = data.confirmPassword.length > 0 && data.password !== data.confirmPassword;
+
   return (
     <div className="space-y-5">
       <div>
@@ -106,8 +132,42 @@ function Step1({ data, set }: { data: FormData; set: (k: keyof FormData, v: stri
           value={data.email} onChange={e => set('email', e.target.value)} />
       </Field>
       <Field label="Password" id="password">
-        <input id="password" type="password" className={inputCls} placeholder="At least 8 characters"
-          value={data.password} onChange={e => set('password', e.target.value)} />
+        <div className="relative">
+          <input
+            id="password"
+            type={showPw ? 'text' : 'password'}
+            className={`${inputCls} pr-11`}
+            placeholder="At least 8 characters"
+            value={data.password}
+            onChange={e => set('password', e.target.value)}
+          />
+          <button
+            type="button"
+            onClick={() => setShowPw(v => !v)}
+            className="absolute right-3.5 top-1/2 -translate-y-1/2 text-primary-warm hover:text-primary-dark transition-colors"
+          >
+            {showPw ? <EyeOffIcon /> : <EyeIcon />}
+          </button>
+        </div>
+      </Field>
+      <Field label="Confirm password" id="confirmPassword" error={mismatch ? "Passwords don't match" : undefined}>
+        <div className="relative">
+          <input
+            id="confirmPassword"
+            type={showConfirm ? 'text' : 'password'}
+            className={`${inputCls} pr-11 ${mismatch ? 'border-danger/60 focus:border-danger/60 focus:ring-danger/10' : ''}`}
+            placeholder="Repeat your password"
+            value={data.confirmPassword}
+            onChange={e => set('confirmPassword', e.target.value)}
+          />
+          <button
+            type="button"
+            onClick={() => setShowConfirm(v => !v)}
+            className="absolute right-3.5 top-1/2 -translate-y-1/2 text-primary-warm hover:text-primary-dark transition-colors"
+          >
+            {showConfirm ? <EyeOffIcon /> : <EyeIcon />}
+          </button>
+        </div>
       </Field>
       <p className="text-xs text-primary-warm">
         Already have an account?{' '}
@@ -117,7 +177,77 @@ function Step1({ data, set }: { data: FormData; set: (k: keyof FormData, v: stri
   );
 }
 
-function Step2({ data, set }: { data: FormData; set: (k: keyof FormData, v: string) => void }) {
+function StepVerify({ data, set }: { data: FormData; set: (k: keyof FormData, v: string) => void }) {
+  const [digits, setDigits] = useState(['', '', '', '']);
+  const inputRefs = useRef<(HTMLInputElement | null)[]>([null, null, null, null]);
+
+  function handleDigit(i: number, val: string) {
+    const v = val.replace(/\D/g, '').slice(-1);
+    const next = [...digits];
+    next[i] = v;
+    setDigits(next);
+    set('verificationCode', next.join(''));
+    if (v && i < 3) inputRefs.current[i + 1]?.focus();
+  }
+
+  function handleKeyDown(i: number, e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === 'Backspace' && !digits[i] && i > 0) {
+      inputRefs.current[i - 1]?.focus();
+    }
+  }
+
+  function handlePaste(e: React.ClipboardEvent<HTMLInputElement>) {
+    e.preventDefault();
+    const pasted = e.clipboardData.getData('text').replace(/\D/g, '').slice(0, 4);
+    const next = ['', '', '', ''];
+    pasted.split('').forEach((ch, i) => { next[i] = ch; });
+    setDigits(next);
+    set('verificationCode', next.join(''));
+    const focusIdx = Math.min(pasted.length, 3);
+    inputRefs.current[focusIdx]?.focus();
+  }
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h2 className="font-heading font-bold text-2xl text-primary-dark mb-1">Check your email</h2>
+        <p className="text-sm text-primary-warm leading-relaxed">
+          We sent a 4-digit code to{' '}
+          <span className="font-semibold text-primary-dark">{data.email}</span>.
+          <br />Enter it below to verify your address.
+        </p>
+      </div>
+
+      <div className="flex gap-3 justify-center py-2">
+        {digits.map((d, i) => (
+          <input
+            key={i}
+            ref={el => { inputRefs.current[i] = el; }}
+            type="text"
+            inputMode="numeric"
+            maxLength={1}
+            value={d}
+            onChange={e => handleDigit(i, e.target.value)}
+            onKeyDown={e => handleKeyDown(i, e)}
+            onPaste={handlePaste}
+            className={`w-14 h-16 text-center text-2xl font-bold rounded-xl border-2 bg-cream text-primary-dark focus:outline-none transition-all ${
+              d ? 'border-primary bg-primary/5' : 'border-cream-dark'
+            } focus:border-primary focus:ring-2 focus:ring-primary/10`}
+          />
+        ))}
+      </div>
+
+      <p className="text-xs text-center text-primary-warm">
+        Didn&apos;t receive the code?{' '}
+        <button type="button" className="text-primary underline hover:text-primary-dark font-medium">
+          Resend code
+        </button>
+      </p>
+    </div>
+  );
+}
+
+function StepBusiness({ data, set }: { data: FormData; set: (k: keyof FormData, v: string) => void }) {
   return (
     <div className="space-y-5">
       <div>
@@ -156,7 +286,7 @@ function Step2({ data, set }: { data: FormData; set: (k: keyof FormData, v: stri
   );
 }
 
-function Step3({ data, setFaq, addFaq, removeFaq }: {
+function StepKnowledge({ data, setFaq, addFaq, removeFaq }: {
   data: FormData;
   setFaq: (i: number, k: 'question' | 'answer', v: string) => void;
   addFaq: () => void;
@@ -203,7 +333,7 @@ function Step3({ data, setFaq, addFaq, removeFaq }: {
   );
 }
 
-function Step4({ data, set }: { data: FormData; set: (k: keyof FormData, v: string) => void }) {
+function StepPhone({ data, set }: { data: FormData; set: (k: keyof FormData, v: string) => void }) {
   return (
     <div className="space-y-5">
       <div>
@@ -248,7 +378,7 @@ function Step4({ data, set }: { data: FormData; set: (k: keyof FormData, v: stri
   );
 }
 
-function Step5({ data, set }: { data: FormData; set: (k: keyof FormData, v: string) => void }) {
+function StepAgent({ data, set }: { data: FormData; set: (k: keyof FormData, v: string) => void }) {
   return (
     <div className="space-y-6">
       <div>
@@ -421,11 +551,30 @@ export default function RegisterPage() {
   }
 
   function canProceed() {
-    if (step === 1) return data.firstName && data.email && data.password.length >= 8;
-    if (step === 2) return data.businessName && data.industry;
-    if (step === 3) return data.faqs.some(f => f.question && f.answer);
-    if (step === 4) return data.phoneOption === 'new' || data.phoneNumber.length > 6;
+    if (step === 1) {
+      return (
+        data.firstName.trim() &&
+        data.email.trim() &&
+        data.password.length >= 8 &&
+        data.password === data.confirmPassword
+      );
+    }
+    if (step === 2) return data.verificationCode.length === 4;
+    if (step === 3) return data.businessName.trim() && data.industry;
+    if (step === 4) return data.faqs.some(f => f.question && f.answer);
+    if (step === 5) return data.phoneOption === 'new' || data.phoneNumber.length > 6;
     return true;
+  }
+
+  function renderStep() {
+    switch (step) {
+      case 1: return <Step1 data={data} set={set} />;
+      case 2: return <StepVerify data={data} set={set} />;
+      case 3: return <StepBusiness data={data} set={set} />;
+      case 4: return <StepKnowledge data={data} setFaq={setFaq} addFaq={addFaq} removeFaq={removeFaq} />;
+      case 5: return <StepPhone data={data} set={set} />;
+      default: return <StepAgent data={data} set={set} />;
+    }
   }
 
   return (
@@ -442,13 +591,15 @@ export default function RegisterPage() {
           </p>
           <div className="space-y-4">
             {[
-              { icon: '>', text: 'Answer every call, 24/7' },
-              { icon: '>', text: 'AI handles FAQs and bookings' },
-              { icon: '>', text: 'WhatsApp alerts when you need to step in' },
-              { icon: '>', text: 'Full transcripts and analytics' },
+              { text: 'Answer every call, 24/7' },
+              { text: 'AI handles FAQs and bookings' },
+              { text: 'WhatsApp alerts when you need to step in' },
+              { text: 'Full transcripts and analytics' },
             ].map(item => (
               <div key={item.text} className="flex items-center gap-3">
-                <span className="text-xl">{item.icon}</span>
+                <svg className="w-4 h-4 text-success/70 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+                </svg>
                 <p className="text-sm text-cream/70">{item.text}</p>
               </div>
             ))}
@@ -478,19 +629,7 @@ export default function RegisterPage() {
               exit="exit"
               transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
             >
-              {done ? (
-                <Done data={data} />
-              ) : step === 1 ? (
-                <Step1 data={data} set={set} />
-              ) : step === 2 ? (
-                <Step2 data={data} set={set} />
-              ) : step === 3 ? (
-                <Step3 data={data} setFaq={setFaq} addFaq={addFaq} removeFaq={removeFaq} />
-              ) : step === 4 ? (
-                <Step4 data={data} set={set} />
-              ) : (
-                <Step5 data={data} set={set} />
-              )}
+              {done ? <Done data={data} /> : renderStep()}
             </motion.div>
           </AnimatePresence>
 
