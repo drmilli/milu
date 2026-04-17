@@ -1,0 +1,293 @@
+import { Router } from 'express';
+import crypto from 'crypto';
+import { z } from 'zod';
+import { eq } from 'drizzle-orm';
+import { db, businesses, users } from '../db';
+import { authMiddleware } from '../middleware/auth';
+import { env } from '../config/env';
+import { sendSubscriptionConfirmEmail, sendSubscriptionCancelledEmail } from '../utils/email';
+import { logger } from '../config/logger';
+
+export const billingRouter = Router();
+
+const WHOP_API_BASE = 'https://api.whop.com/api/v2';
+
+const PLAN_MAP: Record<string, 'STARTER' | 'GROWTH' | 'ENTERPRISE'> = {
+  // Map your Whop product/plan IDs to internal tiers
+  // Replace these with your actual Whop product IDs
+  starter: 'STARTER',
+  growth: 'GROWTH',
+  enterprise: 'ENTERPRISE',
+};
+
+async function whopRequest<T = Record<string, unknown>>(path: string, options: RequestInit = {}): Promise<T> {
+  const res = await fetch(`${WHOP_API_BASE}${path}`, {
+    ...options,
+    headers: {
+      Authorization: `Bearer ${env.WHOP_API_KEY}`,
+      'Content-Type': 'application/json',
+      ...(options.headers ?? {}),
+    },
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`Whop API error ${res.status}: ${body}`);
+  }
+  return res.json() as Promise<T>;
+}
+
+/**
+ * @openapi
+ * tags:
+ *   - name: Billing
+ *     description: Subscription and payment management via Whop
+ */
+
+/**
+ * @openapi
+ * /api/v1/billing/plans:
+ *   get:
+ *     tags: [Billing]
+ *     summary: List available subscription plans from Whop
+ *     responses:
+ *       200:
+ *         description: Available plans
+ */
+billingRouter.get('/plans', async (_req, res, next) => {
+  try {
+    if (!env.WHOP_API_KEY || !env.WHOP_COMPANY_ID) {
+      return res.json({
+        plans: [
+          { id: 'starter', name: 'Starter', price: 0, currency: 'NGN', features: ['500 calls/mo', '1 phone number', 'Basic analytics'] },
+          { id: 'growth', name: 'Growth', price: 29900, currency: 'NGN', features: ['5,000 calls/mo', '3 phone numbers', 'Full analytics', 'Team members'] },
+          { id: 'enterprise', name: 'Enterprise', price: 99900, currency: 'NGN', features: ['Unlimited calls', 'Unlimited numbers', 'Priority support', 'Custom voice'] },
+        ],
+      });
+    }
+
+    const data = await whopRequest(`/companies/${env.WHOP_COMPANY_ID}/plans`);
+    return res.json(data);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * @openapi
+ * /api/v1/billing/checkout:
+ *   post:
+ *     tags: [Billing]
+ *     summary: Create a Whop checkout URL for a plan
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [planId, businessId]
+ *             properties:
+ *               planId: { type: string, description: "Whop plan/product ID" }
+ *               businessId: { type: string }
+ *     responses:
+ *       200:
+ *         description: Checkout URL
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 checkoutUrl: { type: string }
+ */
+billingRouter.post('/checkout', authMiddleware, async (req, res, next) => {
+  try {
+    const { planId, businessId } = z.object({
+      planId: z.string(),
+      businessId: z.string(),
+    }).parse(req.body);
+
+    if (!env.WHOP_API_KEY) {
+      return res.json({ checkoutUrl: `${env.APP_URL}/pricing?plan=${planId}&demo=1` });
+    }
+
+    const data = await whopRequest<{ checkout_url?: string; url?: string }>('/checkout/links', {
+      method: 'POST',
+      body: JSON.stringify({
+        plan_id: planId,
+        metadata: { businessId, userId: req.user?.userId },
+        redirect_url: `${env.APP_URL}/dashboard/billing?success=1`,
+        cancel_url: `${env.APP_URL}/pricing`,
+      }),
+    });
+
+    return res.json({ checkoutUrl: data.checkout_url ?? data.url });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * @openapi
+ * /api/v1/billing/subscription/{businessId}:
+ *   get:
+ *     tags: [Billing]
+ *     summary: Get current subscription for a business
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: businessId
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       200:
+ *         description: Subscription details
+ */
+billingRouter.get('/subscription/:businessId', authMiddleware, async (req, res, next) => {
+  try {
+    const [biz] = await db
+      .select({ subscriptionTier: businesses.subscriptionTier, isActive: businesses.isActive })
+      .from(businesses)
+      .where(eq(businesses.id, req.params.businessId))
+      .limit(1);
+
+    if (!biz) return res.status(404).json({ error: 'Business not found' });
+
+    if (!env.WHOP_API_KEY) {
+      return res.json({ tier: biz.subscriptionTier, isActive: biz.isActive, source: 'local' });
+    }
+
+    const data = await whopRequest(`/memberships?metadata[businessId]=${req.params.businessId}&status=active`);
+    return res.json({ tier: biz.subscriptionTier, isActive: biz.isActive, whop: data });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * @openapi
+ * /api/v1/billing/portal:
+ *   post:
+ *     tags: [Billing]
+ *     summary: Get Whop customer portal URL to manage subscription
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [businessId]
+ *             properties:
+ *               businessId: { type: string }
+ *     responses:
+ *       200:
+ *         description: Portal URL
+ */
+billingRouter.post('/portal', authMiddleware, async (req, res, next) => {
+  try {
+    const { businessId } = z.object({ businessId: z.string() }).parse(req.body);
+
+    if (!env.WHOP_API_KEY) {
+      return res.json({ portalUrl: `https://whop.com/hub` });
+    }
+
+    const memberships = await whopRequest<{ data?: { id: string }[] }>(`/memberships?metadata[businessId]=${businessId}&status=active`);
+    const membership = memberships?.data?.[0];
+    if (!membership) return res.status(404).json({ error: 'No active subscription found' });
+
+    return res.json({ portalUrl: `https://whop.com/hub/${membership.id}` });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ─── Webhook (no auth — verified by signature) ───────────────────────────────
+
+/**
+ * @openapi
+ * /webhooks/whop:
+ *   post:
+ *     tags: [Billing]
+ *     summary: Whop webhook receiver
+ *     description: Handles payment.completed, membership.went_valid, membership.went_invalid events
+ *     responses:
+ *       200:
+ *         description: Acknowledged
+ */
+export async function handleWhopWebhook(req: import('express').Request, res: import('express').Response) {
+  const sig = req.headers['whop-signature'] as string | undefined;
+  const rawBody = (req as any).rawBody as Buffer | undefined;
+
+  if (env.WHOP_WEBHOOK_SECRET && sig && rawBody) {
+    const expected = crypto
+      .createHmac('sha256', env.WHOP_WEBHOOK_SECRET)
+      .update(rawBody)
+      .digest('hex');
+    if (sig !== expected) {
+      logger.warn('Invalid Whop webhook signature');
+      return res.status(401).json({ error: 'Invalid signature' });
+    }
+  }
+
+  const event = req.body as { action: string; data: Record<string, unknown> };
+  logger.info({ action: event.action }, 'Whop webhook received');
+
+  try {
+    switch (event.action) {
+      case 'membership.went_valid':
+      case 'payment.completed': {
+        const meta = (event.data.metadata ?? {}) as Record<string, string>;
+        const businessId = meta.businessId;
+        const planId = (event.data.plan_id ?? event.data.product_id ?? '') as string;
+        const tier = PLAN_MAP[planId.toLowerCase()] ?? 'STARTER';
+
+        if (businessId) {
+          await db.update(businesses)
+            .set({ subscriptionTier: tier, isActive: true, updatedAt: new Date() })
+            .where(eq(businesses.id, businessId));
+
+          const owner = await db
+            .select({ email: users.email })
+            .from(users)
+            .where(eq(users.businessId, businessId))
+            .limit(1);
+
+          const [biz] = await db.select({ name: businesses.name }).from(businesses).where(eq(businesses.id, businessId)).limit(1);
+          if (owner[0] && biz) {
+            await sendSubscriptionConfirmEmail(owner[0].email, tier, biz.name);
+          }
+        }
+        break;
+      }
+
+      case 'membership.went_invalid':
+      case 'membership.cancelled': {
+        const meta = (event.data.metadata ?? {}) as Record<string, string>;
+        const businessId = meta.businessId;
+
+        if (businessId) {
+          await db.update(businesses)
+            .set({ subscriptionTier: 'STARTER', updatedAt: new Date() })
+            .where(eq(businesses.id, businessId));
+
+          const owner = await db.select({ email: users.email }).from(users).where(eq(users.businessId, businessId)).limit(1);
+          const [biz] = await db.select({ name: businesses.name }).from(businesses).where(eq(businesses.id, businessId)).limit(1);
+          if (owner[0] && biz) {
+            await sendSubscriptionCancelledEmail(owner[0].email, biz.name);
+          }
+        }
+        break;
+      }
+
+      default:
+        logger.debug({ action: event.action }, 'Unhandled Whop event');
+    }
+  } catch (err) {
+    logger.error(err, 'Error processing Whop webhook');
+  }
+
+  return res.json({ received: true });
+}

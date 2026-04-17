@@ -1,4 +1,4 @@
-import jwt from 'jsonwebtoken';
+import jwt, { type SignOptions } from 'jsonwebtoken';
 import { env } from '../config/env';
 
 export interface JwtPayload {
@@ -7,7 +7,7 @@ export interface JwtPayload {
   role: 'OWNER' | 'ADMIN';
 }
 
-export function signToken(payload: JwtPayload, expiresIn = '7d'): string {
+export function signToken(payload: JwtPayload, expiresIn: SignOptions['expiresIn'] = '7d'): string {
   return jwt.sign(payload, env.JWT_SECRET, { expiresIn });
 }
 
@@ -15,7 +15,7 @@ export function verifyToken(token: string): JwtPayload {
   return jwt.verify(token, env.JWT_SECRET) as JwtPayload;
 }
 
-export function signAdminToken(payload: JwtPayload, expiresIn = '8h'): string {
+export function signAdminToken(payload: JwtPayload, expiresIn: SignOptions['expiresIn'] = '8h'): string {
   return jwt.sign(payload, env.ADMIN_JWT_SECRET, { expiresIn });
 }
 

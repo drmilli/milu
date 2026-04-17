@@ -178,8 +178,8 @@ function Step1({ data, set }: { data: FormData; set: (k: keyof FormData, v: stri
 }
 
 function StepVerify({ data, set }: { data: FormData; set: (k: keyof FormData, v: string) => void }) {
-  const [digits, setDigits] = useState(['', '', '', '']);
-  const inputRefs = useRef<(HTMLInputElement | null)[]>([null, null, null, null]);
+  const [digits, setDigits] = useState(['', '', '', '', '', '']);
+  const inputRefs = useRef<(HTMLInputElement | null)[]>([null, null, null, null, null, null]);
 
   function handleDigit(i: number, val: string) {
     const v = val.replace(/\D/g, '').slice(-1);
@@ -187,7 +187,7 @@ function StepVerify({ data, set }: { data: FormData; set: (k: keyof FormData, v:
     next[i] = v;
     setDigits(next);
     set('verificationCode', next.join(''));
-    if (v && i < 3) inputRefs.current[i + 1]?.focus();
+    if (v && i < 5) inputRefs.current[i + 1]?.focus();
   }
 
   function handleKeyDown(i: number, e: React.KeyboardEvent<HTMLInputElement>) {
@@ -198,12 +198,12 @@ function StepVerify({ data, set }: { data: FormData; set: (k: keyof FormData, v:
 
   function handlePaste(e: React.ClipboardEvent<HTMLInputElement>) {
     e.preventDefault();
-    const pasted = e.clipboardData.getData('text').replace(/\D/g, '').slice(0, 4);
-    const next = ['', '', '', ''];
+    const pasted = e.clipboardData.getData('text').replace(/\D/g, '').slice(0, 6);
+    const next = ['', '', '', '', '', ''];
     pasted.split('').forEach((ch, i) => { next[i] = ch; });
     setDigits(next);
     set('verificationCode', next.join(''));
-    const focusIdx = Math.min(pasted.length, 3);
+    const focusIdx = Math.min(pasted.length, 5);
     inputRefs.current[focusIdx]?.focus();
   }
 
@@ -212,13 +212,13 @@ function StepVerify({ data, set }: { data: FormData; set: (k: keyof FormData, v:
       <div>
         <h2 className="font-heading font-bold text-2xl text-primary-dark mb-1">Check your email</h2>
         <p className="text-sm text-primary-warm leading-relaxed">
-          We sent a 4-digit code to{' '}
+          We sent a 6-digit code to{' '}
           <span className="font-semibold text-primary-dark">{data.email}</span>.
           <br />Enter it below to verify your address.
         </p>
       </div>
 
-      <div className="flex gap-3 justify-center py-2">
+      <div className="flex gap-2 justify-center py-2">
         {digits.map((d, i) => (
           <input
             key={i}
@@ -230,7 +230,8 @@ function StepVerify({ data, set }: { data: FormData; set: (k: keyof FormData, v:
             onChange={e => handleDigit(i, e.target.value)}
             onKeyDown={e => handleKeyDown(i, e)}
             onPaste={handlePaste}
-            className={`w-14 h-16 text-center text-2xl font-bold rounded-xl border-2 bg-cream text-primary-dark focus:outline-none transition-all ${
+            autoFocus={i === 0}
+            className={`w-12 h-14 text-center text-2xl font-bold rounded-xl border-2 bg-cream text-primary-dark focus:outline-none transition-all ${
               d ? 'border-primary bg-primary/5' : 'border-cream-dark'
             } focus:border-primary focus:ring-2 focus:ring-primary/10`}
           />
