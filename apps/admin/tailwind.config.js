@@ -1,6 +1,5 @@
-import type { Config } from 'tailwindcss';
-
-const config: Config = {
+/** @type {import('tailwindcss').Config} */
+module.exports = {
   content: ['./app/**/*.{ts,tsx}', './components/**/*.{ts,tsx}'],
   theme: {
     extend: {
@@ -15,9 +14,11 @@ const config: Config = {
         warning: '#C97D2E',
         danger: '#A63C2E',
       },
+      fontFamily: {
+        sans: ['var(--font-inter)', 'sans-serif'],
+        heading: ['var(--font-playfair)', 'serif'],
+      },
     },
   },
   plugins: [],
 };
-
-export default config;
