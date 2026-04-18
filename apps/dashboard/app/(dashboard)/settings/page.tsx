@@ -81,9 +81,10 @@ export default function SettingsPage() {
     setWaError('');
     setWaStep('sending');
     try {
-      await apiPost(`/settings/${businessId}/whatsapp/send-otp`, { phone: waPhone }, token);
+      const res = await apiPost<{ message: string; devCode?: string }>(`/settings/${businessId}/whatsapp/send-otp`, { phone: waPhone }, token);
       setWaStep('awaiting_code');
       startCooldown();
+      if (res.devCode) setWaCode(res.devCode);
     } catch (err: unknown) {
       setWaError(err instanceof Error ? err.message : 'Failed to send code. Check the number and try again.');
       setWaStep('idle');

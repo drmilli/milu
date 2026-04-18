@@ -5,6 +5,8 @@ import { db, businessSettings, phoneVerifications } from '../db';
 import { authMiddleware } from '../middleware/auth';
 import { audit } from '../services/audit';
 import { sendWhatsAppText } from '../services/whatsapp';
+import { logger } from '../config/logger';
+import { env } from '../config/env';
 
 export const settingsRouter: Router = Router();
 settingsRouter.use(authMiddleware);
@@ -172,12 +174,24 @@ settingsRouter.post('/:businessId/whatsapp/send-otp', async (req, res, next) => 
       expiresAt,
     });
 
-    await sendWhatsAppText(
-      phone,
-      `Your Milu verification code is *${code}*. It expires in 10 minutes. Do not share this code with anyone.`,
-    );
+    let sent = true;
+    try {
+      await sendWhatsAppText(
+        phone,
+        `Your Milu verification code is *${code}*. It expires in 10 minutes. Do not share this code with anyone.`,
+      );
+    } catch (waErr) {
+      sent = false;
+      logger.error({ err: waErr, phone }, 'Failed to send WhatsApp OTP');
+    }
 
-    return res.json({ message: 'OTP sent to WhatsApp number', phone });
+    if (!sent && env.NODE_ENV === 'production') {
+      return res.status(503).json({ error: 'Could not send WhatsApp message. Check your WhatsApp token.' });
+    }
+
+    const payload: Record<string, unknown> = { message: 'OTP sent to WhatsApp number', phone };
+    if (!sent) payload.devCode = code;
+    return res.json(payload);
   } catch (err) { next(err); }
 });
 
