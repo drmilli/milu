@@ -6,7 +6,7 @@ import { authMiddleware } from '../middleware/auth';
 import { adminGuard } from '../middleware/admin-guard';
 import { sendTestEmail, sendVerificationEmail, sendPasswordResetEmail, sendTeamInviteEmail, sendSubscriptionConfirmEmail, sendSubscriptionCancelledEmail } from '../utils/email';
 
-export const adminRouter = Router();
+export const adminRouter: Router = Router();
 adminRouter.use(authMiddleware, adminGuard);
 
 /**

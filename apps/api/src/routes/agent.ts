@@ -5,7 +5,7 @@ import { db, agentConfigs } from '../db';
 import { authMiddleware } from '../middleware/auth';
 import { audit } from '../services/audit';
 
-export const agentRouter = Router();
+export const agentRouter: Router = Router();
 agentRouter.use(authMiddleware);
 
 /**

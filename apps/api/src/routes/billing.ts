@@ -8,7 +8,7 @@ import { env } from '../config/env';
 import { sendSubscriptionConfirmEmail, sendSubscriptionCancelledEmail } from '../utils/email';
 import { logger } from '../config/logger';
 
-export const billingRouter = Router();
+export const billingRouter: Router = Router();
 
 const WHOP_API_BASE = 'https://api.whop.com/api/v2';
 

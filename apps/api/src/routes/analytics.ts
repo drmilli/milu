@@ -4,7 +4,7 @@ import { eq, and, gte, lte, sql } from 'drizzle-orm';
 import { db, calls, escalations, businesses } from '../db';
 import { authMiddleware } from '../middleware/auth';
 
-export const analyticsRouter = Router();
+export const analyticsRouter: Router = Router();
 analyticsRouter.use(authMiddleware);
 
 /**

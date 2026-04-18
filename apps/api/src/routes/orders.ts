@@ -9,7 +9,7 @@ import { sendOrderConfirmation } from '../services/whatsapp';
 import { sendOrderSms } from '../services/sms';
 import { audit } from '../services/audit';
 
-export const ordersRouter = Router();
+export const ordersRouter: Router = Router();
 ordersRouter.use(authMiddleware);
 
 /**

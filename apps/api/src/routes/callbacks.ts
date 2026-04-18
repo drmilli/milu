@@ -8,7 +8,7 @@ import { dispatchWebhook } from '../services/webhooks';
 import { sendCallbackSms } from '../services/sms';
 import { audit } from '../services/audit';
 
-export const callbacksRouter = Router();
+export const callbacksRouter: Router = Router();
 callbacksRouter.use(authMiddleware);
 
 /**

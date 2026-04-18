@@ -4,7 +4,7 @@ import { eq, and, desc, gte, lte, sql } from 'drizzle-orm';
 import { db, auditLogs } from '../db';
 import { authMiddleware } from '../middleware/auth';
 
-export const auditLogsRouter = Router();
+export const auditLogsRouter: Router = Router();
 auditLogsRouter.use(authMiddleware);
 
 /**

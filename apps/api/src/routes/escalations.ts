@@ -7,7 +7,7 @@ import { notifyBusinessOwners } from '../services/notifications';
 import { sendEscalationAlert } from '../services/whatsapp';
 import { audit } from '../services/audit';
 
-export const escalationsRouter = Router();
+export const escalationsRouter: Router = Router();
 escalationsRouter.use(authMiddleware);
 
 /**

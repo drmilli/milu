@@ -8,7 +8,7 @@ import { signToken, verifyToken } from '../utils/jwt';
 import { authLimiter } from '../middleware/rate-limit';
 import { sendVerificationEmail, sendPasswordResetEmail } from '../utils/email';
 
-export const authRouter = Router();
+export const authRouter: Router = Router();
 
 /**
  * @openapi

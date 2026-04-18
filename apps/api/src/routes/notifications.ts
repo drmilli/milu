@@ -5,7 +5,7 @@ import { db, notifications } from '../db';
 import { authMiddleware } from '../middleware/auth';
 import { sendNotification } from '../services/notifications';
 
-export const notificationsRouter = Router();
+export const notificationsRouter: Router = Router();
 notificationsRouter.use(authMiddleware);
 
 /**

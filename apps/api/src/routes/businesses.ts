@@ -11,7 +11,7 @@ import { audit } from '../services/audit';
 import { logger } from '../config/logger';
 import { env } from '../config/env';
 
-export const businessesRouter = Router();
+export const businessesRouter: Router = Router();
 businessesRouter.use(authMiddleware);
 
 /**

@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import http from 'http';
-import express from 'express';
+import express, { type Express } from 'express';
 import cors from 'cors';
 import swaggerUi from 'swagger-ui-express';
 import { env } from './config/env';
@@ -29,7 +29,7 @@ import { webhookConfigRouter } from './routes/webhookConfig';
 import { auditLogsRouter } from './routes/auditLogs';
 import { apiKeysRouter } from './routes/apiKeys';
 
-const app = express();
+const app: Express = express();
 const server = http.createServer(app);
 
 // CORS

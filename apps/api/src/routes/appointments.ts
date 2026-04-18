@@ -9,7 +9,7 @@ import { sendAppointmentReminder } from '../services/whatsapp';
 import { sendAppointmentSms } from '../services/sms';
 import { audit } from '../services/audit';
 
-export const appointmentsRouter = Router();
+export const appointmentsRouter: Router = Router();
 appointmentsRouter.use(authMiddleware);
 
 /**

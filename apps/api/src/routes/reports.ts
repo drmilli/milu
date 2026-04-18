@@ -4,7 +4,7 @@ import { eq, and, gte, lte, desc, sql } from 'drizzle-orm';
 import { db, calls, orders, appointments, escalations, contacts } from '../db';
 import { authMiddleware } from '../middleware/auth';
 
-export const reportsRouter = Router();
+export const reportsRouter: Router = Router();
 reportsRouter.use(authMiddleware);
 
 function toCsv(headers: string[], rows: Record<string, unknown>[]): string {

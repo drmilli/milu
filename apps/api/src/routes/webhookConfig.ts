@@ -6,7 +6,7 @@ import { db, webhookConfigs } from '../db';
 import { authMiddleware } from '../middleware/auth';
 import { audit } from '../services/audit';
 
-export const webhookConfigRouter = Router();
+export const webhookConfigRouter: Router = Router();
 webhookConfigRouter.use(authMiddleware);
 
 /**

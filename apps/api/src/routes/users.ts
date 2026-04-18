@@ -7,7 +7,7 @@ import { db, users, businesses } from '../db';
 import { authMiddleware } from '../middleware/auth';
 import { sendTeamInviteEmail } from '../utils/email';
 
-export const usersRouter = Router();
+export const usersRouter: Router = Router();
 usersRouter.use(authMiddleware);
 
 /**

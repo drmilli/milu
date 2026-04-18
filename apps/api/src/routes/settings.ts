@@ -6,7 +6,7 @@ import { authMiddleware } from '../middleware/auth';
 import { audit } from '../services/audit';
 import { sendWhatsAppText } from '../services/whatsapp';
 
-export const settingsRouter = Router();
+export const settingsRouter: Router = Router();
 settingsRouter.use(authMiddleware);
 
 /**

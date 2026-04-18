@@ -5,7 +5,7 @@ import { db, contacts, calls, orders, appointments } from '../db';
 import { authMiddleware } from '../middleware/auth';
 import { audit } from '../services/audit';
 
-export const contactsRouter = Router();
+export const contactsRouter: Router = Router();
 contactsRouter.use(authMiddleware);
 
 /**

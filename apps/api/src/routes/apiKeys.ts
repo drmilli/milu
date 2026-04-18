@@ -6,7 +6,7 @@ import { db, apiKeys } from '../db';
 import { authMiddleware } from '../middleware/auth';
 import { audit } from '../services/audit';
 
-export const apiKeysRouter = Router();
+export const apiKeysRouter: Router = Router();
 apiKeysRouter.use(authMiddleware);
 
 /**
