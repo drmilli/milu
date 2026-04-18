@@ -1,7 +1,9 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { clsx } from 'clsx';
+import { useAuth } from '../../../hooks/useAuth';
+import { apiGet, apiPost, apiPatch } from '../../../lib/api';
 
 type Status = 'new' | 'confirmed' | 'processing' | 'ready' | 'delivered' | 'cancelled';
 
@@ -21,94 +23,53 @@ type Order = {
   notes?: string;
 };
 
-const seed: Order[] = [
-  {
-    id: 'ORD-2041',
-    customer: 'Chidinma Eze',
-    phone: '+234 805 444 5555',
-    items: [{ name: 'Classic Ruffle Ankara Set', qty: 1, price: 21000 }, { name: 'Matching Gele', qty: 1, price: 4500 }],
-    total: 25500,
-    status: 'new',
-    channel: 'AI call',
-    date: '2025-04-15T10:42:00',
-    delivery: 'pickup',
-  },
-  {
-    id: 'ORD-2040',
-    customer: 'Bola Adeyemi',
-    phone: '+234 801 777 8888',
-    items: [{ name: 'Blue Lace Blouse', qty: 2, price: 14000 }],
-    total: 28000,
-    status: 'confirmed',
-    channel: 'WhatsApp',
-    date: '2025-04-15T09:18:00',
-    delivery: 'delivery',
-    address: '14 Adeola Odeku, Victoria Island, Lagos',
-  },
-  {
-    id: 'ORD-2039',
-    customer: 'Tunde Abiodun',
-    phone: '+234 803 999 0000',
-    items: [{ name: 'Men\'s Agbada Set', qty: 1, price: 55000 }],
-    total: 55000,
-    status: 'processing',
-    channel: 'Manual',
-    date: '2025-04-14T15:30:00',
-    delivery: 'delivery',
-    address: '7 Broad Street, Lagos Island',
-    notes: 'Needs delivery before Friday.',
-  },
-  {
-    id: 'ORD-2038',
-    customer: 'Amara Okafor',
-    phone: '+234 704 555 1234',
-    items: [
-      { name: 'Ankara Skirt', qty: 3, price: 9500 },
-      { name: 'Crop Top', qty: 3, price: 6000 },
-    ],
-    total: 46500,
-    status: 'ready',
-    channel: 'AI call',
-    date: '2025-04-14T11:05:00',
-    delivery: 'pickup',
-  },
-  {
-    id: 'ORD-2037',
-    customer: 'Funmi Sanni',
-    phone: '+234 810 222 3333',
-    items: [{ name: 'Aso-oke Wedding Set', qty: 1, price: 85000 }],
-    total: 85000,
-    status: 'delivered',
-    channel: 'Manual',
-    date: '2025-04-13T08:00:00',
-    delivery: 'delivery',
-    address: '3 Okonkwo Close, Ikeja',
-  },
-  {
-    id: 'ORD-2036',
-    customer: 'Emeka Nwosu',
-    phone: '+234 706 444 7777',
-    items: [{ name: 'Kaftan (XXL)', qty: 1, price: 18000 }],
-    total: 18000,
-    status: 'cancelled',
-    channel: 'AI call',
-    date: '2025-04-12T14:20:00',
-    delivery: 'pickup',
-    notes: 'Customer cancelled — changed mind.',
-  },
-  {
-    id: 'ORD-2035',
-    customer: 'Ngozi Dike',
-    phone: '+234 802 888 1111',
-    items: [{ name: 'Sequin Dinner Gown', qty: 1, price: 67000 }],
-    total: 67000,
-    status: 'new',
-    channel: 'AI call',
-    date: '2025-04-15T12:10:00',
-    delivery: 'delivery',
-    address: '22 Awolowo Road, Ikoyi',
-  },
-];
+interface ApiOrder {
+  id: string;
+  orderNumber: string;
+  status: 'PENDING' | 'CONFIRMED' | 'PROCESSING' | 'COMPLETED' | 'CANCELLED';
+  items: OrderItem[];
+  totalAmount?: number | null;
+  currency: string;
+  customerName?: string | null;
+  customerPhone?: string | null;
+  deliveryAddress?: string | null;
+  notes?: string | null;
+  callId?: string | null;
+  createdAt: string;
+}
+
+const STATUS_FROM_API: Record<ApiOrder['status'], Status> = {
+  PENDING: 'new',
+  CONFIRMED: 'confirmed',
+  PROCESSING: 'processing',
+  COMPLETED: 'delivered',
+  CANCELLED: 'cancelled',
+};
+
+const STATUS_TO_API: Record<Status, ApiOrder['status']> = {
+  new: 'PENDING',
+  confirmed: 'CONFIRMED',
+  processing: 'PROCESSING',
+  ready: 'PROCESSING',
+  delivered: 'COMPLETED',
+  cancelled: 'CANCELLED',
+};
+
+function fromApiOrder(o: ApiOrder): Order {
+  return {
+    id: o.id,
+    customer: o.customerName ?? o.customerPhone ?? 'Unknown',
+    phone: o.customerPhone ?? '',
+    items: o.items ?? [],
+    total: o.totalAmount ?? 0,
+    status: STATUS_FROM_API[o.status] ?? 'new',
+    channel: o.callId ? 'AI call' : 'Manual',
+    date: o.createdAt,
+    delivery: o.deliveryAddress ? 'delivery' : 'pickup',
+    address: o.deliveryAddress ?? undefined,
+    notes: o.notes ?? undefined,
+  };
+}
 
 const statusConfig: Record<Status, { label: string; cls: string; dot: string }> = {
   new:        { label: 'New',        cls: 'bg-primary/10 text-primary',     dot: 'bg-primary' },
@@ -130,13 +91,14 @@ function fmtDate(iso: string) {
   return d.toLocaleDateString('en-NG', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
 }
 
-function AddOrderModal({ onClose, onSave }: { onClose: () => void; onSave: (o: Order) => void }) {
+function AddOrderModal({ onClose, onSave }: { onClose: () => void; onSave: (o: Omit<Order, 'id' | 'date'>) => Promise<void> }) {
   const [customer, setCustomer] = useState('');
   const [phone, setPhone] = useState('');
   const [delivery, setDelivery] = useState<'pickup' | 'delivery'>('pickup');
   const [address, setAddress] = useState('');
   const [notes, setNotes] = useState('');
   const [items, setItems] = useState<OrderItem[]>([{ name: '', qty: 1, price: 0 }]);
+  const [saving, setSaving] = useState(false);
 
   function addItem() { setItems(p => [...p, { name: '', qty: 1, price: 0 }]); }
   function removeItem(i: number) { setItems(p => p.filter((_, idx) => idx !== i)); }
@@ -146,21 +108,24 @@ function AddOrderModal({ onClose, onSave }: { onClose: () => void; onSave: (o: O
 
   const total = items.reduce((s, i) => s + i.qty * i.price, 0);
 
-  function handleSave() {
+  async function handleSave() {
     if (!customer || !items[0].name) return;
-    onSave({
-      id: `ORD-${Date.now()}`,
-      customer, phone,
-      items: items.filter(i => i.name),
-      total,
-      status: 'new',
-      channel: 'Manual',
-      date: new Date().toISOString(),
-      delivery,
-      address: delivery === 'delivery' ? address : undefined,
-      notes: notes || undefined,
-    });
-    onClose();
+    setSaving(true);
+    try {
+      await onSave({
+        customer, phone,
+        items: items.filter(i => i.name),
+        total,
+        status: 'new',
+        channel: 'Manual',
+        delivery,
+        address: delivery === 'delivery' ? address : undefined,
+        notes: notes || undefined,
+      });
+      onClose();
+    } finally {
+      setSaving(false);
+    }
   }
 
   const inputCls = 'w-full px-4 py-2.5 rounded-xl border border-cream-dark bg-cream-light text-sm text-primary-dark placeholder:text-cream-dark focus:outline-none focus:border-primary/50';
@@ -176,7 +141,6 @@ function AddOrderModal({ onClose, onSave }: { onClose: () => void; onSave: (o: O
         </div>
 
         <div className="px-6 py-5 space-y-4 overflow-y-auto flex-1">
-          {/* Customer */}
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-medium text-primary-dark mb-1.5">Customer name</label>
@@ -188,7 +152,6 @@ function AddOrderModal({ onClose, onSave }: { onClose: () => void; onSave: (o: O
             </div>
           </div>
 
-          {/* Items */}
           <div>
             <label className="block text-xs font-medium text-primary-dark mb-2">Order items</label>
             <div className="space-y-2">
@@ -212,7 +175,6 @@ function AddOrderModal({ onClose, onSave }: { onClose: () => void; onSave: (o: O
             {total > 0 && <p className="mt-2 text-sm font-semibold text-primary-dark">Total: {fmt(total)}</p>}
           </div>
 
-          {/* Delivery */}
           <div>
             <label className="block text-xs font-medium text-primary-dark mb-2">Fulfilment</label>
             <div className="flex gap-2">
@@ -233,7 +195,6 @@ function AddOrderModal({ onClose, onSave }: { onClose: () => void; onSave: (o: O
             </div>
           )}
 
-          {/* Notes */}
           <div>
             <label className="block text-xs font-medium text-primary-dark mb-1.5">Notes (optional)</label>
             <textarea rows={2} className={clsx(inputCls, 'resize-none')} placeholder="e.g. Call before delivery" value={notes} onChange={e => setNotes(e.target.value)} />
@@ -242,7 +203,9 @@ function AddOrderModal({ onClose, onSave }: { onClose: () => void; onSave: (o: O
 
         <div className="flex gap-3 justify-end px-6 py-4 border-t border-cream-dark flex-shrink-0">
           <button onClick={onClose} className="text-sm text-primary-warm hover:text-primary-dark px-4 py-2">Cancel</button>
-          <button onClick={handleSave} className="bg-primary text-cream-light px-5 py-2 rounded-xl text-sm font-medium hover:bg-primary-dark transition-colors">Save order</button>
+          <button onClick={handleSave} disabled={saving} className="bg-primary text-cream-light px-5 py-2 rounded-xl text-sm font-medium hover:bg-primary-dark transition-colors disabled:opacity-50">
+            {saving ? 'Saving…' : 'Save order'}
+          </button>
         </div>
       </div>
     </div>
@@ -250,11 +213,24 @@ function AddOrderModal({ onClose, onSave }: { onClose: () => void; onSave: (o: O
 }
 
 export default function OrdersPage() {
-  const [orders, setOrders] = useState<Order[]>(seed);
+  const { token, ready } = useAuth();
+
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<'all' | Status>('all');
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState<Order | null>(null);
   const [showAdd, setShowAdd] = useState(false);
+
+  const load = useCallback(() => {
+    if (!token) return;
+    apiGet<{ orders: ApiOrder[] }>('/orders', token)
+      .then(res => setOrders((res.orders ?? []).map(fromApiOrder)))
+      .catch(() => null)
+      .finally(() => setLoading(false));
+  }, [token]);
+
+  useEffect(() => { if (ready) load(); }, [ready, load]);
 
   const filtered = orders.filter(o => {
     if (filter !== 'all' && o.status !== filter) return false;
@@ -262,14 +238,28 @@ export default function OrdersPage() {
     return true;
   });
 
-  function updateStatus(id: string, status: Status) {
+  async function updateStatus(id: string, status: Status) {
     setOrders(prev => prev.map(o => o.id === id ? { ...o, status } : o));
     setSelected(prev => prev?.id === id ? { ...prev, status } : prev);
+    try {
+      await apiPatch(`/orders/${id}`, { status: STATUS_TO_API[status] }, token);
+    } catch {
+      load();
+    }
   }
 
-  function addOrder(o: Order) {
-    setOrders(prev => [o, ...prev]);
-    setSelected(o);
+  async function addOrder(data: Omit<Order, 'id' | 'date'>) {
+    const created = await apiPost<ApiOrder>('/orders', {
+      customerName: data.customer || undefined,
+      customerPhone: data.phone || undefined,
+      items: data.items,
+      totalAmount: data.total || undefined,
+      deliveryAddress: data.delivery === 'delivery' ? data.address : undefined,
+      notes: data.notes || undefined,
+    }, token);
+    const mapped = fromApiOrder(created);
+    setOrders(prev => [mapped, ...prev]);
+    setSelected(mapped);
   }
 
   const revenue = orders.filter(o => o.status !== 'cancelled').reduce((s, o) => s + o.total, 0);
@@ -337,15 +327,26 @@ export default function OrdersPage() {
 
         {/* Order list */}
         <div className="flex-1 overflow-y-auto divide-y divide-cream-dark bg-cream-light/30">
-          {filtered.length === 0 && (
+          {loading && (
+            <div className="space-y-0">
+              {Array.from({ length: 5 }).map((_, i) => (
+                <div key={i} className="flex items-center gap-4 px-6 py-4 animate-pulse border-b border-cream-dark">
+                  <div className="w-2 h-2 rounded-full bg-cream flex-shrink-0" />
+                  <div className="flex-1 space-y-1.5"><div className="h-4 bg-cream rounded w-36" /><div className="h-3 bg-cream rounded w-52" /></div>
+                  <div className="text-right space-y-1.5"><div className="h-4 bg-cream rounded w-20" /><div className="h-3 bg-cream rounded w-16" /></div>
+                  <div className="h-6 bg-cream rounded-full w-24" />
+                </div>
+              ))}
+            </div>
+          )}
+          {!loading && filtered.length === 0 && (
             <p className="text-sm text-primary-warm text-center py-16">No orders found.</p>
           )}
-          {filtered.map(order => (
+          {!loading && filtered.map(order => (
             <button key={order.id} onClick={() => setSelected(order)}
               className={clsx('w-full text-left px-6 py-4 flex items-center gap-4 hover:bg-white/70 transition-colors',
                 selected?.id === order.id ? 'bg-white border-l-2 border-primary' : ''
               )}>
-              {/* Status dot */}
               <span className={clsx('w-2 h-2 rounded-full flex-shrink-0', statusConfig[order.status].dot)} />
 
               <div className="flex-1 min-w-0">
@@ -376,7 +377,6 @@ export default function OrdersPage() {
       {/* Right: detail */}
       {selected ? (
         <div className="w-80 flex-shrink-0 bg-white flex flex-col overflow-y-auto">
-          {/* Header */}
           <div className="px-5 py-4 border-b border-cream-dark flex items-center justify-between flex-shrink-0">
             <div>
               <p className="font-semibold text-primary-dark">{selected.id}</p>
@@ -460,7 +460,6 @@ export default function OrdersPage() {
               </div>
             </div>
 
-            {/* Notes */}
             {selected.notes && (
               <div>
                 <p className="text-xs font-semibold text-primary-warm uppercase tracking-wider mb-1">Notes</p>
@@ -499,7 +498,6 @@ export default function OrdersPage() {
               </div>
             )}
 
-            {/* Channel badge */}
             <div className="flex items-center gap-1.5 pt-1">
               <p className="text-xs text-primary-warm">Source:</p>
               <span className={clsx('text-xs font-medium px-2 py-0.5 rounded-full',

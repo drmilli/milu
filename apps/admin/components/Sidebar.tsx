@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { useAdminAuth } from '../hooks/useAdminAuth';
 
 const nav = [
   {
@@ -63,6 +64,12 @@ const nav = [
 
 export default function Sidebar() {
   const pathname = usePathname();
+  const { user, logout } = useAdminAuth(false);
+
+  const initials = user
+    ? ((user.firstName?.[0] ?? '') + (user.lastName?.[0] ?? '')).toUpperCase() || user.email[0].toUpperCase()
+    : 'A';
+  const displayName = user ? [user.firstName, user.lastName].filter(Boolean).join(' ') || user.email : 'Admin';
 
   function isActive(href: string) {
     if (href === '/admin/dashboard') return pathname === '/admin/dashboard';
@@ -105,22 +112,22 @@ export default function Sidebar() {
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2.5 min-w-0">
             <div className="w-7 h-7 rounded-full bg-primary/40 flex items-center justify-center flex-shrink-0">
-              <span className="text-xs font-semibold text-cream-light">M</span>
+              <span className="text-xs font-semibold text-cream-light">{initials}</span>
             </div>
             <div className="min-w-0">
-              <p className="text-xs font-medium text-cream/80 truncate">Milu Admin</p>
-              <p className="text-[10px] text-cream/30 truncate">admin@miluai.app</p>
+              <p className="text-xs font-medium text-cream/80 truncate">{displayName}</p>
+              <p className="text-[10px] text-cream/30 truncate">{user?.email ?? ''}</p>
             </div>
           </div>
-          <a
-            href="/login"
+          <button
+            onClick={logout}
             title="Log out"
             className="w-7 h-7 flex items-center justify-center rounded-lg text-cream/30 hover:text-cream/70 hover:bg-white/10 transition-colors flex-shrink-0"
           >
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15M12 9l-3 3m0 0l3 3m-3-3h12.75" />
             </svg>
-          </a>
+          </button>
         </div>
       </div>
     </aside>

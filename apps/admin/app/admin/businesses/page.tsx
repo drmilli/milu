@@ -1,31 +1,22 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
+import { useAdminAuth } from '../../../hooks/useAdminAuth';
+import { adminGet } from '../../../lib/api';
 
 type Business = {
   id: string;
   name: string;
   owner: string;
   email: string;
-  plan: 'Starter' | 'Growth' | 'Enterprise';
+  plan: string;
   status: 'active' | 'trial' | 'suspended' | 'cancelled';
   calls: number;
   mrr: number;
   joined: string;
   industry: string;
 };
-
-const businesses: Business[] = [
-  { id: 'b1', name: "Amaka's Boutique", owner: 'Amaka Obi', email: 'amaka@boutique.ng', plan: 'Growth', status: 'active', calls: 847, mrr: 45000, joined: '2024-01-15', industry: 'Retail & e-commerce' },
-  { id: 'b2', name: 'QuickDelivery NG', owner: 'Chidi Eze', email: 'chidi@quickdelivery.ng', plan: 'Starter', status: 'active', calls: 312, mrr: 15000, joined: '2024-02-20', industry: 'Logistics & delivery' },
-  { id: 'b3', name: 'Mama Titi Kitchen', owner: 'Ngozi Okafor', email: 'ngozi@mamatiti.ng', plan: 'Growth', status: 'active', calls: 523, mrr: 45000, joined: '2024-03-10', industry: 'Restaurant & food' },
-  { id: 'b4', name: 'MedCity Pharmacy', owner: 'Dr. Emeka Adaeze', email: 'emeka@medcity.ng', plan: 'Enterprise', status: 'active', calls: 1847, mrr: 120000, joined: '2023-11-05', industry: 'Healthcare & pharmacy' },
-  { id: 'b5', name: 'LagosLooks Beauty', owner: 'Sade Balogun', email: 'sade@lagoslooks.ng', plan: 'Starter', status: 'trial', calls: 89, mrr: 0, joined: '2024-04-01', industry: 'Beauty & wellness' },
-  { id: 'b6', name: 'Sunrise Logistics', owner: 'Tunde Alabi', email: 'tunde@sunrise.ng', plan: 'Growth', status: 'active', calls: 634, mrr: 45000, joined: '2024-02-05', industry: 'Logistics & delivery' },
-  { id: 'b7', name: 'PharmaCare Plus', owner: 'Dr. Kemi Adeyemi', email: 'kemi@pharmacare.ng', plan: 'Enterprise', status: 'active', calls: 2134, mrr: 120000, joined: '2023-09-18', industry: 'Healthcare & pharmacy' },
-  { id: 'b8', name: 'VelaFashion', owner: 'Bisi Lawson', email: 'bisi@velafashion.ng', plan: 'Starter', status: 'trial', calls: 34, mrr: 0, joined: '2024-04-10', industry: 'Retail & e-commerce' },
-];
 
 const planColors: Record<string, string> = {
   Starter: 'bg-primary/10 text-primary',
@@ -40,10 +31,36 @@ const statusColors: Record<string, string> = {
   cancelled: 'bg-cream-dark text-primary-warm',
 };
 
+function Skeleton() {
+  return (
+    <tr>
+      <td className="px-5 py-4">
+        <div className="flex items-center gap-3 animate-pulse">
+          <div className="w-8 h-8 rounded-lg bg-cream flex-shrink-0" />
+          <div className="space-y-1.5"><div className="h-4 bg-cream rounded w-36" /><div className="h-3 bg-cream rounded w-28" /></div>
+        </div>
+      </td>
+      {[1,2,3,4,5,6].map(i => <td key={i} className="px-4 py-4"><div className="h-4 bg-cream rounded animate-pulse w-16" /></td>)}
+    </tr>
+  );
+}
+
 export default function BusinessesPage() {
+  const { token, ready } = useAdminAuth();
+
+  const [businesses, setBusinesses] = useState<Business[]>([]);
+  const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [planFilter, setPlanFilter] = useState<string>('all');
   const [statusFilter, setStatusFilter] = useState<string>('all');
+
+  const load = useCallback(() => {
+    if (!token) return;
+    adminGet<Business[]>('/admin/businesses', token)
+      .then(setBusinesses).catch(() => null).finally(() => setLoading(false));
+  }, [token]);
+
+  useEffect(() => { if (ready) load(); }, [ready, load]);
 
   const filtered = businesses.filter((b) => {
     const matchesSearch = b.name.toLowerCase().includes(search.toLowerCase()) ||
@@ -58,11 +75,12 @@ export default function BusinessesPage() {
 
   return (
     <div className="p-6 lg:p-8 space-y-6">
-      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="font-heading font-bold text-2xl text-primary-dark">Businesses</h1>
-          <p className="text-sm text-primary-warm mt-0.5">{filtered.length} businesses · ₦{totalMRR.toLocaleString()} MRR</p>
+          <p className="text-sm text-primary-warm mt-0.5">
+            {loading ? 'Loading…' : `${filtered.length} businesses · ₦${totalMRR.toLocaleString()} MRR`}
+          </p>
         </div>
       </div>
 
@@ -117,7 +135,9 @@ export default function BusinessesPage() {
             </tr>
           </thead>
           <tbody className="divide-y divide-cream-dark">
-            {filtered.map((b) => (
+            {loading ? (
+              Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} />)
+            ) : filtered.map((b) => (
               <tr key={b.id} className="hover:bg-cream-light/40 transition-colors">
                 <td className="px-5 py-4">
                   <div className="flex items-center gap-3">
@@ -131,16 +151,18 @@ export default function BusinessesPage() {
                   </div>
                 </td>
                 <td className="px-4 py-4">
-                  <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${planColors[b.plan]}`}>{b.plan}</span>
+                  <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${planColors[b.plan] ?? 'bg-cream-dark text-primary-warm'}`}>{b.plan}</span>
                 </td>
                 <td className="px-4 py-4">
-                  <span className={`text-xs font-medium px-2.5 py-1 rounded-full capitalize ${statusColors[b.status]}`}>{b.status}</span>
+                  <span className={`text-xs font-medium px-2.5 py-1 rounded-full capitalize ${statusColors[b.status] ?? 'bg-cream-dark text-primary-warm'}`}>{b.status}</span>
                 </td>
                 <td className="px-4 py-4 text-right font-medium text-primary-dark">{b.calls.toLocaleString()}</td>
                 <td className="px-4 py-4 text-right font-medium text-primary-dark">
                   {b.mrr > 0 ? `₦${b.mrr.toLocaleString()}` : '—'}
                 </td>
-                <td className="px-4 py-4 text-primary-warm">{b.joined}</td>
+                <td className="px-4 py-4 text-primary-warm">
+                  {new Date(b.joined).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                </td>
                 <td className="px-4 py-4">
                   <Link
                     href={`/admin/businesses/${b.id}`}
@@ -153,7 +175,7 @@ export default function BusinessesPage() {
             ))}
           </tbody>
         </table>
-        {filtered.length === 0 && (
+        {!loading && filtered.length === 0 && (
           <div className="py-16 text-center text-primary-warm text-sm">No businesses match your filters.</div>
         )}
       </div>

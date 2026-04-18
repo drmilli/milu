@@ -28,3 +28,11 @@ export function adminPost<T>(path: string, body: unknown, token: string) {
     headers: { Authorization: `Bearer ${token}` },
   });
 }
+
+export function adminPatch<T>(path: string, body: unknown, token: string) {
+  return apiFetch<T>(path, {
+    method: 'PATCH',
+    body: JSON.stringify(body),
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}

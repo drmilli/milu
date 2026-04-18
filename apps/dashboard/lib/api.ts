@@ -38,3 +38,21 @@ export function apiPut<T>(path: string, body: unknown, token?: string) {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   });
 }
+
+export function apiPatch<T>(path: string, body: unknown, token?: string) {
+  return apiFetch<T>(path, {
+    method: 'PATCH',
+    body: JSON.stringify(body),
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+}
+
+export function apiDelete(path: string, token?: string) {
+  return fetch(`${process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000'}/api/v1${path}`, {
+    method: 'DELETE',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+  });
+}

@@ -2,6 +2,8 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { adminPost } from '../../lib/api';
+import { saveAdminSession, type AdminUser } from '../../lib/auth';
 
 const inputCls = 'w-full px-4 py-3 rounded-xl border border-cream-dark bg-cream text-primary-dark placeholder:text-cream-dark focus:outline-none focus:border-primary/50 focus:ring-2 focus:ring-primary/10 transition-all text-sm';
 
@@ -13,25 +15,28 @@ export default function AdminLoginPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError('');
     setLoading(true);
-    // TODO: wire up to /api/v1/admin/auth/login
-    setTimeout(() => {
-      setLoading(false);
-      if (email === 'admin@miluai.app') {
-        router.push('/admin/dashboard');
-      } else {
-        setError('Invalid credentials.');
+    try {
+      const res = await adminPost<{ token: string; user: AdminUser }>('/admin/auth/login', { email, password }, '');
+      if (!['SUPER_ADMIN', 'ADMIN'].includes(res.user.role)) {
+        setError('Access restricted to Milu admin team.');
+        return;
       }
-    }, 800);
+      saveAdminSession(res.token, res.user);
+      router.replace('/admin/dashboard');
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Invalid credentials.');
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-primary-dark px-4">
       <div className="w-full max-w-sm">
-        {/* Logo */}
         <div className="text-center mb-8">
           <div className="inline-flex items-center gap-2 mb-2">
             <img src="/brand/wordmark.svg" alt="milu." className="h-7 w-auto" />

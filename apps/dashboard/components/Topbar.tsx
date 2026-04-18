@@ -1,41 +1,17 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
+import { useAuth } from '../hooks/useAuth';
+import { apiGet } from '../lib/api';
 
-const notifications = [
-  {
-    id: 1,
-    type: 'escalation',
-    title: 'Call escalated',
-    body: '+234 803 111 2222 requested a human agent.',
-    time: '2 min ago',
-    read: false,
-  },
-  {
-    id: 2,
-    type: 'escalation',
-    title: 'Call escalated',
-    body: '+234 701 888 9999 could not be handled by AI.',
-    time: '1 hr ago',
-    read: false,
-  },
-  {
-    id: 3,
-    type: 'missed',
-    title: 'Missed call',
-    body: '+234 809 333 4444 called while agent was busy.',
-    time: '3 hr ago',
-    read: true,
-  },
-  {
-    id: 4,
-    type: 'system',
-    title: 'Weekly summary ready',
-    body: 'Your performance report for Apr 7–13 is available.',
-    time: 'Yesterday',
-    read: true,
-  },
-];
+interface Notification {
+  id: string;
+  type: 'escalation' | 'missed' | 'system';
+  title: string;
+  body: string;
+  createdAt: string;
+  read: boolean;
+}
 
 const typeIcon: Record<string, React.ReactNode> = {
   escalation: (
@@ -61,14 +37,30 @@ const typeIcon: Record<string, React.ReactNode> = {
   ),
 };
 
+function timeAgo(iso: string) {
+  const diff = Date.now() - new Date(iso).getTime();
+  const m = Math.floor(diff / 60000);
+  if (m < 1) return 'just now';
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
+}
+
 export default function Topbar() {
+  const { token, user, ready } = useAuth(false);
   const [notifOpen, setNotifOpen] = useState(false);
-  const [items, setItems] = useState(notifications);
+  const [notifications, setNotifications] = useState<Notification[]>([]);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
-  const unreadCount = items.filter((n) => !n.read).length;
+  const loadNotifications = useCallback(() => {
+    if (!token || !user?.businessId) return;
+    apiGet<Notification[]>(`/businesses/${user.businessId}/notifications`, token)
+      .then(setNotifications).catch(() => null);
+  }, [token, user?.businessId]);
 
-  // Close on outside click
+  useEffect(() => { if (ready) loadNotifications(); }, [ready, loadNotifications]);
+
   useEffect(() => {
     function handleClick(e: MouseEvent) {
       if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
@@ -79,24 +71,37 @@ export default function Topbar() {
     return () => document.removeEventListener('mousedown', handleClick);
   }, [notifOpen]);
 
-  function markAllRead() {
-    setItems((prev) => prev.map((n) => ({ ...n, read: true })));
+  function markRead(id: string) {
+    setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true } : n));
+    if (token && user?.businessId) {
+      apiGet(`/businesses/${user.businessId}/notifications/${id}/read`, token).catch(() => null);
+    }
   }
 
-  function markRead(id: number) {
-    setItems((prev) => prev.map((n) => (n.id === id ? { ...n, read: true } : n)));
+  function markAllRead() {
+    setNotifications(prev => prev.map(n => ({ ...n, read: true })));
+    if (token && user?.businessId) {
+      apiGet(`/businesses/${user.businessId}/notifications/read-all`, token).catch(() => null);
+    }
   }
+
+  const unreadCount = notifications.filter(n => !n.read).length;
+  const bizInitial = (user?.businessName || user?.email || '?')[0].toUpperCase();
 
   return (
     <header className="h-14 border-b border-cream-dark bg-cream-light flex items-center justify-between px-6 flex-shrink-0 relative z-30">
-      {/* Business name */}
+      {/* Business */}
       <div className="flex items-center gap-2.5">
         <div className="w-7 h-7 rounded-lg bg-primary/10 flex items-center justify-center">
-          <span className="text-xs font-bold text-primary">A</span>
+          <span className="text-xs font-bold text-primary">{bizInitial}</span>
         </div>
         <div>
-          <p className="text-sm font-semibold text-primary-dark leading-tight">Amaka&apos;s Boutique</p>
-          <p className="text-xs text-primary-warm leading-tight">Growth plan</p>
+          <p className="text-sm font-semibold text-primary-dark leading-tight">
+            {user?.businessName || '—'}
+          </p>
+          <p className="text-xs text-primary-warm leading-tight capitalize">
+            {user?.planName ? `${user.planName} plan` : ''}
+          </p>
         </div>
       </div>
 
@@ -104,7 +109,7 @@ export default function Topbar() {
         {/* Notifications */}
         <div className="relative" ref={dropdownRef}>
           <button
-            onClick={() => setNotifOpen((v) => !v)}
+            onClick={() => setNotifOpen(v => !v)}
             className="relative w-9 h-9 flex items-center justify-center rounded-xl text-primary-warm hover:bg-cream hover:text-primary-dark transition-colors"
           >
             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}>
@@ -117,10 +122,8 @@ export default function Topbar() {
             )}
           </button>
 
-          {/* Dropdown */}
           {notifOpen && (
             <div className="absolute right-0 top-full mt-2 w-80 bg-white rounded-2xl shadow-xl shadow-primary/10 border border-cream-dark overflow-hidden">
-              {/* Header */}
               <div className="flex items-center justify-between px-4 py-3 border-b border-cream-dark">
                 <div className="flex items-center gap-2">
                   <span className="text-sm font-semibold text-primary-dark">Notifications</span>
@@ -131,18 +134,16 @@ export default function Topbar() {
                   )}
                 </div>
                 {unreadCount > 0 && (
-                  <button
-                    onClick={markAllRead}
-                    className="text-xs text-primary hover:underline"
-                  >
+                  <button onClick={markAllRead} className="text-xs text-primary hover:underline">
                     Mark all read
                   </button>
                 )}
               </div>
 
-              {/* List */}
               <div className="max-h-80 overflow-y-auto divide-y divide-cream-dark">
-                {items.map((notif) => (
+                {notifications.length === 0 ? (
+                  <div className="py-8 text-center text-sm text-primary-warm">No notifications yet.</div>
+                ) : notifications.map((notif) => (
                   <button
                     key={notif.id}
                     onClick={() => markRead(notif.id)}
@@ -150,13 +151,13 @@ export default function Topbar() {
                       !notif.read ? 'bg-cream-light/40' : ''
                     }`}
                   >
-                    {typeIcon[notif.type]}
+                    {typeIcon[notif.type] ?? typeIcon.system}
                     <div className="flex-1 min-w-0">
                       <div className="flex items-start justify-between gap-2">
                         <p className={`text-sm leading-tight ${notif.read ? 'font-normal text-primary-dark' : 'font-semibold text-primary-dark'}`}>
                           {notif.title}
                         </p>
-                        <span className="text-xs text-cream-dark flex-shrink-0">{notif.time}</span>
+                        <span className="text-xs text-cream-dark flex-shrink-0">{timeAgo(notif.createdAt)}</span>
                       </div>
                       <p className="text-xs text-primary-warm mt-0.5 leading-relaxed">{notif.body}</p>
                     </div>
@@ -167,7 +168,6 @@ export default function Topbar() {
                 ))}
               </div>
 
-              {/* Footer */}
               <div className="px-4 py-3 border-t border-cream-dark text-center">
                 <a href="/notifications" className="text-xs text-primary hover:underline font-medium">
                   View all notifications

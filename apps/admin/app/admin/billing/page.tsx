@@ -1,40 +1,27 @@
 'use client';
 
-import { useState } from 'react';
-import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from 'recharts';
+import { useState, useEffect, useCallback } from 'react';
+import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts';
+import { useAdminAuth } from '../../../hooks/useAdminAuth';
+import { adminGet } from '../../../lib/api';
 
-const stats = [
-  { label: 'MRR', value: '₦6,800,000', change: '+6.6% vs last month' },
-  { label: 'ARR', value: '₦81,600,000', change: 'Annualised' },
-  { label: 'Active Subscriptions', value: '111', change: '31 on trial' },
-  { label: 'Trial Conversions', value: '68%', change: 'Last 30 days' },
-];
+interface BillingOverview {
+  mrr: number;
+  arr: number;
+  activeSubscriptions: number;
+  trialsCount: number;
+  trialConversionRate: number;
+  planDistribution: { name: string; value: number; color: string }[];
+}
 
-const planDist = [
-  { name: 'Starter', value: 58, color: '#5C3D2E' },
-  { name: 'Growth', value: 40, color: '#4A7C59' },
-  { name: 'Enterprise', value: 13, color: '#C97D2E' },
-];
-
-type Sub = {
+interface Sub {
   id: string;
   business: string;
-  plan: 'Starter' | 'Growth' | 'Enterprise';
+  plan: string;
   status: 'active' | 'trial' | 'past_due' | 'cancelled';
   mrr: number;
-  nextBilling: string;
-};
-
-const subscriptions: Sub[] = [
-  { id: 's1', business: "Amaka's Boutique", plan: 'Growth', status: 'active', mrr: 45000, nextBilling: '2024-05-01' },
-  { id: 's2', business: 'QuickDelivery NG', plan: 'Starter', status: 'active', mrr: 15000, nextBilling: '2024-05-01' },
-  { id: 's3', business: 'MedCity Pharmacy', plan: 'Enterprise', status: 'active', mrr: 120000, nextBilling: '2024-05-01' },
-  { id: 's4', business: 'Mama Titi Kitchen', plan: 'Growth', status: 'active', mrr: 45000, nextBilling: '2024-05-01' },
-  { id: 's5', business: 'LagosLooks Beauty', plan: 'Starter', status: 'trial', mrr: 0, nextBilling: '2024-04-22' },
-  { id: 's6', business: 'PharmaCare Plus', plan: 'Enterprise', status: 'active', mrr: 120000, nextBilling: '2024-05-01' },
-  { id: 's7', business: 'Sunrise Logistics', plan: 'Growth', status: 'active', mrr: 45000, nextBilling: '2024-05-01' },
-  { id: 's8', business: 'VelaFashion', plan: 'Starter', status: 'trial', mrr: 0, nextBilling: '2024-04-20' },
-];
+  nextBillingAt: string;
+}
 
 const planColors: Record<string, string> = {
   Starter: 'bg-primary/10 text-primary',
@@ -49,9 +36,37 @@ const statusColors: Record<string, string> = {
   cancelled: 'bg-cream-dark text-primary-warm',
 };
 
+function fmtMrr(n: number) {
+  if (n >= 1_000_000) return `₦${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `₦${(n / 1_000).toFixed(0)}k`;
+  return `₦${n.toLocaleString()}`;
+}
+
+function Skeleton({ className }: { className: string }) {
+  return <div className={`animate-pulse bg-cream rounded-xl ${className}`} />;
+}
+
 export default function BillingPage() {
+  const { token, ready } = useAdminAuth();
+
+  const [overview, setOverview] = useState<BillingOverview | null>(null);
+  const [subscriptions, setSubscriptions] = useState<Sub[]>([]);
+  const [loading, setLoading] = useState(true);
   const [planFilter, setPlanFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
+
+  const load = useCallback(() => {
+    if (!token) return;
+    Promise.all([
+      adminGet<BillingOverview>('/admin/billing/overview', token),
+      adminGet<Sub[]>('/admin/billing/subscriptions', token),
+    ]).then(([ov, subs]) => {
+      setOverview(ov);
+      setSubscriptions(subs);
+    }).catch(() => null).finally(() => setLoading(false));
+  }, [token]);
+
+  useEffect(() => { if (ready) load(); }, [ready, load]);
 
   const filtered = subscriptions.filter(s => {
     const matchesPlan = planFilter === 'all' || s.plan === planFilter;
@@ -59,15 +74,24 @@ export default function BillingPage() {
     return matchesPlan && matchesStatus;
   });
 
+  const stats = overview ? [
+    { label: 'MRR', value: fmtMrr(overview.mrr), change: '' },
+    { label: 'ARR', value: fmtMrr(overview.arr), change: 'Annualised' },
+    { label: 'Active Subscriptions', value: overview.activeSubscriptions.toLocaleString(), change: `${overview.trialsCount} on trial` },
+    { label: 'Trial Conversions', value: `${overview.trialConversionRate.toFixed(0)}%`, change: 'Last 30 days' },
+  ] : null;
+
   return (
     <div className="p-6 lg:p-8 space-y-8">
       {/* Stats */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        {stats.map(s => (
+        {loading ? (
+          Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-24" />)
+        ) : stats?.map(s => (
           <div key={s.label} className="bg-white rounded-2xl border border-cream-dark p-5">
             <p className="text-xs text-primary-warm mb-1">{s.label}</p>
             <p className="text-2xl font-bold text-primary-dark font-heading">{s.value}</p>
-            <p className="text-xs text-primary-warm mt-1">{s.change}</p>
+            {s.change && <p className="text-xs text-primary-warm mt-1">{s.change}</p>}
           </div>
         ))}
       </div>
@@ -75,29 +99,36 @@ export default function BillingPage() {
       {/* Plan distribution */}
       <div className="bg-white rounded-2xl border border-cream-dark p-6">
         <h2 className="text-sm font-semibold text-primary-dark mb-4">Plan distribution</h2>
-        <div className="flex items-center gap-8">
-          <ResponsiveContainer width={180} height={180}>
-            <PieChart>
-              <Pie data={planDist} cx="50%" cy="50%" innerRadius={50} outerRadius={80} dataKey="value" strokeWidth={0}>
-                {planDist.map((entry) => (
-                  <Cell key={entry.name} fill={entry.color} />
-                ))}
-              </Pie>
-              <Tooltip contentStyle={{ borderRadius: 12, border: '1px solid #EAD9BA', fontSize: 12 }} />
-            </PieChart>
-          </ResponsiveContainer>
-          <div className="space-y-3 flex-1">
-            {planDist.map(p => (
-              <div key={p.name} className="flex items-center justify-between">
-                <div className="flex items-center gap-2.5">
-                  <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: p.color }} />
-                  <span className="text-sm text-primary-dark">{p.name}</span>
+        {loading ? <Skeleton className="h-48" /> : (
+          <div className="flex items-center gap-8">
+            <ResponsiveContainer width={180} height={180}>
+              <PieChart>
+                <Pie
+                  data={overview?.planDistribution ?? []}
+                  cx="50%" cy="50%"
+                  innerRadius={50} outerRadius={80}
+                  dataKey="value" strokeWidth={0}
+                >
+                  {(overview?.planDistribution ?? []).map((entry) => (
+                    <Cell key={entry.name} fill={entry.color} />
+                  ))}
+                </Pie>
+                <Tooltip contentStyle={{ borderRadius: 12, border: '1px solid #EAD9BA', fontSize: 12 }} />
+              </PieChart>
+            </ResponsiveContainer>
+            <div className="space-y-3 flex-1">
+              {(overview?.planDistribution ?? []).map(p => (
+                <div key={p.name} className="flex items-center justify-between">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: p.color }} />
+                    <span className="text-sm text-primary-dark">{p.name}</span>
+                  </div>
+                  <span className="text-sm font-semibold text-primary-dark">{p.value} businesses</span>
                 </div>
-                <span className="text-sm font-semibold text-primary-dark">{p.value} businesses</span>
-              </div>
-            ))}
+              ))}
+            </div>
           </div>
-        </div>
+        )}
       </div>
 
       {/* Subscriptions table */}
@@ -136,21 +167,29 @@ export default function BillingPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-cream-dark">
-              {filtered.map(s => (
+              {loading ? (
+                Array.from({ length: 5 }).map((_, i) => (
+                  <tr key={i}>
+                    {[1,2,3,4,5,6].map(j => <td key={j} className="px-4 py-3.5"><div className="h-4 bg-cream rounded animate-pulse w-20" /></td>)}
+                  </tr>
+                ))
+              ) : filtered.map(s => (
                 <tr key={s.id} className="hover:bg-cream-light/40 transition-colors">
                   <td className="px-5 py-3.5 font-medium text-primary-dark">{s.business}</td>
                   <td className="px-4 py-3.5">
-                    <span className={`text-xs font-medium px-2.5 py-0.5 rounded-full ${planColors[s.plan]}`}>{s.plan}</span>
+                    <span className={`text-xs font-medium px-2.5 py-0.5 rounded-full ${planColors[s.plan] ?? 'bg-cream-dark text-primary-warm'}`}>{s.plan}</span>
                   </td>
                   <td className="px-4 py-3.5">
-                    <span className={`text-xs font-medium px-2.5 py-0.5 rounded-full capitalize ${statusColors[s.status]}`}>
+                    <span className={`text-xs font-medium px-2.5 py-0.5 rounded-full capitalize ${statusColors[s.status] ?? 'bg-cream-dark text-primary-warm'}`}>
                       {s.status.replace('_', ' ')}
                     </span>
                   </td>
                   <td className="px-4 py-3.5 text-right font-medium text-primary-dark">
-                    {s.mrr > 0 ? `₦${s.mrr.toLocaleString()}` : '—'}
+                    {s.mrr > 0 ? fmtMrr(s.mrr) : '—'}
                   </td>
-                  <td className="px-4 py-3.5 text-primary-warm">{s.nextBilling}</td>
+                  <td className="px-4 py-3.5 text-primary-warm">
+                    {new Date(s.nextBillingAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                  </td>
                   <td className="px-4 py-3.5">
                     <div className="flex gap-2 justify-end">
                       <button className="text-xs text-primary hover:underline font-medium">Manage</button>
@@ -161,6 +200,9 @@ export default function BillingPage() {
               ))}
             </tbody>
           </table>
+          {!loading && filtered.length === 0 && (
+            <div className="py-16 text-center text-primary-warm text-sm">No subscriptions match your filters.</div>
+          )}
         </div>
       </div>
     </div>

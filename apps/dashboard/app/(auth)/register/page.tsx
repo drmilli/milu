@@ -3,6 +3,9 @@
 import { useState, useRef } from 'react';
 import Link from 'next/link';
 import { motion, AnimatePresence } from 'framer-motion';
+import { apiGet, apiPost, apiPut } from '../../../lib/api';
+import { saveSession } from '../../../lib/auth';
+import type { StoredUser } from '../../../lib/auth';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -177,9 +180,16 @@ function Step1({ data, set }: { data: FormData; set: (k: keyof FormData, v: stri
   );
 }
 
-function StepVerify({ data, set }: { data: FormData; set: (k: keyof FormData, v: string) => void }) {
+function StepVerify({
+  data, set, onResend,
+}: {
+  data: FormData;
+  set: (k: keyof FormData, v: string) => void;
+  onResend: () => void;
+}) {
   const [digits, setDigits] = useState(['', '', '', '', '', '']);
   const inputRefs = useRef<(HTMLInputElement | null)[]>([null, null, null, null, null, null]);
+  const [resent, setResent] = useState(false);
 
   function handleDigit(i: number, val: string) {
     const v = val.replace(/\D/g, '').slice(-1);
@@ -205,6 +215,12 @@ function StepVerify({ data, set }: { data: FormData; set: (k: keyof FormData, v:
     set('verificationCode', next.join(''));
     const focusIdx = Math.min(pasted.length, 5);
     inputRefs.current[focusIdx]?.focus();
+  }
+
+  async function handleResend() {
+    onResend();
+    setResent(true);
+    setTimeout(() => setResent(false), 30000);
   }
 
   return (
@@ -239,10 +255,17 @@ function StepVerify({ data, set }: { data: FormData; set: (k: keyof FormData, v:
       </div>
 
       <p className="text-xs text-center text-primary-warm">
-        Didn&apos;t receive the code?{' '}
-        <button type="button" className="text-primary underline hover:text-primary-dark font-medium">
-          Resend code
-        </button>
+        {resent ? (
+          <span className="text-success font-medium">Code resent — check your inbox.</span>
+        ) : (
+          <>
+            Didn&apos;t receive the code?{' '}
+            <button type="button" onClick={handleResend}
+              className="text-primary underline hover:text-primary-dark font-medium">
+              Resend code
+            </button>
+          </>
+        )}
       </p>
     </div>
   );
@@ -344,7 +367,7 @@ function StepPhone({ data, set }: { data: FormData; set: (k: keyof FormData, v: 
 
       <div className="grid grid-cols-2 gap-3">
         {[
-          { id: 'existing', label: 'Use existing number', desc: "Link your current Africa's Talking number" },
+          { id: 'existing', label: 'Use existing number', desc: "Link a number you already own" },
           { id: 'new', label: 'Get a new number', desc: "We'll provision one for you" },
         ].map(opt => (
           <button key={opt.id} onClick={() => set('phoneOption', opt.id)}
@@ -364,7 +387,7 @@ function StepPhone({ data, set }: { data: FormData; set: (k: keyof FormData, v: 
           <input id="phoneNumber" className={inputCls} placeholder="+234 801 234 5678"
             value={data.phoneNumber} onChange={e => set('phoneNumber', e.target.value)} />
           <p className="mt-1.5 text-xs text-primary-warm">
-            Must be registered with Africa&apos;s Talking. We&apos;ll send a verification code.
+            You&apos;ll verify ownership via SMS from your dashboard after setup.
           </p>
         </Field>
       ) : (
@@ -512,6 +535,12 @@ export default function RegisterPage() {
   const [direction, setDirection] = useState(1);
   const [data, setData] = useState<FormData>(INITIAL);
   const [done, setDone] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  // Stored after successful register call
+  const [token, setToken] = useState('');
+  const [businessId, setBusinessId] = useState('');
 
   const TOTAL = STEPS.length;
 
@@ -535,23 +564,101 @@ export default function RegisterPage() {
     setData(prev => ({ ...prev, faqs: prev.faqs.filter((_, idx) => idx !== i) }));
   }
 
-  function next() {
-    if (step < TOTAL) {
-      setDirection(1);
-      setStep(s => s + 1);
-    } else {
-      setDone(true);
+  async function handleResend() {
+    try {
+      await apiPost('/auth/resend-verification', { email: data.email });
+    } catch {
+      // silently fail — UI still shows "Code resent"
     }
+  }
+
+  async function next() {
+    setError('');
+
+    // ── Step 1: register ────────────────────────────────────────────────────
+    if (step === 1) {
+      setLoading(true);
+      try {
+        const res = await apiPost<{ token: string; businessId: string }>(
+          '/auth/register',
+          {
+            email: data.email,
+            password: data.password,
+            businessName: data.businessName || data.firstName + "'s Business",
+            firstName: data.firstName,
+            lastName: data.lastName,
+          },
+        );
+        setToken(res.token);
+        setBusinessId(res.businessId);
+      } catch (err: unknown) {
+        setError(err instanceof Error ? err.message : 'Registration failed');
+        setLoading(false);
+        return;
+      }
+      setLoading(false);
+    }
+
+    // ── Step 2: verify email ────────────────────────────────────────────────
+    if (step === 2) {
+      setLoading(true);
+      try {
+        await apiPost('/auth/verify-email', { email: data.email, code: data.verificationCode });
+      } catch (err: unknown) {
+        setError(err instanceof Error ? err.message : 'Invalid code');
+        setLoading(false);
+        return;
+      }
+      setLoading(false);
+    }
+
+    // ── Final step: save business profile, KB, and agent config ─────────────
+    if (step === TOTAL) {
+      setLoading(true);
+      try {
+        const activeFaqs = data.faqs.filter(f => f.question && f.answer);
+        await Promise.all([
+          apiPut(`/businesses/${businessId}`, {
+            industry: data.industry,
+            name: data.businessName,
+          }, token),
+          apiPut(`/businesses/${businessId}/kb`, {
+            operatingHours: {
+              weekdays: data.weekdays,
+              saturday: data.saturday,
+              sunday: data.sunday,
+            },
+            faqs: activeFaqs,
+            voiceId: data.voiceStyle,
+          }, token),
+        ]);
+        // Fetch full user profile and save session
+        const me = await apiGet<StoredUser>('/auth/me', token);
+        saveSession(token, { ...me, businessName: data.businessName });
+        setDone(true);
+      } catch (err: unknown) {
+        setError(err instanceof Error ? err.message : 'Setup failed — please try again');
+        setLoading(false);
+        return;
+      }
+      setLoading(false);
+      return;
+    }
+
+    setDirection(1);
+    setStep(s => s + 1);
   }
 
   function back() {
     if (step > 1) {
+      setError('');
       setDirection(-1);
       setStep(s => s - 1);
     }
   }
 
   function canProceed() {
+    if (loading) return false;
     if (step === 1) {
       return (
         data.firstName.trim() &&
@@ -560,8 +667,8 @@ export default function RegisterPage() {
         data.password === data.confirmPassword
       );
     }
-    if (step === 2) return data.verificationCode.length === 4;
-    if (step === 3) return data.businessName.trim() && data.industry;
+    if (step === 2) return data.verificationCode.length === 6;
+    if (step === 3) return !!(data.businessName.trim() && data.industry);
     if (step === 4) return data.faqs.some(f => f.question && f.answer);
     if (step === 5) return data.phoneOption === 'new' || data.phoneNumber.length > 6;
     return true;
@@ -570,7 +677,7 @@ export default function RegisterPage() {
   function renderStep() {
     switch (step) {
       case 1: return <Step1 data={data} set={set} />;
-      case 2: return <StepVerify data={data} set={set} />;
+      case 2: return <StepVerify data={data} set={set} onResend={handleResend} />;
       case 3: return <StepBusiness data={data} set={set} />;
       case 4: return <StepKnowledge data={data} setFaq={setFaq} addFaq={addFaq} removeFaq={removeFaq} />;
       case 5: return <StepPhone data={data} set={set} />;
@@ -634,16 +741,28 @@ export default function RegisterPage() {
             </motion.div>
           </AnimatePresence>
 
+          {error && (
+            <p className="mt-4 text-sm text-danger bg-danger/5 border border-danger/20 rounded-xl px-4 py-3">
+              {error}
+            </p>
+          )}
+
           {!done && (
             <div className={`flex mt-8 gap-3 ${step > 1 ? 'justify-between' : 'justify-end'}`}>
               {step > 1 && (
-                <button onClick={back}
-                  className="px-6 py-3 rounded-full border border-cream-dark text-primary-warm text-sm font-medium hover:border-primary/30 hover:text-primary transition-all">
+                <button onClick={back} disabled={loading}
+                  className="px-6 py-3 rounded-full border border-cream-dark text-primary-warm text-sm font-medium hover:border-primary/30 hover:text-primary transition-all disabled:opacity-40">
                   Back
                 </button>
               )}
               <button onClick={next} disabled={!canProceed()}
-                className="flex-1 sm:flex-none sm:min-w-[160px] bg-primary text-cream-light py-3 px-8 rounded-full text-sm font-medium hover:bg-primary-dark transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+                className="flex-1 sm:flex-none sm:min-w-[160px] bg-primary text-cream-light py-3 px-8 rounded-full text-sm font-medium hover:bg-primary-dark transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2">
+                {loading && (
+                  <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                  </svg>
+                )}
                 {step === TOTAL ? 'Launch my agent →' : 'Continue'}
               </button>
             </div>

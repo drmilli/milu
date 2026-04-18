@@ -1,150 +1,485 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
+import { useAuth } from '../../../hooks/useAuth';
+import { apiGet } from '../../../lib/api';
 
-const invoices = [
-  { id: 'INV-0012', date: 'Apr 1, 2025', amount: '₦45,000', status: 'paid' },
-  { id: 'INV-0011', date: 'Mar 1, 2025', amount: '₦45,000', status: 'paid' },
-  { id: 'INV-0010', date: 'Feb 1, 2025', amount: '₦45,000', status: 'paid' },
-  { id: 'INV-0009', date: 'Jan 1, 2025', amount: '₦15,000', status: 'paid' },
+// ─── Whop plan config ─────────────────────────────────────────────────────────
+// Fill in your Whop checkout links below.
+// NGN plans for Nigerian users, USD plans for everyone else.
+
+interface WhopPlan {
+  id: string;
+  name: string;
+  tagline: string;
+  billing: 'one_time' | 'monthly' | 'sales';
+  callLimit: number | null;
+  memberLimit: number | null;
+  features: string[];
+  highlighted: boolean;
+  ngn: { price: number; checkoutUrl: string } | null;
+  usd: { price: number; checkoutUrl: string } | null;
+}
+
+const SHARED_FEATURES = [
+  '200 AI calls / month',
+  '1 team member',
+  'Knowledge base & FAQ handling',
+  'Basic analytics',
+  'Email support',
+  'Booking + escalation',
+  'Full analytics',
+  'WhatsApp alerts',
 ];
 
+const PLANS: WhopPlan[] = [
+  {
+    id: 'one_time',
+    name: 'One-time',
+    tagline: 'Pay once, use for one month',
+    billing: 'one_time',
+    callLimit: 200,
+    memberLimit: 1,
+    features: SHARED_FEATURES,
+    highlighted: false,
+    ngn: { price: 25000, checkoutUrl: 'https://whop.com/checkout/plan_fx5MUn7M4Z7an' },
+    usd: { price: 20, checkoutUrl: 'https://whop.com/checkout/plan_wVq0cVPGuVcNM' },
+  },
+  {
+    id: 'starter',
+    name: 'Starter',
+    tagline: 'Best value for consistent monthly use',
+    billing: 'monthly',
+    callLimit: 200,
+    memberLimit: 1,
+    features: SHARED_FEATURES,
+    highlighted: false,
+    ngn: { price: 15000, checkoutUrl: 'https://whop.com/checkout/plan_1QRJ7Yafk8U66' },
+    usd: { price: 10, checkoutUrl: 'https://whop.com/checkout/plan_NP7nmD2igcr6r' },
+  },
+  {
+    id: 'growth',
+    name: 'Growth',
+    tagline: 'More calls for busier businesses',
+    billing: 'monthly',
+    callLimit: 500,
+    memberLimit: null,
+    features: [
+      '500 AI calls / month',
+      'Unlimited team members',
+      'Knowledge base & FAQ handling',
+      'Booking + escalation',
+      'Full analytics',
+      'WhatsApp alerts',
+      'Priority support',
+    ],
+    highlighted: true,
+    ngn: { price: 45000, checkoutUrl: 'https://whop.com/checkout/plan_Zuy6tvIe36zPE' },
+    usd: { price: 30, checkoutUrl: 'https://whop.com/checkout/plan_2KpoWlIQeuDfL' },
+  },
+  {
+    id: 'enterprise',
+    name: 'Enterprise',
+    tagline: 'Custom volume and dedicated support',
+    billing: 'sales',
+    callLimit: null,
+    memberLimit: null,
+    features: [
+      'Unlimited AI calls',
+      'Unlimited team members',
+      'Custom voice & greeting',
+      'Dedicated account manager',
+      'SLA guarantee',
+      'Custom integrations',
+    ],
+    highlighted: false,
+    ngn: null,
+    usd: null,
+  },
+];
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+interface Subscription {
+  planId: string;
+  planName: string;
+  status: 'active' | 'trialing' | 'cancelled' | 'past_due';
+  price: number;
+  currency: string;
+  renewsAt: string;
+  usage: {
+    calls: { used: number; limit: number | null };
+    teamMembers: { used: number; limit: number | null };
+  };
+}
+
+interface Invoice {
+  id: string;
+  date: string;
+  amount: number;
+  currency: string;
+  status: 'paid' | 'open' | 'void';
+  invoiceUrl?: string;
+}
+
+type Region = 'ng' | 'intl';
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function fmtPrice(plan: WhopPlan, region: Region) {
+  if (region === 'ng') return plan.ngn ? '₦' + plan.ngn.price.toLocaleString('en-NG') : null;
+  return plan.usd ? '$' + plan.usd.price : null;
+}
+
+function fmtAmount(amount: number, currency: string) {
+  if (currency === 'NGN') return '₦' + amount.toLocaleString('en-NG');
+  return '$' + amount.toLocaleString('en-US', { minimumFractionDigits: 2 });
+}
+
+function fmtDate(iso: string) {
+  return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+function UsageBar({ label, used, limit }: { label: string; used: number; limit: number | null }) {
+  const pct = limit ? Math.min(100, (used / limit) * 100) : 0;
+  const isHigh = pct >= 80;
+  return (
+    <div>
+      <div className="flex items-center justify-between text-xs text-primary-warm mb-1.5">
+        <span>{label}</span>
+        <span className={`font-medium ${isHigh ? 'text-warning' : 'text-primary-dark'}`}>
+          {used.toLocaleString()} / {limit ? limit.toLocaleString() : '∞'}
+        </span>
+      </div>
+      <div className="h-2 bg-cream rounded-full overflow-hidden">
+        <div
+          className={`h-full rounded-full transition-all ${isHigh ? 'bg-warning' : 'bg-primary'}`}
+          style={{ width: limit ? `${pct}%` : '0%' }}
+        />
+      </div>
+    </div>
+  );
+}
+
+// ─── Main ─────────────────────────────────────────────────────────────────────
+
 export default function BillingPage() {
-  const [showUpgrade, setShowUpgrade] = useState(false);
+  const { token, user, ready } = useAuth();
+  const businessId = user?.businessId ?? '';
+
+  const [sub, setSub] = useState<Subscription | null>(null);
+  const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const [region, setRegion] = useState<Region>('ng');
+  const [regionDetected, setRegionDetected] = useState(false);
+
+  const [showPlans, setShowPlans] = useState(false);
+  const [checkoutTarget, setCheckoutTarget] = useState<string | null>(null);
+
+  // Detect country from IP
+  useEffect(() => {
+    fetch('https://api.country.is/')
+      .then(r => r.json())
+      .then((data: { country: string }) => {
+        setRegion(data.country === 'NG' ? 'ng' : 'intl');
+        setRegionDetected(true);
+      })
+      .catch(() => {
+        // Fall back to NGN if detection fails — safer for the primary market
+        setRegion('ng');
+        setRegionDetected(true);
+      });
+  }, []);
+
+  const load = useCallback(() => {
+    if (!token || !businessId) return;
+    Promise.all([
+      apiGet<Subscription>(`/billing/subscription/${businessId}`, token),
+      apiGet<Invoice[]>(`/billing/invoices/${businessId}`, token),
+    ]).then(([subscription, invoiceList]) => {
+      setSub(subscription);
+      setInvoices(invoiceList);
+    }).catch(() => null).finally(() => setLoading(false));
+  }, [token, businessId]);
+
+  useEffect(() => { if (ready) load(); }, [ready, load]);
+
+  function goToCheckout(plan: WhopPlan) {
+    const pricing = region === 'ng' ? plan.ngn : plan.usd;
+    if (!pricing) return;
+    setCheckoutTarget(plan.id);
+    window.location.href = pricing.checkoutUrl;
+  }
+
+  const activePlan = PLANS.find(p => p.id === sub?.planId || p.name === sub?.planName);
 
   return (
     <div className="p-6 lg:p-8 max-w-3xl space-y-8">
-      <div>
-        <h1 className="font-heading font-bold text-2xl text-primary-dark">Billing</h1>
-        <p className="text-sm text-primary-warm mt-0.5">Manage your plan, usage, and payment details.</p>
+      {/* Header */}
+      <div className="flex items-start justify-between">
+        <div>
+          <h1 className="font-heading font-bold text-2xl text-primary-dark">Billing</h1>
+          <p className="text-sm text-primary-warm mt-0.5">Manage your plan, usage, and payment history.</p>
+        </div>
+
+        {/* Currency toggle */}
+        {regionDetected && (
+          <div className="flex items-center gap-1 bg-cream rounded-xl border border-cream-dark p-1">
+            <button
+              onClick={() => setRegion('ng')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                region === 'ng' ? 'bg-white text-primary-dark shadow-sm' : 'text-primary-warm hover:text-primary-dark'
+              }`}
+            >
+              ₦ NGN
+            </button>
+            <button
+              onClick={() => setRegion('intl')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                region === 'intl' ? 'bg-white text-primary-dark shadow-sm' : 'text-primary-warm hover:text-primary-dark'
+              }`}
+            >
+              $ USD
+            </button>
+          </div>
+        )}
       </div>
 
-      {/* Current plan */}
+      {/* Current plan / usage */}
       <div className="bg-white rounded-2xl border border-cream-dark p-6">
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <p className="text-xs font-medium text-primary-warm uppercase tracking-wider mb-1">Current plan</p>
-            <div className="flex items-center gap-3">
-              <p className="font-heading font-bold text-2xl text-primary-dark">Growth</p>
-              <span className="text-xs font-medium px-2.5 py-1 rounded-full bg-success/10 text-success">Active</span>
-            </div>
-            <p className="text-sm text-primary-warm mt-1">₦45,000 / month · Renews May 1, 2025</p>
+        {loading ? (
+          <div className="space-y-3 animate-pulse">
+            <div className="h-5 bg-cream rounded w-24" />
+            <div className="h-8 bg-cream rounded w-40" />
+            <div className="h-4 bg-cream rounded w-52" />
+            <div className="h-2 bg-cream rounded-full mt-6" />
+            <div className="h-2 bg-cream rounded-full" />
           </div>
-          <button
-            onClick={() => setShowUpgrade(!showUpgrade)}
-            className="text-sm text-primary border border-primary/30 px-4 py-2 rounded-xl hover:bg-primary hover:text-cream-light transition-colors flex-shrink-0"
-          >
-            Change plan
-          </button>
-        </div>
+        ) : sub ? (
+          <>
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-xs font-medium text-primary-warm uppercase tracking-wider mb-1">Current plan</p>
+                <div className="flex items-center gap-3 flex-wrap">
+                  <p className="font-heading font-bold text-2xl text-primary-dark">{sub.planName}</p>
+                  <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${
+                    sub.status === 'active' ? 'bg-success/10 text-success' :
+                    sub.status === 'trialing' ? 'bg-primary/10 text-primary' :
+                    sub.status === 'past_due' ? 'bg-warning/10 text-warning' :
+                    'bg-danger/10 text-danger'
+                  }`}>
+                    {sub.status === 'active' ? 'Active'
+                      : sub.status === 'trialing' ? 'Trial'
+                      : sub.status === 'past_due' ? 'Past due'
+                      : 'Cancelled'}
+                  </span>
+                </div>
+                <p className="text-sm text-primary-warm mt-1">
+                  {fmtAmount(sub.price, sub.currency)} / month
+                  {sub.status !== 'cancelled' && ` · Renews ${fmtDate(sub.renewsAt)}`}
+                </p>
+              </div>
+              <button
+                onClick={() => setShowPlans(v => !v)}
+                className="text-sm text-primary border border-primary/30 px-4 py-2 rounded-xl hover:bg-primary hover:text-cream-light transition-colors flex-shrink-0"
+              >
+                {showPlans ? 'Hide plans' : 'Change plan'}
+              </button>
+            </div>
 
-        {/* Usage meters */}
-        <div className="mt-6 space-y-4">
-          <div>
-            <div className="flex items-center justify-between text-xs text-primary-warm mb-1.5">
-              <span>Calls used this month</span>
-              <span className="font-medium text-primary-dark">223 / 1,000</span>
+            <div className="mt-6 space-y-4">
+              <UsageBar label="Calls used this month"
+                used={sub.usage.calls.used}
+                limit={sub.usage.calls.limit} />
+              <UsageBar label="Team members"
+                used={sub.usage.teamMembers.used}
+                limit={sub.usage.teamMembers.limit} />
             </div>
-            <div className="h-2 bg-cream rounded-full overflow-hidden">
-              <div className="h-full bg-primary rounded-full" style={{ width: '22.3%' }} />
-            </div>
+          </>
+        ) : (
+          <div className="text-center py-4 space-y-3">
+            <p className="text-sm text-primary-warm">You&apos;re not on a paid plan yet.</p>
+            <button onClick={() => setShowPlans(true)}
+              className="bg-primary text-cream-light px-5 py-2 rounded-xl text-sm font-medium hover:bg-primary-dark transition-colors">
+              Choose a plan
+            </button>
           </div>
-          <div>
-            <div className="flex items-center justify-between text-xs text-primary-warm mb-1.5">
-              <span>Team members</span>
-              <span className="font-medium text-primary-dark">4 / 10</span>
-            </div>
-            <div className="h-2 bg-cream rounded-full overflow-hidden">
-              <div className="h-full bg-primary rounded-full" style={{ width: '40%' }} />
-            </div>
-          </div>
-        </div>
+        )}
       </div>
 
-      {/* Upgrade panel */}
-      {showUpgrade && (
-        <div className="bg-white rounded-2xl border-2 border-primary/25 p-6">
-          <h2 className="font-semibold text-primary-dark mb-4">Choose a plan</h2>
-          <div className="grid sm:grid-cols-3 gap-4">
-            {[
-              { name: 'Starter', price: '₦15,000', calls: '200 calls/mo', current: false },
-              { name: 'Growth', price: '₦45,000', calls: '1,000 calls/mo', current: true },
-              { name: 'Enterprise', price: 'Custom', calls: 'Unlimited', current: false },
-            ].map((p) => (
-              <div
-                key={p.name}
-                className={`p-4 rounded-xl border text-center transition-colors ${
-                  p.current
-                    ? 'border-primary/40 bg-primary/4'
-                    : 'border-cream-dark hover:border-primary/25 cursor-pointer'
-                }`}
-              >
-                <p className="font-semibold text-primary-dark">{p.name}</p>
-                <p className="font-heading font-bold text-xl text-primary-dark mt-1">{p.price}</p>
-                <p className="text-xs text-primary-warm mt-1">{p.calls}</p>
-                {p.current ? (
-                  <span className="mt-3 inline-block text-xs text-primary font-medium">Current plan</span>
-                ) : (
-                  <button className="mt-3 text-xs text-primary border border-primary/30 px-3 py-1.5 rounded-lg hover:bg-primary hover:text-cream-light transition-colors">
-                    {p.name === 'Enterprise' ? 'Contact us' : 'Switch'}
-                  </button>
-                )}
-              </div>
-            ))}
+      {/* Plan picker */}
+      {showPlans && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <h2 className="font-semibold text-primary-dark">Choose a plan</h2>
+            <span className="text-xs text-primary-warm">
+              Showing prices in {region === 'ng' ? 'Nigerian Naira (₦)' : 'US Dollars ($)'}
+            </span>
           </div>
+
+          <div className="grid sm:grid-cols-3 gap-4">
+            {PLANS.map(plan => {
+              const isCurrent = activePlan?.id === plan.id;
+              return (
+                <div key={plan.id}
+                  className={`relative rounded-2xl border-2 p-5 flex flex-col transition-all ${
+                    plan.highlighted
+                      ? 'border-primary bg-primary/3'
+                      : isCurrent
+                      ? 'border-success/40 bg-success/3'
+                      : 'border-cream-dark bg-white hover:border-primary/30'
+                  }`}
+                >
+                  {plan.highlighted && (
+                    <span className="absolute -top-3 left-1/2 -translate-x-1/2 bg-primary text-cream-light text-[10px] font-bold px-3 py-1 rounded-full uppercase tracking-wider">
+                      Most popular
+                    </span>
+                  )}
+
+                  <div className="mb-4">
+                    <p className="font-semibold text-primary-dark">{plan.name}</p>
+                    <p className="text-xs text-primary-warm mt-0.5">{plan.tagline}</p>
+                  </div>
+
+                  <div className="mb-4">
+                    {fmtPrice(plan, region) ? (
+                      <>
+                        <span className="font-heading font-bold text-2xl text-primary-dark">
+                          {fmtPrice(plan, region)}
+                        </span>
+                        <span className="text-xs text-primary-warm ml-1">
+                          {plan.billing === 'one_time' ? 'one time' : '/ month'}
+                        </span>
+                      </>
+                    ) : (
+                      <span className="font-heading font-bold text-2xl text-primary-dark">Custom</span>
+                    )}
+                  </div>
+
+                  <ul className="space-y-2 flex-1 mb-5">
+                    {plan.features.map(f => (
+                      <li key={f} className="flex items-start gap-2 text-xs text-primary-warm">
+                        <svg className="w-3.5 h-3.5 text-success flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+                        </svg>
+                        {f}
+                      </li>
+                    ))}
+                  </ul>
+
+                  {isCurrent ? (
+                    <span className="text-center text-xs font-medium text-success py-2">
+                      ✓ Current plan
+                    </span>
+                  ) : plan.billing === 'sales' ? (
+                    <a
+                      href="mailto:support@miluai.app?subject=Enterprise%20plan%20enquiry"
+                      className="w-full py-2.5 rounded-xl text-sm font-medium transition-colors border border-primary/30 text-primary hover:bg-primary hover:text-cream-light flex items-center justify-center"
+                    >
+                      Contact sales
+                    </a>
+                  ) : (
+                    <button
+                      onClick={() => goToCheckout(plan)}
+                      disabled={checkoutTarget === plan.id}
+                      className={`w-full py-2.5 rounded-xl text-sm font-medium transition-colors disabled:opacity-50 flex items-center justify-center gap-2 ${
+                        plan.highlighted
+                          ? 'bg-primary text-cream-light hover:bg-primary-dark'
+                          : 'border border-primary/30 text-primary hover:bg-primary hover:text-cream-light'
+                      }`}
+                    >
+                      {checkoutTarget === plan.id ? (
+                        <>
+                          <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                          </svg>
+                          Redirecting…
+                        </>
+                      ) : sub ? 'Switch to this plan' : 'Get started'}
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          <p className="text-xs text-center text-primary-warm">
+            Payments processed securely via{' '}
+            <a href="https://whop.com" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
+              Whop
+            </a>
+            . Prices shown in {region === 'ng' ? 'Nigerian Naira' : 'US Dollars'}.
+          </p>
         </div>
       )}
-
-      {/* Payment method */}
-      <div className="bg-white rounded-2xl border border-cream-dark p-6">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="font-semibold text-primary-dark">Payment method</h2>
-          <button className="text-xs text-primary hover:underline">Update</button>
-        </div>
-        <div className="flex items-center gap-4 p-4 bg-cream-light rounded-xl border border-cream-dark">
-          <div className="w-10 h-7 rounded bg-primary-dark flex items-center justify-center flex-shrink-0">
-            <span className="text-xs font-bold text-cream-light">VISA</span>
-          </div>
-          <div>
-            <p className="text-sm font-medium text-primary-dark">•••• •••• •••• 4242</p>
-            <p className="text-xs text-primary-warm">Expires 09/27</p>
-          </div>
-          <span className="ml-auto text-xs font-medium px-2.5 py-1 rounded-full bg-success/10 text-success">Default</span>
-        </div>
-      </div>
 
       {/* Invoice history */}
       <div className="bg-white rounded-2xl border border-cream-dark">
         <div className="px-6 py-4 border-b border-cream-dark">
           <h2 className="font-semibold text-primary-dark">Invoice history</h2>
         </div>
-        <div className="divide-y divide-cream-dark">
-          {invoices.map((inv) => (
-            <div key={inv.id} className="flex items-center gap-4 px-6 py-3.5">
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium text-primary-dark">{inv.id}</p>
-                <p className="text-xs text-primary-warm">{inv.date}</p>
+        {loading ? (
+          <div className="divide-y divide-cream-dark">
+            {[1, 2, 3].map(i => (
+              <div key={i} className="flex items-center gap-4 px-6 py-3.5 animate-pulse">
+                <div className="flex-1 space-y-1.5">
+                  <div className="h-4 bg-cream rounded w-28" />
+                  <div className="h-3 bg-cream rounded w-20" />
+                </div>
+                <div className="h-4 bg-cream rounded w-20" />
+                <div className="h-6 bg-cream rounded-full w-14" />
               </div>
-              <p className="text-sm font-medium text-primary-dark">{inv.amount}</p>
-              <span className="text-xs font-medium px-2.5 py-1 rounded-full bg-success/10 text-success w-14 text-center">
-                {inv.status}
-              </span>
-              <button className="text-xs text-primary hover:underline">Download</button>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        ) : invoices.length === 0 ? (
+          <p className="text-sm text-primary-warm text-center py-8">No invoices yet.</p>
+        ) : (
+          <div className="divide-y divide-cream-dark">
+            {invoices.map(inv => (
+              <div key={inv.id} className="flex items-center gap-4 px-6 py-3.5">
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-primary-dark">{inv.id}</p>
+                  <p className="text-xs text-primary-warm">{fmtDate(inv.date)}</p>
+                </div>
+                <p className="text-sm font-medium text-primary-dark whitespace-nowrap">
+                  {fmtAmount(inv.amount, inv.currency)}
+                </p>
+                <span className={`text-xs font-medium px-2.5 py-1 rounded-full w-14 text-center flex-shrink-0 ${
+                  inv.status === 'paid' ? 'bg-success/10 text-success' :
+                  inv.status === 'open' ? 'bg-warning/10 text-warning' :
+                  'bg-cream-dark text-primary-warm'
+                }`}>
+                  {inv.status}
+                </span>
+                {inv.invoiceUrl && (
+                  <a href={inv.invoiceUrl} target="_blank" rel="noopener noreferrer"
+                    className="text-xs text-primary hover:underline flex-shrink-0">
+                    Download
+                  </a>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
-      {/* Cancel */}
-      <div className="bg-white rounded-2xl border border-danger/20 p-5">
-        <h2 className="font-semibold text-danger mb-1">Cancel subscription</h2>
-        <p className="text-sm text-primary-warm mb-4">
-          Your agent will stop answering calls at the end of the current billing period.
-        </p>
-        <button className="text-sm text-danger border border-danger/30 px-4 py-2 rounded-xl hover:bg-danger/4 transition-colors">
-          Cancel plan
-        </button>
-      </div>
+      {/* Cancel / manage */}
+      {sub && sub.status !== 'cancelled' && (
+        <div className="bg-white rounded-2xl border border-danger/20 p-5">
+          <h2 className="font-semibold text-danger mb-1">Cancel subscription</h2>
+          <p className="text-sm text-primary-warm mb-4">
+            Your agent will keep answering calls until the end of your current billing period. To cancel, contact us.
+          </p>
+          <a
+            href="mailto:support@miluai.app?subject=Cancel%20my%20subscription"
+            className="inline-block text-sm text-danger border border-danger/30 px-4 py-2 rounded-xl hover:bg-danger/4 transition-colors"
+          >
+            Contact support to cancel
+          </a>
+        </div>
+      )}
     </div>
   );
 }

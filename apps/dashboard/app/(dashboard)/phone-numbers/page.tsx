@@ -1,26 +1,36 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
+import { useAuth } from '../../../hooks/useAuth';
+import { apiGet, apiPost } from '../../../lib/api';
 
 type PhoneEntry = {
   id: string;
   number: string;
   label: string | null;
   verified: boolean;
-  since: string;
+  createdAt?: string;
 };
 
 type Step = 'idle' | 'sending' | 'awaiting_code' | 'verifying' | 'done';
 
 const inputCls = 'w-full px-4 py-2.5 rounded-xl border border-cream-dark bg-cream-light text-sm text-primary-dark placeholder:text-cream-dark focus:outline-none focus:border-primary/50 focus:ring-2 focus:ring-primary/10 transition-all';
 
-const MOCK: PhoneEntry[] = [
-  { id: '1', number: '+234 700 654 3210', label: 'Main line', verified: true, since: 'Mar 2025' },
-];
-
 export default function PhoneNumbersPage() {
-  const [numbers, setNumbers] = useState<PhoneEntry[]>(MOCK);
+  const { token, user, ready } = useAuth();
+  const businessId = user?.businessId ?? '';
+
+  const [numbers, setNumbers] = useState<PhoneEntry[]>([]);
+  const [loadingNums, setLoadingNums] = useState(true);
   const [showForm, setShowForm] = useState(false);
+
+  const load = useCallback(() => {
+    if (!token || !businessId) return;
+    apiGet<PhoneEntry[]>(`/businesses/${businessId}/phone-numbers`, token)
+      .then(setNumbers).catch(() => null).finally(() => setLoadingNums(false));
+  }, [token, businessId]);
+
+  useEffect(() => { if (ready) load(); }, [ready, load]);
 
   const [inputNumber, setInputNumber] = useState('');
   const [inputLabel, setInputLabel] = useState('');
@@ -46,14 +56,15 @@ export default function PhoneNumbersPage() {
     setError('');
     setStep('sending');
     try {
-      // await fetch(`/api/v1/businesses/${BIZ_ID}/phone-numbers/send-otp`, {
-      //   method: 'POST', body: JSON.stringify({ number: inputNumber })
-      // })
-      await new Promise((r) => setTimeout(r, 1200));
+      const res = await apiPost<{ message: string; devCode?: string }>(
+        `/businesses/${businessId}/phone-numbers/send-otp`, { number: inputNumber }, token,
+      );
       setStep('awaiting_code');
       startCooldown();
-    } catch {
-      setError('Failed to send SMS. Check the number and try again.');
+      // Dev mode: API couldn't send SMS, pre-fill the code
+      if (res.devCode) setCode(res.devCode);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to send SMS. Check the number and try again.');
       setStep('idle');
     }
   }
@@ -63,21 +74,14 @@ export default function PhoneNumbersPage() {
     setError('');
     setStep('verifying');
     try {
-      // await fetch(`/api/v1/businesses/${BIZ_ID}/phone-numbers/verify`, {
-      //   method: 'POST', body: JSON.stringify({ number: inputNumber, code, label: inputLabel })
-      // })
-      await new Promise((r) => setTimeout(r, 1000));
-      setNumbers((prev) => [{
-        id: Date.now().toString(),
-        number: inputNumber,
-        label: inputLabel || null,
-        verified: true,
-        since: new Date().toLocaleDateString('en-US', { month: 'short', year: 'numeric' }),
-      }, ...prev]);
+      const newNum = await apiPost<PhoneEntry>(`/businesses/${businessId}/phone-numbers/verify`, {
+        number: inputNumber, code, label: inputLabel || undefined,
+      }, token);
+      setNumbers(prev => [newNum, ...prev]);
       setStep('done');
       setTimeout(resetForm, 1800);
-    } catch {
-      setError('Incorrect code. Please try again.');
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Incorrect code. Please try again.');
       setStep('awaiting_code');
     }
   }
@@ -114,6 +118,15 @@ export default function PhoneNumbersPage() {
 
       {/* Existing numbers */}
       <div className="space-y-3">
+        {loadingNums && (
+          <div className="bg-white rounded-2xl border border-cream-dark p-5 flex items-center gap-4 animate-pulse">
+            <div className="w-10 h-10 rounded-xl bg-cream flex-shrink-0" />
+            <div className="flex-1 space-y-2"><div className="h-4 bg-cream rounded w-40" /><div className="h-3 bg-cream rounded w-32" /></div>
+          </div>
+        )}
+        {!loadingNums && numbers.length === 0 && !showForm && (
+          <p className="text-sm text-primary-warm py-4">No numbers connected yet.</p>
+        )}
         {numbers.map((n) => (
           <div key={n.id} className="bg-white rounded-2xl border border-cream-dark p-5 flex items-center gap-4">
             <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${n.verified ? 'bg-success/10' : 'bg-warning/10'}`}>
@@ -123,7 +136,9 @@ export default function PhoneNumbersPage() {
             </div>
             <div className="flex-1 min-w-0">
               <p className="font-medium text-primary-dark">{n.number}</p>
-              <p className="text-xs text-primary-warm">{n.label ?? 'No label'} · Connected since {n.since}</p>
+              <p className="text-xs text-primary-warm">
+                {n.label ?? 'No label'}{n.createdAt ? ` · Connected ${new Date(n.createdAt).toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}` : ''}
+              </p>
             </div>
             <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${n.verified ? 'bg-success/10 text-success' : 'bg-warning/10 text-warning'}`}>
               {n.verified ? 'Verified' : 'Unverified'}
@@ -275,7 +290,7 @@ export default function PhoneNumbersPage() {
           <path strokeLinecap="round" strokeLinejoin="round" d="M11.25 11.25l.041-.02a.75.75 0 011.063.852l-.708 2.836a.75.75 0 001.063.853l.041-.021M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9-3.75h.008v.008H12V8.25z" />
         </svg>
         <p className="text-xs text-primary-dark leading-relaxed">
-          Only <strong>verified</strong> numbers receive inbound calls through Milu. The number must be registered on Africa&apos;s Talking — we configure the voice webhook automatically after verification.
+          Only <strong>verified</strong> numbers receive inbound calls through Milu. Add any number you own — we&apos;ll send a 6-digit SMS to confirm ownership, then configure call routing automatically.
         </p>
       </div>
     </div>

@@ -1,65 +1,133 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
+import { useParams } from 'next/navigation';
+import { useAdminAuth } from '../../../../hooks/useAdminAuth';
+import { adminGet, adminPatch } from '../../../../lib/api';
 
-// Mock data — in production, fetched by business ID
-const business = {
-  id: 'b1',
-  name: "Amaka's Boutique",
-  owner: 'Amaka Obi',
-  email: 'amaka@boutique.ng',
-  phone: '+234 803 111 2222',
-  plan: 'Growth',
-  status: 'active',
-  industry: 'Retail & e-commerce',
-  joined: '2024-01-15',
-  mrr: 45000,
-  callsThisMonth: 847,
-  callsTotal: 3241,
-  resolutionRate: 89,
-  escalations: 12,
-  agentVoice: 'Warm',
-  agentTone: 'Friendly & helpful',
-  greeting: 'Hello, thank you for calling Amaka\'s Boutique. How can I help you today?',
-  faqCount: 14,
-};
-
-const recentCalls = [
-  { id: 'c1', caller: '+234 803 444 5555', duration: '1m 32s', status: 'resolved', intent: 'Price enquiry', time: '10 min ago' },
-  { id: 'c2', caller: '+234 706 888 9999', duration: '3m 47s', status: 'escalated', intent: 'Return request', time: '42 min ago' },
-  { id: 'c3', caller: '+234 812 222 3333', duration: '0m 58s', status: 'resolved', intent: 'Opening hours', time: '1h ago' },
-  { id: 'c4', caller: '+234 816 777 8888', duration: '2m 11s', status: 'resolved', intent: 'Order status', time: '2h ago' },
-  { id: 'c5', caller: '+234 701 555 6666', duration: '—', status: 'missed', intent: '—', time: '3h ago' },
-];
-
-const team = [
-  { name: 'Amaka Obi', email: 'amaka@boutique.ng', role: 'Owner' },
-  { name: 'Chidi Nwosu', email: 'chidi@boutique.ng', role: 'Admin' },
-];
-
-const invoices = [
-  { id: 'INV-001', date: '2024-04-01', amount: 45000, status: 'paid' },
-  { id: 'INV-002', date: '2024-03-01', amount: 45000, status: 'paid' },
-  { id: 'INV-003', date: '2024-02-01', amount: 45000, status: 'paid' },
-];
+interface BusinessDetail {
+  id: string;
+  name: string;
+  owner: string;
+  email: string;
+  phone?: string;
+  plan: string;
+  status: string;
+  industry: string;
+  joined: string;
+  mrr: number;
+  callsThisMonth: number;
+  callsTotal: number;
+  resolutionRate: number;
+  escalations: number;
+  agent?: {
+    voiceId?: string;
+    tone?: string;
+    greeting?: string;
+    faqCount?: number;
+  };
+  team?: { id: string; name: string; email: string; role: string }[];
+  recentCalls?: {
+    id: string;
+    caller: string;
+    durationSeconds: number;
+    resolution: 'AI' | 'HUMAN' | 'ABANDONED';
+    intent: string | null;
+    startedAt: string;
+  }[];
+  invoices?: { id: string; date: string; amount: number; status: string; invoiceUrl?: string }[];
+  subscription?: { nextBillingAt?: string };
+}
 
 const statusColors: Record<string, string> = {
-  resolved: 'bg-success/10 text-success',
-  escalated: 'bg-warning/10 text-warning',
-  missed: 'bg-danger/10 text-danger',
+  AI: 'bg-success/10 text-success',
+  HUMAN: 'bg-warning/10 text-warning',
+  ABANDONED: 'bg-danger/10 text-danger',
 };
+
+const statusLabel: Record<string, string> = { AI: 'Resolved', HUMAN: 'Escalated', ABANDONED: 'Missed' };
+
+function fmtDuration(sec: number) {
+  if (!sec) return '—';
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  return `${m}m ${String(s).padStart(2, '0')}s`;
+}
+
+function timeAgo(iso: string) {
+  const diff = Date.now() - new Date(iso).getTime();
+  const m = Math.floor(diff / 60000);
+  if (m < 1) return 'just now';
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
+}
 
 const tabs = ['Overview', 'Agent', 'Calls', 'Team', 'Billing'];
 
 export default function BusinessDetailPage() {
+  const { id } = useParams<{ id: string }>();
+  const { token, ready } = useAdminAuth();
+
+  const [biz, setBiz] = useState<BusinessDetail | null>(null);
+  const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState('Overview');
-  const [planInput, setPlanInput] = useState(business.plan);
-  const [statusInput, setStatusInput] = useState(business.status);
+  const [planInput, setPlanInput] = useState('');
+  const [statusInput, setStatusInput] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const load = useCallback(() => {
+    if (!token || !id) return;
+    adminGet<BusinessDetail>(`/admin/businesses/${id}`, token)
+      .then(data => {
+        setBiz(data);
+        setPlanInput(data.plan);
+        setStatusInput(data.status);
+      }).catch(() => null).finally(() => setLoading(false));
+  }, [token, id]);
+
+  useEffect(() => { if (ready) load(); }, [ready, load]);
+
+  async function handleSave() {
+    if (!token || !id) return;
+    setSaving(true);
+    try {
+      await adminPatch(`/admin/businesses/${id}`, { plan: planInput, status: statusInput }, token);
+      setBiz(prev => prev ? { ...prev, plan: planInput, status: statusInput } : prev);
+    } catch {
+      // ignore
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="p-6 lg:p-8 space-y-6 max-w-4xl animate-pulse">
+        <div className="h-6 bg-cream rounded w-32" />
+        <div className="h-12 bg-cream rounded w-64" />
+        <div className="h-10 bg-cream rounded" />
+        <div className="grid grid-cols-4 gap-4">{[1,2,3,4].map(i => <div key={i} className="h-24 bg-cream rounded-xl" />)}</div>
+      </div>
+    );
+  }
+
+  if (!biz) {
+    return (
+      <div className="p-6 lg:p-8">
+        <Link href="/admin/businesses" className="text-xs text-primary-warm hover:text-primary flex items-center gap-1 mb-4">
+          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18" /></svg>
+          Back to businesses
+        </Link>
+        <p className="text-sm text-primary-warm">Business not found.</p>
+      </div>
+    );
+  }
 
   return (
     <div className="p-6 lg:p-8 space-y-6 max-w-4xl">
-      {/* Back + header */}
       <div>
         <Link href="/admin/businesses" className="text-xs text-primary-warm hover:text-primary flex items-center gap-1 mb-3">
           <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -70,11 +138,11 @@ export default function BusinessDetailPage() {
         <div className="flex items-start justify-between gap-4">
           <div className="flex items-center gap-4">
             <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center">
-              <span className="text-lg font-bold text-primary">{business.name[0]}</span>
+              <span className="text-lg font-bold text-primary">{biz.name[0]}</span>
             </div>
             <div>
-              <h1 className="font-heading font-bold text-2xl text-primary-dark">{business.name}</h1>
-              <p className="text-sm text-primary-warm">{business.industry} · {business.email}</p>
+              <h1 className="font-heading font-bold text-2xl text-primary-dark">{biz.name}</h1>
+              <p className="text-sm text-primary-warm">{biz.industry} · {biz.email}</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -97,8 +165,12 @@ export default function BusinessDetailPage() {
               <option value="suspended">Suspended</option>
               <option value="cancelled">Cancelled</option>
             </select>
-            <button className="bg-primary text-cream-light text-xs px-3 py-1.5 rounded-lg hover:bg-primary-dark transition-colors">
-              Save
+            <button
+              onClick={handleSave}
+              disabled={saving}
+              className="bg-primary text-cream-light text-xs px-3 py-1.5 rounded-lg hover:bg-primary-dark transition-colors disabled:opacity-50"
+            >
+              {saving ? 'Saving…' : 'Save'}
             </button>
           </div>
         </div>
@@ -121,15 +193,14 @@ export default function BusinessDetailPage() {
         ))}
       </div>
 
-      {/* Tab content */}
       {tab === 'Overview' && (
         <div className="space-y-6">
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
             {[
-              { label: 'Calls this month', value: business.callsThisMonth.toLocaleString() },
-              { label: 'Total calls', value: business.callsTotal.toLocaleString() },
-              { label: 'Resolution rate', value: `${business.resolutionRate}%` },
-              { label: 'Escalations', value: business.escalations },
+              { label: 'Calls this month', value: biz.callsThisMonth.toLocaleString() },
+              { label: 'Total calls', value: biz.callsTotal.toLocaleString() },
+              { label: 'Resolution rate', value: `${biz.resolutionRate}%` },
+              { label: 'Escalations', value: biz.escalations },
             ].map(s => (
               <div key={s.label} className="bg-white rounded-xl border border-cream-dark p-4">
                 <p className="text-xs text-primary-warm">{s.label}</p>
@@ -140,12 +211,12 @@ export default function BusinessDetailPage() {
           <div className="bg-white rounded-2xl border border-cream-dark p-5 space-y-3">
             <h3 className="text-sm font-semibold text-primary-dark">Business details</h3>
             {[
-              { label: 'Owner', value: business.owner },
-              { label: 'Email', value: business.email },
-              { label: 'Phone', value: business.phone },
-              { label: 'Industry', value: business.industry },
-              { label: 'Joined', value: business.joined },
-              { label: 'MRR', value: `₦${business.mrr.toLocaleString()}` },
+              { label: 'Owner', value: biz.owner },
+              { label: 'Email', value: biz.email },
+              { label: 'Phone', value: biz.phone ?? '—' },
+              { label: 'Industry', value: biz.industry },
+              { label: 'Joined', value: new Date(biz.joined).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) },
+              { label: 'MRR', value: biz.mrr > 0 ? `₦${biz.mrr.toLocaleString()}` : '—' },
             ].map(row => (
               <div key={row.label} className="flex justify-between text-sm border-b border-cream-dark last:border-0 pb-2 last:pb-0">
                 <span className="text-primary-warm">{row.label}</span>
@@ -156,25 +227,27 @@ export default function BusinessDetailPage() {
         </div>
       )}
 
-      {tab === 'Agent' && (
+      {tab === 'Agent' && biz.agent && (
         <div className="bg-white rounded-2xl border border-cream-dark p-6 space-y-4">
           <h3 className="text-sm font-semibold text-primary-dark">Agent configuration</h3>
           {[
-            { label: 'Voice style', value: business.agentVoice },
-            { label: 'Tone', value: business.agentTone },
-            { label: 'FAQs loaded', value: `${business.faqCount} questions` },
+            { label: 'Voice', value: biz.agent.voiceId ?? '—' },
+            { label: 'Tone', value: biz.agent.tone ?? '—' },
+            { label: 'FAQs loaded', value: biz.agent.faqCount != null ? `${biz.agent.faqCount} questions` : '—' },
           ].map(row => (
             <div key={row.label} className="flex justify-between text-sm border-b border-cream-dark last:border-0 pb-3 last:pb-0">
               <span className="text-primary-warm">{row.label}</span>
-              <span className="font-medium text-primary-dark">{row.value}</span>
+              <span className="font-medium text-primary-dark capitalize">{row.value}</span>
             </div>
           ))}
-          <div className="pt-1">
-            <p className="text-xs font-medium text-primary-dark mb-1.5">Greeting script</p>
-            <div className="bg-cream rounded-xl p-4 text-sm text-primary-warm italic">
-              &ldquo;{business.greeting}&rdquo;
+          {biz.agent.greeting && (
+            <div className="pt-1">
+              <p className="text-xs font-medium text-primary-dark mb-1.5">Greeting script</p>
+              <div className="bg-cream rounded-xl p-4 text-sm text-primary-warm italic">
+                &ldquo;{biz.agent.greeting}&rdquo;
+              </div>
             </div>
-          </div>
+          )}
         </div>
       )}
 
@@ -191,28 +264,31 @@ export default function BusinessDetailPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-cream-dark">
-              {recentCalls.map(c => (
+              {(biz.recentCalls ?? []).map(c => (
                 <tr key={c.id} className="hover:bg-cream-light/40">
-                  <td className="px-5 py-3.5 font-medium text-primary-dark">{c.caller}</td>
-                  <td className="px-4 py-3.5 text-primary-warm">{c.intent}</td>
-                  <td className="px-4 py-3.5 text-primary-warm">{c.duration}</td>
+                  <td className="px-5 py-3.5 font-medium text-primary-dark font-mono text-xs">{c.caller}</td>
+                  <td className="px-4 py-3.5 text-primary-warm">{c.intent ?? '—'}</td>
+                  <td className="px-4 py-3.5 text-primary-warm">{fmtDuration(c.durationSeconds)}</td>
                   <td className="px-4 py-3.5">
-                    <span className={`text-xs font-medium px-2.5 py-0.5 rounded-full capitalize ${statusColors[c.status]}`}>
-                      {c.status}
+                    <span className={`text-xs font-medium px-2.5 py-0.5 rounded-full ${statusColors[c.resolution]}`}>
+                      {statusLabel[c.resolution]}
                     </span>
                   </td>
-                  <td className="px-4 py-3.5 text-primary-warm">{c.time}</td>
+                  <td className="px-4 py-3.5 text-primary-warm">{timeAgo(c.startedAt)}</td>
                 </tr>
               ))}
             </tbody>
           </table>
+          {(biz.recentCalls ?? []).length === 0 && (
+            <div className="py-16 text-center text-primary-warm text-sm">No calls yet.</div>
+          )}
         </div>
       )}
 
       {tab === 'Team' && (
         <div className="bg-white rounded-2xl border border-cream-dark divide-y divide-cream-dark">
-          {team.map(m => (
-            <div key={m.email} className="flex items-center justify-between px-5 py-4">
+          {(biz.team ?? []).map(m => (
+            <div key={m.id} className="flex items-center justify-between px-5 py-4">
               <div className="flex items-center gap-3">
                 <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
                   <span className="text-xs font-semibold text-primary">{m.name[0]}</span>
@@ -222,11 +298,14 @@ export default function BusinessDetailPage() {
                   <p className="text-xs text-primary-warm">{m.email}</p>
                 </div>
               </div>
-              <span className="text-xs font-medium text-primary-warm bg-cream px-2.5 py-1 rounded-full border border-cream-dark">
-                {m.role}
+              <span className="text-xs font-medium text-primary-warm bg-cream px-2.5 py-1 rounded-full border border-cream-dark capitalize">
+                {m.role.toLowerCase()}
               </span>
             </div>
           ))}
+          {(biz.team ?? []).length === 0 && (
+            <div className="py-10 text-center text-primary-warm text-sm">No team members.</div>
+          )}
         </div>
       )}
 
@@ -235,10 +314,10 @@ export default function BusinessDetailPage() {
           <div className="bg-white rounded-2xl border border-cream-dark p-5 space-y-3">
             <h3 className="text-sm font-semibold text-primary-dark">Subscription</h3>
             {[
-              { label: 'Plan', value: business.plan },
-              { label: 'MRR', value: `₦${business.mrr.toLocaleString()}` },
-              { label: 'Status', value: business.status },
-              { label: 'Next billing', value: '2024-05-01' },
+              { label: 'Plan', value: biz.plan },
+              { label: 'MRR', value: biz.mrr > 0 ? `₦${biz.mrr.toLocaleString()}` : '—' },
+              { label: 'Status', value: biz.status },
+              { label: 'Next billing', value: biz.subscription?.nextBillingAt ? new Date(biz.subscription.nextBillingAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—' },
             ].map(row => (
               <div key={row.label} className="flex justify-between text-sm border-b border-cream-dark last:border-0 pb-2 last:pb-0">
                 <span className="text-primary-warm">{row.label}</span>
@@ -251,27 +330,36 @@ export default function BusinessDetailPage() {
               <h3 className="text-xs font-semibold text-primary-warm uppercase tracking-wider">Invoice history</h3>
             </div>
             <div className="divide-y divide-cream-dark">
-              {invoices.map(inv => (
+              {(biz.invoices ?? []).map(inv => (
                 <div key={inv.id} className="flex items-center justify-between px-5 py-3.5 text-sm">
                   <div>
                     <p className="font-medium text-primary-dark">{inv.id}</p>
-                    <p className="text-xs text-primary-warm">{inv.date}</p>
+                    <p className="text-xs text-primary-warm">{new Date(inv.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</p>
                   </div>
                   <div className="flex items-center gap-3">
                     <span className="font-medium text-primary-dark">₦{inv.amount.toLocaleString()}</span>
-                    <span className="text-xs font-medium bg-success/10 text-success px-2 py-0.5 rounded-full capitalize">
+                    <span className={`text-xs font-medium px-2 py-0.5 rounded-full capitalize ${inv.status === 'paid' ? 'bg-success/10 text-success' : 'bg-cream-dark text-primary-warm'}`}>
                       {inv.status}
                     </span>
                   </div>
                 </div>
               ))}
+              {(biz.invoices ?? []).length === 0 && (
+                <div className="py-10 text-center text-primary-warm text-sm">No invoices yet.</div>
+              )}
             </div>
           </div>
           <div className="flex gap-2">
             <button className="px-4 py-2 rounded-xl border border-cream-dark text-sm text-primary-warm hover:text-primary hover:border-primary/30 transition-colors">
               Issue credit
             </button>
-            <button className="px-4 py-2 rounded-xl border border-danger/30 text-sm text-danger hover:bg-danger/5 transition-colors">
+            <button
+              onClick={() => {
+                setStatusInput('suspended');
+                handleSave();
+              }}
+              className="px-4 py-2 rounded-xl border border-danger/30 text-sm text-danger hover:bg-danger/5 transition-colors"
+            >
               Suspend account
             </button>
           </div>

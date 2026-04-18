@@ -1,39 +1,82 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
+import { useAdminAuth } from '../../../hooks/useAdminAuth';
+import { adminGet, adminPatch } from '../../../lib/api';
 
 type User = {
   id: string;
   name: string;
   email: string;
   business: string;
-  role: 'Owner' | 'Admin' | 'Agent';
+  role: string;
   lastActive: string;
-  status: 'active' | 'inactive';
+  status: 'active' | 'inactive' | 'suspended';
 };
 
-const users: User[] = [
-  { id: 'u1', name: 'Amaka Obi', email: 'amaka@boutique.ng', business: "Amaka's Boutique", role: 'Owner', lastActive: '2 min ago', status: 'active' },
-  { id: 'u2', name: 'Chidi Nwosu', email: 'chidi@boutique.ng', business: "Amaka's Boutique", role: 'Admin', lastActive: '1h ago', status: 'active' },
-  { id: 'u3', name: 'Chidi Eze', email: 'chidi@quickdelivery.ng', business: 'QuickDelivery NG', role: 'Owner', lastActive: '3h ago', status: 'active' },
-  { id: 'u4', name: 'Ngozi Okafor', email: 'ngozi@mamatiti.ng', business: 'Mama Titi Kitchen', role: 'Owner', lastActive: '1d ago', status: 'active' },
-  { id: 'u5', name: 'Dr. Emeka Adaeze', email: 'emeka@medcity.ng', business: 'MedCity Pharmacy', role: 'Owner', lastActive: '5 min ago', status: 'active' },
-  { id: 'u6', name: 'Kemi Adaeze', email: 'kemi@medcity.ng', business: 'MedCity Pharmacy', role: 'Admin', lastActive: '30 min ago', status: 'active' },
-  { id: 'u7', name: 'Sade Balogun', email: 'sade@lagoslooks.ng', business: 'LagosLooks Beauty', role: 'Owner', lastActive: '2d ago', status: 'inactive' },
-  { id: 'u8', name: 'Tunde Alabi', email: 'tunde@sunrise.ng', business: 'Sunrise Logistics', role: 'Owner', lastActive: '4h ago', status: 'active' },
-  { id: 'u9', name: 'Bisi Lawson', email: 'bisi@velafashion.ng', business: 'VelaFashion', role: 'Owner', lastActive: '1d ago', status: 'inactive' },
-];
-
 const roleColors: Record<string, string> = {
+  OWNER: 'bg-primary/10 text-primary',
+  ADMIN: 'bg-warning/10 text-warning',
   Owner: 'bg-primary/10 text-primary',
   Admin: 'bg-warning/10 text-warning',
   Agent: 'bg-success/10 text-success',
 };
 
+function timeAgo(iso: string) {
+  const diff = Date.now() - new Date(iso).getTime();
+  const m = Math.floor(diff / 60000);
+  if (m < 1) return 'just now';
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
+}
+
+function Skeleton() {
+  return (
+    <tr>
+      <td className="px-5 py-4">
+        <div className="flex items-center gap-3 animate-pulse">
+          <div className="w-8 h-8 rounded-full bg-cream flex-shrink-0" />
+          <div className="space-y-1.5"><div className="h-4 bg-cream rounded w-32" /><div className="h-3 bg-cream rounded w-40" /></div>
+        </div>
+      </td>
+      {[1,2,3,4].map(i => <td key={i} className="px-4 py-4"><div className="h-4 bg-cream rounded animate-pulse w-16" /></td>)}
+      <td className="px-4 py-4"><div className="h-4 bg-cream rounded animate-pulse w-12" /></td>
+    </tr>
+  );
+}
+
 export default function UsersPage() {
+  const { token, ready } = useAdminAuth();
+
+  const [users, setUsers] = useState<User[]>([]);
+  const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [roleFilter, setRoleFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
+  const [suspending, setSuspending] = useState<string | null>(null);
+
+  const load = useCallback(() => {
+    if (!token) return;
+    adminGet<User[]>('/admin/users', token)
+      .then(setUsers).catch(() => null).finally(() => setLoading(false));
+  }, [token]);
+
+  useEffect(() => { if (ready) load(); }, [ready, load]);
+
+  async function toggleSuspend(u: User) {
+    setSuspending(u.id);
+    const newStatus = u.status === 'suspended' ? 'active' : 'suspended';
+    try {
+      await adminPatch(`/admin/users/${u.id}`, { status: newStatus }, token);
+      setUsers(prev => prev.map(x => x.id === u.id ? { ...x, status: newStatus } : x));
+    } catch {
+      // ignore
+    } finally {
+      setSuspending(null);
+    }
+  }
 
   const filtered = users.filter(u => {
     const matchesSearch =
@@ -49,7 +92,9 @@ export default function UsersPage() {
     <div className="p-6 lg:p-8 space-y-6">
       <div>
         <h1 className="font-heading font-bold text-2xl text-primary-dark">Users</h1>
-        <p className="text-sm text-primary-warm mt-0.5">{filtered.length} of {users.length} users</p>
+        <p className="text-sm text-primary-warm mt-0.5">
+          {loading ? 'Loading…' : `${filtered.length} of ${users.length} users`}
+        </p>
       </div>
 
       {/* Filters */}
@@ -68,15 +113,15 @@ export default function UsersPage() {
         <select value={roleFilter} onChange={e => setRoleFilter(e.target.value)}
           className="px-3 py-2.5 rounded-xl border border-cream-dark bg-white text-sm text-primary-dark focus:outline-none cursor-pointer">
           <option value="all">All roles</option>
-          <option value="Owner">Owner</option>
-          <option value="Admin">Admin</option>
-          <option value="Agent">Agent</option>
+          <option value="OWNER">Owner</option>
+          <option value="ADMIN">Admin</option>
         </select>
         <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
           className="px-3 py-2.5 rounded-xl border border-cream-dark bg-white text-sm text-primary-dark focus:outline-none cursor-pointer">
           <option value="all">All statuses</option>
           <option value="active">Active</option>
           <option value="inactive">Inactive</option>
+          <option value="suspended">Suspended</option>
         </select>
       </div>
 
@@ -94,7 +139,9 @@ export default function UsersPage() {
             </tr>
           </thead>
           <tbody className="divide-y divide-cream-dark">
-            {filtered.map(u => (
+            {loading ? (
+              Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} />)
+            ) : filtered.map(u => (
               <tr key={u.id} className="hover:bg-cream-light/40 transition-colors">
                 <td className="px-5 py-4">
                   <div className="flex items-center gap-3">
@@ -109,22 +156,36 @@ export default function UsersPage() {
                 </td>
                 <td className="px-4 py-4 text-primary-warm">{u.business}</td>
                 <td className="px-4 py-4">
-                  <span className={`text-xs font-medium px-2.5 py-0.5 rounded-full ${roleColors[u.role]}`}>{u.role}</span>
+                  <span className={`text-xs font-medium px-2.5 py-0.5 rounded-full ${roleColors[u.role] ?? 'bg-cream-dark text-primary-warm'}`}>
+                    {u.role.charAt(0) + u.role.slice(1).toLowerCase()}
+                  </span>
                 </td>
-                <td className="px-4 py-4 text-primary-warm">{u.lastActive}</td>
+                <td className="px-4 py-4 text-primary-warm">{timeAgo(u.lastActive)}</td>
                 <td className="px-4 py-4">
-                  <span className={`text-xs font-medium px-2.5 py-0.5 rounded-full ${u.status === 'active' ? 'bg-success/10 text-success' : 'bg-cream-dark text-primary-warm'}`}>
+                  <span className={`text-xs font-medium px-2.5 py-0.5 rounded-full capitalize ${
+                    u.status === 'active' ? 'bg-success/10 text-success' :
+                    u.status === 'suspended' ? 'bg-danger/10 text-danger' :
+                    'bg-cream-dark text-primary-warm'
+                  }`}>
                     {u.status}
                   </span>
                 </td>
                 <td className="px-4 py-4">
-                  <button className="text-xs text-danger hover:text-danger/80 font-medium transition-colors">Suspend</button>
+                  <button
+                    onClick={() => toggleSuspend(u)}
+                    disabled={suspending === u.id}
+                    className={`text-xs font-medium transition-colors disabled:opacity-50 ${
+                      u.status === 'suspended' ? 'text-success hover:text-success/80' : 'text-danger hover:text-danger/80'
+                    }`}
+                  >
+                    {suspending === u.id ? '…' : u.status === 'suspended' ? 'Reactivate' : 'Suspend'}
+                  </button>
                 </td>
               </tr>
             ))}
           </tbody>
         </table>
-        {filtered.length === 0 && (
+        {!loading && filtered.length === 0 && (
           <div className="py-16 text-center text-primary-warm text-sm">No users match your filters.</div>
         )}
       </div>

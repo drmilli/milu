@@ -1,100 +1,51 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { clsx } from 'clsx';
+import { useAuth } from '../../../hooks/useAuth';
+import { apiGet } from '../../../lib/api';
 
-type Call = {
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+interface Call {
   id: string;
-  caller: string;
-  duration: string;
-  intent: string;
-  status: 'resolved' | 'escalated' | 'missed';
-  date: string;
-  transcript: { role: 'agent' | 'caller'; text: string }[];
-};
+  callerNumber?: string;
+  durationSeconds?: number;
+  intent?: string;
+  resolution?: string;
+  status?: string;
+  startedAt: string;
+}
 
-const calls: Call[] = [
-  {
-    id: 'C-1041',
-    caller: '+234 801 234 5678',
-    duration: '2m 14s',
-    intent: 'Pricing enquiry',
-    status: 'resolved',
-    date: 'Today, 10:42 AM',
-    transcript: [
-      { role: 'agent', text: "Hello, you've reached Amaka's Boutique. I'm Milu, your AI assistant. How can I help you today?" },
-      { role: 'caller', text: 'Hi, I wanted to ask about the price of the Ankara set I saw on Instagram.' },
-      { role: 'agent', text: "Of course! Our Ankara co-ord sets start at ₦18,000 for the standard size and go up to ₦24,000 for plus sizes. Would you like to know about any specific design?" },
-      { role: 'caller', text: 'The blue and white one with the ruffles.' },
-      { role: 'agent', text: 'That would be the Classic Ruffle Ankara Set — it is priced at ₦21,000 in standard sizes. We have stock available in sizes S to XL. Would you like to place an order or have it reserved?' },
-      { role: 'caller', text: 'I will think about it. Thank you.' },
-      { role: 'agent', text: 'No problem at all. Feel free to call back anytime. Have a wonderful day!' },
-    ],
-  },
-  {
-    id: 'C-1040',
-    caller: '+234 802 987 6543',
-    duration: '0m 58s',
-    intent: 'Opening hours',
-    status: 'resolved',
-    date: 'Today, 10:29 AM',
-    transcript: [
-      { role: 'agent', text: "Hello, you've reached Amaka's Boutique. How can I help you?" },
-      { role: 'caller', text: 'What time do you open on Sundays?' },
-      { role: 'agent', text: 'We are open on Sundays from 12 noon to 6 PM. Is there anything else I can help you with?' },
-      { role: 'caller', text: 'That is all, thank you.' },
-      { role: 'agent', text: 'You are welcome! Have a great day.' },
-    ],
-  },
-  {
-    id: 'C-1039',
-    caller: '+234 803 111 2222',
-    duration: '4m 02s',
-    intent: 'Complaint — wrong item delivered',
-    status: 'escalated',
-    date: 'Today, 10:11 AM',
-    transcript: [
-      { role: 'agent', text: "Hello, you've reached Amaka's Boutique. I'm Milu, your AI assistant. How can I help you?" },
-      { role: 'caller', text: "I got the wrong item delivered yesterday and I'm very upset about it." },
-      { role: 'agent', text: "I'm really sorry to hear that. I completely understand how frustrating that must be. Can I get your order number so I can look into this for you?" },
-      { role: 'caller', text: 'It is order number AB-20234.' },
-      { role: 'agent', text: "Thank you. I can see your order for the Red Lace Blouse. I'm going to transfer you to our customer care team right now who will sort out a replacement or refund immediately. Please hold on." },
-      { role: 'caller', text: 'Okay, thank you.' },
-    ],
-  },
-  {
-    id: 'C-1038',
-    caller: '+234 805 444 5555',
-    duration: '1m 30s',
-    intent: 'Appointment booking',
-    status: 'resolved',
-    date: 'Today, 09:54 AM',
-    transcript: [
-      { role: 'agent', text: "Hello, you've reached Amaka's Boutique. How can I help you today?" },
-      { role: 'caller', text: 'I would like to book an appointment for a fitting.' },
-      { role: 'agent', text: 'Wonderful! We have slots available this Friday the 18th at 2 PM, 3 PM, and 4 PM. Which works best for you?' },
-      { role: 'caller', text: 'Friday at 3 PM please.' },
-      { role: 'agent', text: "Perfect! I have booked you in for Friday April 18th at 3 PM. May I take your name please?" },
-      { role: 'caller', text: 'Chidinma Eze.' },
-      { role: 'agent', text: "Thank you, Chidinma! Your appointment is confirmed for Friday at 3 PM. We'll see you then. Goodbye!" },
-    ],
-  },
-  {
-    id: 'C-1037',
-    caller: '+234 701 888 9999',
-    duration: '3m 17s',
-    intent: 'Product return',
-    status: 'escalated',
-    date: 'Today, 08:33 AM',
-    transcript: [
-      { role: 'agent', text: "Hello, you've reached Amaka's Boutique. How can I help you?" },
-      { role: 'caller', text: 'I want to return a dress I bought last week.' },
-      { role: 'agent', text: "I understand. Our return policy allows returns within 7 days of purchase for items in their original condition. Could you share your order number so I can check the details?" },
-      { role: 'caller', text: 'I do not have the order number but I paid by transfer.' },
-      { role: 'agent', text: "No problem. I'll transfer you to our team who can pull up your purchase from the transfer records. Please hold." },
-    ],
-  },
-];
+interface Transcript {
+  id: string;
+  role: string;
+  content: string;
+  createdAt: string;
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function fmtDuration(s?: number) {
+  if (!s) return '—';
+  const m = Math.floor(s / 60);
+  const sec = s % 60;
+  return `${m}m ${String(sec).padStart(2, '0')}s`;
+}
+
+function fmtDate(iso: string) {
+  const d = new Date(iso);
+  const today = new Date();
+  const isToday = d.toDateString() === today.toDateString();
+  const time = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  return isToday ? `Today, ${time}` : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) + `, ${time}`;
+}
+
+function resolutionLabel(r?: string) {
+  if (r === 'AI') return 'resolved';
+  if (r === 'HUMAN') return 'escalated';
+  return 'missed';
+}
 
 const statusCls: Record<string, string> = {
   resolved: 'bg-success/10 text-success',
@@ -102,20 +53,64 @@ const statusCls: Record<string, string> = {
   missed: 'bg-danger/10 text-danger',
 };
 
-export default function CallsPage() {
-  const [selected, setSelected] = useState<Call>(calls[0]);
-  const [filter, setFilter] = useState<'all' | 'resolved' | 'escalated' | 'missed'>('all');
-  const [search, setSearch] = useState('');
+function Skeleton({ className }: { className: string }) {
+  return <div className={`animate-pulse bg-cream rounded-xl ${className}`} />;
+}
 
-  const filtered = calls.filter((c) => {
-    if (filter !== 'all' && c.status !== filter) return false;
-    if (search && !c.caller.includes(search) && !c.intent.toLowerCase().includes(search.toLowerCase())) return false;
-    return true;
-  });
+// ─── Page ─────────────────────────────────────────────────────────────────────
+
+export default function CallsPage() {
+  const { token, ready } = useAuth();
+
+  const [calls, setCalls] = useState<Call[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [loadingList, setLoadingList] = useState(true);
+
+  const [selected, setSelected] = useState<Call | null>(null);
+  const [transcript, setTranscript] = useState<Transcript[]>([]);
+  const [loadingTranscript, setLoadingTranscript] = useState(false);
+
+  const [filter, setFilter] = useState<'all' | 'AI' | 'HUMAN' | 'ABANDONED'>('all');
+  const [search, setSearch] = useState('');
+  const [searchInput, setSearchInput] = useState('');
+
+  const LIMIT = 30;
+
+  const loadCalls = useCallback(() => {
+    if (!token) return;
+    setLoadingList(true);
+    const res = filter === 'all' ? '' : `&resolution=${filter}`;
+    const q = search ? `&intent=${encodeURIComponent(search)}` : '';
+    apiGet<{ calls: Call[]; total: number }>(`/calls?limit=${LIMIT}&page=${page}${res}${q}`, token)
+      .then(data => { setCalls(data.calls); setTotal(data.total); })
+      .catch(() => null)
+      .finally(() => setLoadingList(false));
+  }, [token, filter, search, page]);
+
+  useEffect(() => { if (ready) loadCalls(); }, [ready, loadCalls]);
+
+  useEffect(() => {
+    if (!selected || !token) return;
+    setLoadingTranscript(true);
+    setTranscript([]);
+    apiGet<Transcript[]>(`/calls/${selected.id}/transcript`, token)
+      .then(setTranscript)
+      .catch(() => null)
+      .finally(() => setLoadingTranscript(false));
+  }, [selected, token]);
+
+  // Debounce search
+  useEffect(() => {
+    const t = setTimeout(() => { setSearch(searchInput); setPage(1); }, 400);
+    return () => clearTimeout(t);
+  }, [searchInput]);
+
+  const totalPages = Math.ceil(total / LIMIT);
 
   return (
     <div className="flex h-full">
-      {/* Call list */}
+      {/* ── Call list ── */}
       <div className="w-80 flex-shrink-0 border-r border-cream-dark flex flex-col bg-white">
         {/* Search + filter */}
         <div className="p-4 border-b border-cream-dark space-y-3">
@@ -125,24 +120,22 @@ export default function CallsPage() {
             </svg>
             <input
               className="w-full pl-9 pr-4 py-2 text-sm bg-cream-light border border-cream-dark rounded-xl placeholder:text-cream-dark focus:outline-none focus:border-primary/50"
-              placeholder="Search calls…"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search by intent…"
+              value={searchInput}
+              onChange={e => setSearchInput(e.target.value)}
             />
           </div>
           <div className="flex gap-1.5 flex-wrap">
-            {(['all', 'resolved', 'escalated', 'missed'] as const).map((f) => (
+            {(['all', 'AI', 'HUMAN', 'ABANDONED'] as const).map((f) => (
               <button
                 key={f}
-                onClick={() => setFilter(f)}
+                onClick={() => { setFilter(f); setPage(1); }}
                 className={clsx(
-                  'text-xs px-3 py-1.5 rounded-full font-medium transition-colors capitalize',
-                  filter === f
-                    ? 'bg-primary text-cream-light'
-                    : 'bg-cream text-primary-warm hover:bg-cream-dark'
+                  'text-xs px-3 py-1.5 rounded-full font-medium transition-colors',
+                  filter === f ? 'bg-primary text-cream-light' : 'bg-cream text-primary-warm hover:bg-cream-dark'
                 )}
               >
-                {f}
+                {f === 'all' ? 'All' : f === 'AI' ? 'Resolved' : f === 'HUMAN' ? 'Escalated' : 'Missed'}
               </button>
             ))}
           </div>
@@ -150,65 +143,126 @@ export default function CallsPage() {
 
         {/* List */}
         <div className="flex-1 overflow-y-auto divide-y divide-cream-dark">
-          {filtered.map((call) => (
-            <button
-              key={call.id}
-              onClick={() => setSelected(call)}
-              className={clsx(
-                'w-full text-left px-4 py-3.5 transition-colors hover:bg-cream-light/60',
-                selected.id === call.id ? 'bg-cream-light' : ''
-              )}
-            >
-              <div className="flex items-center justify-between mb-1">
-                <span className="text-sm font-medium text-primary-dark">{call.caller}</span>
-                <span className={clsx('text-xs font-medium px-2 py-0.5 rounded-full', statusCls[call.status])}>
-                  {call.status}
-                </span>
+          {loadingList ? (
+            Array.from({ length: 8 }).map((_, i) => (
+              <div key={i} className="px-4 py-3.5 space-y-2">
+                <Skeleton className="h-4 w-36" />
+                <Skeleton className="h-3 w-28" />
+                <Skeleton className="h-3 w-20" />
               </div>
-              <p className="text-xs text-primary-warm truncate">{call.intent}</p>
-              <p className="text-xs text-cream-dark mt-1">{call.date} · {call.duration}</p>
-            </button>
-          ))}
-          {filtered.length === 0 && (
+            ))
+          ) : calls.length === 0 ? (
             <p className="text-sm text-primary-warm text-center py-12">No calls found</p>
+          ) : (
+            calls.map((call) => {
+              const label = resolutionLabel(call.resolution);
+              return (
+                <button
+                  key={call.id}
+                  onClick={() => setSelected(call)}
+                  className={clsx(
+                    'w-full text-left px-4 py-3.5 transition-colors hover:bg-cream-light/60',
+                    selected?.id === call.id ? 'bg-cream-light' : ''
+                  )}
+                >
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-sm font-medium text-primary-dark truncate max-w-[140px]">
+                      {call.callerNumber ?? 'Unknown'}
+                    </span>
+                    <span className={clsx('text-xs font-medium px-2 py-0.5 rounded-full flex-shrink-0', statusCls[label])}>
+                      {label}
+                    </span>
+                  </div>
+                  <p className="text-xs text-primary-warm truncate capitalize">
+                    {call.intent?.toLowerCase().replace('_', ' ') ?? '—'}
+                  </p>
+                  <p className="text-xs text-cream-dark mt-1">
+                    {fmtDate(call.startedAt)} · {fmtDuration(call.durationSeconds)}
+                  </p>
+                </button>
+              );
+            })
           )}
         </div>
+
+        {/* Pagination */}
+        {totalPages > 1 && (
+          <div className="px-4 py-3 border-t border-cream-dark flex items-center justify-between">
+            <button disabled={page === 1} onClick={() => setPage(p => p - 1)}
+              className="text-xs text-primary-warm disabled:opacity-30 hover:text-primary transition-colors">
+              ← Prev
+            </button>
+            <span className="text-xs text-primary-warm">{page} / {totalPages}</span>
+            <button disabled={page >= totalPages} onClick={() => setPage(p => p + 1)}
+              className="text-xs text-primary-warm disabled:opacity-30 hover:text-primary transition-colors">
+              Next →
+            </button>
+          </div>
+        )}
       </div>
 
-      {/* Transcript panel */}
+      {/* ── Transcript panel ── */}
       <div className="flex-1 flex flex-col min-w-0 bg-cream-light/50">
-        {/* Header */}
-        <div className="bg-white border-b border-cream-dark px-6 py-4 flex items-center justify-between">
-          <div>
-            <p className="font-semibold text-primary-dark">{selected.caller}</p>
-            <p className="text-xs text-primary-warm mt-0.5">{selected.date} · {selected.duration} · {selected.intent}</p>
-          </div>
-          <span className={clsx('text-xs font-medium px-3 py-1.5 rounded-full', statusCls[selected.status])}>
-            {selected.status}
-          </span>
-        </div>
-
-        {/* Transcript */}
-        <div className="flex-1 overflow-y-auto p-6 space-y-4">
-          {selected.transcript.map((turn, i) => (
-            <div key={i} className={clsx('flex gap-3', turn.role === 'agent' ? 'flex-row' : 'flex-row-reverse')}>
-              <div className={clsx(
-                'w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 text-xs font-semibold',
-                turn.role === 'agent' ? 'bg-primary text-cream-light' : 'bg-cream-dark text-primary-warm'
-              )}>
-                {turn.role === 'agent' ? 'AI' : 'C'}
-              </div>
-              <div className={clsx(
-                'max-w-md px-4 py-3 rounded-2xl text-sm leading-relaxed',
-                turn.role === 'agent'
-                  ? 'bg-white border border-cream-dark text-primary-dark rounded-tl-sm'
-                  : 'bg-primary text-cream-light rounded-tr-sm'
-              )}>
-                {turn.text}
-              </div>
+        {!selected ? (
+          <div className="flex-1 flex flex-col items-center justify-center text-center px-8 space-y-3">
+            <div className="w-14 h-14 rounded-2xl bg-cream border border-cream-dark flex items-center justify-center">
+              <svg className="w-7 h-7 text-cream-dark" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 6.75c0 8.284 6.716 15 15 15h2.25a2.25 2.25 0 002.25-2.25v-1.372c0-.516-.351-.966-.852-1.091l-4.423-1.106c-.44-.11-.902.055-1.173.417l-.97 1.293c-.282.376-.769.542-1.21.38a12.035 12.035 0 01-7.143-7.143c-.162-.441.004-.928.38-1.21l1.293-.97c.363-.271.527-.734.417-1.173L6.963 3.102a1.125 1.125 0 00-1.091-.852H4.5A2.25 2.25 0 002.25 4.5v2.25z" />
+              </svg>
             </div>
-          ))}
-        </div>
+            <p className="text-sm text-primary-warm">Select a call to view its transcript</p>
+          </div>
+        ) : (
+          <>
+            <div className="bg-white border-b border-cream-dark px-6 py-4 flex items-center justify-between">
+              <div>
+                <p className="font-semibold text-primary-dark">{selected.callerNumber ?? 'Unknown'}</p>
+                <p className="text-xs text-primary-warm mt-0.5">
+                  {fmtDate(selected.startedAt)} · {fmtDuration(selected.durationSeconds)} ·{' '}
+                  <span className="capitalize">{selected.intent?.toLowerCase().replace('_', ' ') ?? '—'}</span>
+                </p>
+              </div>
+              <span className={clsx('text-xs font-medium px-3 py-1.5 rounded-full', statusCls[resolutionLabel(selected.resolution)])}>
+                {resolutionLabel(selected.resolution)}
+              </span>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-6 space-y-4">
+              {loadingTranscript ? (
+                Array.from({ length: 4 }).map((_, i) => (
+                  <div key={i} className={clsx('flex gap-3', i % 2 === 0 ? 'flex-row' : 'flex-row-reverse')}>
+                    <Skeleton className="w-7 h-7 rounded-full flex-shrink-0" />
+                    <Skeleton className={`h-12 rounded-2xl ${i % 2 === 0 ? 'w-2/3' : 'w-1/2'}`} />
+                  </div>
+                ))
+              ) : transcript.length === 0 ? (
+                <p className="text-sm text-primary-warm text-center py-8">No transcript available for this call</p>
+              ) : (
+                transcript.map((turn) => {
+                  const isAgent = turn.role === 'AGENT' || turn.role === 'agent';
+                  return (
+                    <div key={turn.id} className={clsx('flex gap-3', isAgent ? 'flex-row' : 'flex-row-reverse')}>
+                      <div className={clsx(
+                        'w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 text-xs font-semibold',
+                        isAgent ? 'bg-primary text-cream-light' : 'bg-cream-dark text-primary-warm'
+                      )}>
+                        {isAgent ? 'AI' : 'C'}
+                      </div>
+                      <div className={clsx(
+                        'max-w-md px-4 py-3 rounded-2xl text-sm leading-relaxed',
+                        isAgent
+                          ? 'bg-white border border-cream-dark text-primary-dark rounded-tl-sm'
+                          : 'bg-primary text-cream-light rounded-tr-sm'
+                      )}>
+                        {turn.content}
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </>
+        )}
       </div>
     </div>
   );

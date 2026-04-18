@@ -1,56 +1,85 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
+import { useAdminAuth } from '../../../hooks/useAdminAuth';
+import { adminGet } from '../../../lib/api';
 
 type Call = {
   id: string;
   business: string;
   caller: string;
-  duration: string;
-  status: 'resolved' | 'escalated' | 'missed';
-  intent: string;
-  time: string;
-  date: string;
+  durationSeconds: number;
+  resolution: 'AI' | 'HUMAN' | 'ABANDONED';
+  intent: string | null;
+  startedAt: string;
 };
-
-const calls: Call[] = [
-  { id: 'c1', business: "Amaka's Boutique", caller: '+234 803 444 5555', duration: '1m 32s', status: 'resolved', intent: 'Price enquiry', time: '10:42 AM', date: '2024-04-16' },
-  { id: 'c2', business: 'MedCity Pharmacy', caller: '+234 706 888 9999', duration: '3m 47s', status: 'escalated', intent: 'Prescription refill', time: '10:38 AM', date: '2024-04-16' },
-  { id: 'c3', business: 'QuickDelivery NG', caller: '+234 812 222 3333', duration: '0m 58s', status: 'resolved', intent: 'Delivery status', time: '10:21 AM', date: '2024-04-16' },
-  { id: 'c4', business: 'Mama Titi Kitchen', caller: '+234 816 777 8888', duration: '2m 11s', status: 'resolved', intent: 'Menu enquiry', time: '10:05 AM', date: '2024-04-16' },
-  { id: 'c5', business: "Amaka's Boutique", caller: '+234 701 555 6666', duration: '—', status: 'missed', intent: '—', time: '9:52 AM', date: '2024-04-16' },
-  { id: 'c6', business: 'Sunrise Logistics', caller: '+234 809 333 4444', duration: '4m 12s', status: 'escalated', intent: 'Shipment complaint', time: '9:31 AM', date: '2024-04-16' },
-  { id: 'c7', business: 'MedCity Pharmacy', caller: '+234 803 111 2222', duration: '1m 05s', status: 'resolved', intent: 'Store hours', time: '9:18 AM', date: '2024-04-16' },
-  { id: 'c8', business: 'LagosLooks Beauty', caller: '+234 706 999 0000', duration: '0m 44s', status: 'resolved', intent: 'Appointment booking', time: '8:57 AM', date: '2024-04-16' },
-  { id: 'c9', business: 'PharmaCare Plus', caller: '+234 815 444 5555', duration: '2m 38s', status: 'resolved', intent: 'Drug availability', time: '8:43 AM', date: '2024-04-16' },
-  { id: 'c10', business: 'QuickDelivery NG', caller: '+234 701 222 3333', duration: '—', status: 'missed', intent: '—', time: '8:30 AM', date: '2024-04-16' },
-];
 
 const statusColors: Record<string, string> = {
-  resolved: 'bg-success/10 text-success',
-  escalated: 'bg-warning/10 text-warning',
-  missed: 'bg-danger/10 text-danger',
+  AI: 'bg-success/10 text-success',
+  HUMAN: 'bg-warning/10 text-warning',
+  ABANDONED: 'bg-danger/10 text-danger',
 };
 
+const statusLabel: Record<string, string> = {
+  AI: 'Resolved',
+  HUMAN: 'Escalated',
+  ABANDONED: 'Missed',
+};
+
+function fmtDuration(sec: number) {
+  if (!sec) return '—';
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  return `${m}m ${String(s).padStart(2, '0')}s`;
+}
+
+function fmtTime(iso: string) {
+  const d = new Date(iso);
+  return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+}
+
+function Skeleton() {
+  return (
+    <tr>
+      {[1,2,3,4,5,6].map(i => <td key={i} className="px-4 py-3.5"><div className="h-4 bg-cream rounded animate-pulse w-20" /></td>)}
+    </tr>
+  );
+}
+
 export default function CallsPage() {
+  const { token, ready } = useAdminAuth();
+
+  const [calls, setCalls] = useState<Call[]>([]);
+  const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [bizFilter, setBizFilter] = useState('all');
+  const [page, setPage] = useState(1);
+  const pageSize = 50;
+
+  const load = useCallback(() => {
+    if (!token) return;
+    const params = new URLSearchParams({ limit: String(pageSize), page: String(page) });
+    if (statusFilter !== 'all') params.set('resolution', statusFilter);
+    adminGet<Call[]>(`/admin/calls?${params}`, token)
+      .then(setCalls).catch(() => null).finally(() => setLoading(false));
+  }, [token, page, statusFilter]);
+
+  useEffect(() => { if (ready) load(); }, [ready, load]);
 
   const businesses = Array.from(new Set(calls.map(c => c.business))).sort();
 
   const filtered = calls.filter(c => {
     const matchesSearch = c.business.toLowerCase().includes(search.toLowerCase()) ||
       c.caller.includes(search) ||
-      c.intent.toLowerCase().includes(search.toLowerCase());
-    const matchesStatus = statusFilter === 'all' || c.status === statusFilter;
+      (c.intent ?? '').toLowerCase().includes(search.toLowerCase());
     const matchesBiz = bizFilter === 'all' || c.business === bizFilter;
-    return matchesSearch && matchesStatus && matchesBiz;
+    return matchesSearch && matchesBiz;
   });
 
-  const resolved = filtered.filter(c => c.status === 'resolved').length;
-  const escalated = filtered.filter(c => c.status === 'escalated').length;
-  const missed = filtered.filter(c => c.status === 'missed').length;
+  const resolved = filtered.filter(c => c.resolution === 'AI').length;
+  const escalated = filtered.filter(c => c.resolution === 'HUMAN').length;
+  const missed = filtered.filter(c => c.resolution === 'ABANDONED').length;
 
   return (
     <div className="p-6 lg:p-8 space-y-6">
@@ -67,7 +96,11 @@ export default function CallsPage() {
           { label: 'Missed', value: missed, color: 'text-danger' },
         ].map(s => (
           <div key={s.label} className="bg-white rounded-xl border border-cream-dark p-4 text-center">
-            <p className={`text-xl font-bold ${s.color}`}>{s.value}</p>
+            {loading ? (
+              <div className="h-7 bg-cream rounded animate-pulse mx-auto w-8 mb-1" />
+            ) : (
+              <p className={`text-xl font-bold ${s.color}`}>{s.value}</p>
+            )}
             <p className="text-xs text-primary-warm mt-0.5">{s.label}</p>
           </div>
         ))}
@@ -91,12 +124,15 @@ export default function CallsPage() {
           <option value="all">All businesses</option>
           {businesses.map(b => <option key={b} value={b}>{b}</option>)}
         </select>
-        <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
-          className="px-3 py-2.5 rounded-xl border border-cream-dark bg-white text-sm text-primary-dark focus:outline-none cursor-pointer">
+        <select
+          value={statusFilter}
+          onChange={e => { setStatusFilter(e.target.value); setPage(1); }}
+          className="px-3 py-2.5 rounded-xl border border-cream-dark bg-white text-sm text-primary-dark focus:outline-none cursor-pointer"
+        >
           <option value="all">All statuses</option>
-          <option value="resolved">Resolved</option>
-          <option value="escalated">Escalated</option>
-          <option value="missed">Missed</option>
+          <option value="AI">Resolved</option>
+          <option value="HUMAN">Escalated</option>
+          <option value="ABANDONED">Missed</option>
         </select>
       </div>
 
@@ -114,26 +150,47 @@ export default function CallsPage() {
             </tr>
           </thead>
           <tbody className="divide-y divide-cream-dark">
-            {filtered.map(c => (
+            {loading ? (
+              Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} />)
+            ) : filtered.map(c => (
               <tr key={c.id} className="hover:bg-cream-light/40 transition-colors">
                 <td className="px-5 py-3.5 font-medium text-primary-dark">{c.business}</td>
                 <td className="px-4 py-3.5 text-primary-warm font-mono text-xs">{c.caller}</td>
-                <td className="px-4 py-3.5 text-primary-warm">{c.intent}</td>
-                <td className="px-4 py-3.5 text-primary-warm">{c.duration}</td>
+                <td className="px-4 py-3.5 text-primary-warm">{c.intent ?? '—'}</td>
+                <td className="px-4 py-3.5 text-primary-warm">{fmtDuration(c.durationSeconds)}</td>
                 <td className="px-4 py-3.5">
-                  <span className={`text-xs font-medium px-2.5 py-0.5 rounded-full capitalize ${statusColors[c.status]}`}>
-                    {c.status}
+                  <span className={`text-xs font-medium px-2.5 py-0.5 rounded-full ${statusColors[c.resolution]}`}>
+                    {statusLabel[c.resolution]}
                   </span>
                 </td>
-                <td className="px-4 py-3.5 text-primary-warm">{c.time}</td>
+                <td className="px-4 py-3.5 text-primary-warm">{fmtTime(c.startedAt)}</td>
               </tr>
             ))}
           </tbody>
         </table>
-        {filtered.length === 0 && (
+        {!loading && filtered.length === 0 && (
           <div className="py-16 text-center text-primary-warm text-sm">No calls match your filters.</div>
         )}
       </div>
+
+      {/* Pagination */}
+      {!loading && calls.length === pageSize && (
+        <div className="flex justify-end gap-2">
+          <button
+            onClick={() => setPage(p => Math.max(1, p - 1))}
+            disabled={page === 1}
+            className="text-sm text-primary border border-primary/30 px-4 py-2 rounded-xl hover:bg-primary/5 transition-colors disabled:opacity-40"
+          >
+            Previous
+          </button>
+          <button
+            onClick={() => setPage(p => p + 1)}
+            className="text-sm text-primary border border-primary/30 px-4 py-2 rounded-xl hover:bg-primary/5 transition-colors"
+          >
+            Next
+          </button>
+        </div>
+      )}
     </div>
   );
 }

@@ -1,32 +1,73 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
+import { useAuth } from '../../../hooks/useAuth';
+import { apiGet, apiPost, apiPatch, apiPut } from '../../../lib/api';
 
 const inputCls = 'w-full px-4 py-2.5 rounded-xl border border-cream-dark bg-cream-light text-sm text-primary-dark placeholder:text-cream-dark focus:outline-none focus:border-primary/50 focus:ring-2 focus:ring-primary/10 transition-all';
 
 type WaStep = 'idle' | 'sending' | 'awaiting_code' | 'verifying' | 'verified';
 
+interface Settings {
+  notifyOnEscalation: boolean;
+  notifyOnMissed: boolean;
+  notifyWeekly: boolean;
+  whatsappNumber?: string | null;
+}
+
 export default function SettingsPage() {
-  const [saved, setSaved] = useState(false);
+  const { token, user, ready } = useAuth();
+  const businessId = user?.businessId ?? '';
+
   const [form, setForm] = useState({
-    firstName: 'Amaka',
-    lastName: 'Obi',
-    email: 'amaka@yourbusiness.ng',
-    businessName: "Amaka's Boutique",
-    industry: 'Retail / Fashion',
-    notifyEscalation: true,
-    notifyMissed: true,
+    firstName: '',
+    lastName: '',
+    email: '',
+    businessName: '',
+    industry: '',
+    notifyEscalation: false,
+    notifyMissed: false,
     notifyWeekly: false,
   });
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState('');
 
-  // WhatsApp verification
-  const [verifiedWa, setVerifiedWa] = useState<string | null>('+234 801 234 5678');
+  const [verifiedWa, setVerifiedWa] = useState<string | null>(null);
   const [waPhone, setWaPhone] = useState('');
   const [waCode, setWaCode] = useState('');
   const [waStep, setWaStep] = useState<WaStep>('idle');
   const [waError, setWaError] = useState('');
   const [waCooldown, setWaCooldown] = useState(0);
   const isVerifyingWa = waStep === 'verifying';
+
+  const load = useCallback(() => {
+    if (!token || !businessId) return;
+    Promise.all([
+      apiGet<Settings>(`/settings/${businessId}`, token),
+    ]).then(([settings]) => {
+      setForm(f => ({
+        ...f,
+        firstName: user?.firstName ?? '',
+        lastName: user?.lastName ?? '',
+        email: user?.email ?? '',
+        notifyEscalation: settings.notifyOnEscalation,
+        notifyMissed: settings.notifyOnMissed,
+        notifyWeekly: settings.notifyWeekly,
+      }));
+      if (settings.whatsappNumber) setVerifiedWa(settings.whatsappNumber);
+    }).catch(() => {
+      setForm(f => ({
+        ...f,
+        firstName: user?.firstName ?? '',
+        lastName: user?.lastName ?? '',
+        email: user?.email ?? '',
+      }));
+    }).finally(() => setLoading(false));
+  }, [token, businessId, user]);
+
+  useEffect(() => { if (ready) load(); }, [ready, load]);
 
   function startCooldown() {
     setWaCooldown(30);
@@ -40,14 +81,11 @@ export default function SettingsPage() {
     setWaError('');
     setWaStep('sending');
     try {
-      // await fetch(`/api/v1/settings/${BIZ_ID}/whatsapp/send-otp`, {
-      //   method: 'POST', body: JSON.stringify({ phone: waPhone })
-      // })
-      await new Promise((r) => setTimeout(r, 1200));
+      await apiPost(`/settings/${businessId}/whatsapp/send-otp`, { phone: waPhone }, token);
       setWaStep('awaiting_code');
       startCooldown();
-    } catch {
-      setWaError('Failed to send code. Check the number and try again.');
+    } catch (err: unknown) {
+      setWaError(err instanceof Error ? err.message : 'Failed to send code. Check the number and try again.');
       setWaStep('idle');
     }
   }
@@ -57,16 +95,13 @@ export default function SettingsPage() {
     setWaError('');
     setWaStep('verifying');
     try {
-      // await fetch(`/api/v1/settings/${BIZ_ID}/whatsapp/verify`, {
-      //   method: 'POST', body: JSON.stringify({ phone: waPhone, code: waCode })
-      // })
-      await new Promise((r) => setTimeout(r, 1000));
+      await apiPost(`/settings/${businessId}/whatsapp/verify`, { phone: waPhone, code: waCode }, token);
       setVerifiedWa(waPhone);
       setWaStep('verified');
       setWaPhone('');
       setWaCode('');
-    } catch {
-      setWaError('Invalid code. Please try again.');
+    } catch (err: unknown) {
+      setWaError(err instanceof Error ? err.message : 'Invalid code. Please try again.');
       setWaStep('awaiting_code');
     }
   }
@@ -79,9 +114,30 @@ export default function SettingsPage() {
     setWaError('');
   }
 
-  function handleSave() {
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
+  async function handleSave() {
+    if (!token || !user) return;
+    setSaving(true);
+    setError('');
+    try {
+      await Promise.all([
+        apiPatch(`/users/${user.id}`, {
+          firstName: form.firstName,
+          lastName: form.lastName,
+          email: form.email,
+        }, token),
+        apiPut(`/settings/${businessId}`, {
+          notifyOnEscalation: form.notifyEscalation,
+          notifyOnMissed: form.notifyMissed,
+          notifyWeekly: form.notifyWeekly,
+        }, token),
+      ]);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to save settings');
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
@@ -97,29 +153,16 @@ export default function SettingsPage() {
         <div className="grid sm:grid-cols-2 gap-4">
           <div>
             <label className="block text-xs font-medium text-primary-dark mb-1.5">First name</label>
-            <input className={inputCls} value={form.firstName} onChange={(e) => setForm((f) => ({ ...f, firstName: e.target.value }))} />
+            <input className={inputCls} value={form.firstName} onChange={(e) => setForm((f) => ({ ...f, firstName: e.target.value }))} disabled={loading} />
           </div>
           <div>
             <label className="block text-xs font-medium text-primary-dark mb-1.5">Last name</label>
-            <input className={inputCls} value={form.lastName} onChange={(e) => setForm((f) => ({ ...f, lastName: e.target.value }))} />
+            <input className={inputCls} value={form.lastName} onChange={(e) => setForm((f) => ({ ...f, lastName: e.target.value }))} disabled={loading} />
           </div>
         </div>
         <div>
           <label className="block text-xs font-medium text-primary-dark mb-1.5">Email</label>
-          <input type="email" className={inputCls} value={form.email} onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))} />
-        </div>
-      </div>
-
-      {/* Business */}
-      <div className="bg-white rounded-2xl border border-cream-dark p-6 space-y-4">
-        <h2 className="font-semibold text-primary-dark">Business</h2>
-        <div>
-          <label className="block text-xs font-medium text-primary-dark mb-1.5">Business name</label>
-          <input className={inputCls} value={form.businessName} onChange={(e) => setForm((f) => ({ ...f, businessName: e.target.value }))} />
-        </div>
-        <div>
-          <label className="block text-xs font-medium text-primary-dark mb-1.5">Industry</label>
-          <input className={inputCls} value={form.industry} onChange={(e) => setForm((f) => ({ ...f, industry: e.target.value }))} />
+          <input type="email" className={inputCls} value={form.email} onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))} disabled={loading} />
         </div>
       </div>
 
@@ -272,13 +315,16 @@ export default function SettingsPage() {
         </button>
       </div>
 
+      {error && <p className="text-sm text-danger bg-danger/5 border border-danger/20 rounded-xl px-4 py-3">{error}</p>}
+
       <button
         onClick={handleSave}
-        className={`px-6 py-3 rounded-full text-sm font-medium transition-colors ${
+        disabled={saving || loading}
+        className={`px-6 py-3 rounded-full text-sm font-medium transition-colors disabled:opacity-40 ${
           saved ? 'bg-success text-white' : 'bg-primary text-cream-light hover:bg-primary-dark'
         }`}
       >
-        {saved ? '✓ Saved' : 'Save changes'}
+        {saving ? 'Saving…' : saved ? '✓ Saved' : 'Save changes'}
       </button>
     </div>
   );

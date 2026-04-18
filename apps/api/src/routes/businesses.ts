@@ -4,7 +4,12 @@ import { eq, and } from 'drizzle-orm';
 import { db, businesses, knowledgeBases, phoneNumbers, users, phoneVerifications } from '../db';
 import { authMiddleware } from '../middleware/auth';
 import { sendCustomSms } from '../services/sms';
+import { sendTeamInviteEmail } from '../utils/email';
+import bcrypt from 'bcryptjs';
+import crypto from 'crypto';
 import { audit } from '../services/audit';
+import { logger } from '../config/logger';
+import { env } from '../config/env';
 
 export const businessesRouter = Router();
 businessesRouter.use(authMiddleware);
@@ -254,12 +259,25 @@ businessesRouter.post('/:id/phone-numbers/send-otp', async (req, res, next) => {
       expiresAt,
     });
 
-    await sendCustomSms(
-      number,
-      `Your Milu verification code is ${code}. It expires in 10 minutes. Do not share this code.`,
-    );
+    let smsSent = true;
+    try {
+      await sendCustomSms(
+        number,
+        `Your Milu verification code is ${code}. It expires in 10 minutes. Do not share this code.`,
+      );
+    } catch (smsErr) {
+      smsSent = false;
+      logger.error({ err: smsErr, number }, 'Failed to send OTP SMS');
+    }
 
-    return res.json({ message: 'OTP sent', number });
+    const payload: Record<string, unknown> = { message: 'OTP sent', number };
+    // In dev with no SMS provider, surface the code so it can be tested
+    if (!smsSent && env.NODE_ENV !== 'production') payload.devCode = code;
+    if (!smsSent && env.NODE_ENV === 'production') {
+      return res.status(503).json({ error: 'Could not send SMS. Check the number and try again.' });
+    }
+
+    return res.json(payload);
   } catch (err) { next(err); }
 });
 
@@ -422,6 +440,29 @@ businessesRouter.delete('/:id/team/:userId', async (req, res, next) => {
       .set({ businessId: null })
       .where(and(eq(users.id, req.params.userId), eq(users.businessId, req.params.id)));
     return res.status(204).send();
+  } catch (err) {
+    next(err);
+  }
+});
+
+businessesRouter.post('/:id/team/:userId/resend-invite', async (req, res, next) => {
+  try {
+    const [user] = await db.select({ id: users.id, email: users.email, businessId: users.businessId })
+      .from(users)
+      .where(and(eq(users.id, req.params.userId), eq(users.businessId, req.params.id)))
+      .limit(1);
+
+    if (!user) return res.status(404).json({ error: 'Team member not found' });
+
+    const tempPassword = crypto.randomBytes(8).toString('hex');
+    const hashed = await bcrypt.hash(tempPassword, 10);
+    await db.update(users).set({ password: hashed, updatedAt: new Date() }).where(eq(users.id, user.id));
+
+    const [biz] = await db.select({ name: businesses.name }).from(businesses).where(eq(businesses.id, req.params.id)).limit(1);
+    const businessName = biz?.name ?? 'your team';
+    await sendTeamInviteEmail(user.email, businessName, tempPassword);
+
+    return res.json({ message: 'Invite resent' });
   } catch (err) {
     next(err);
   }

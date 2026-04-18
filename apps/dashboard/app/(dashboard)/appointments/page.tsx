@@ -1,7 +1,9 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { clsx } from 'clsx';
+import { useAuth } from '../../../hooks/useAuth';
+import { apiGet, apiPost, apiPatch } from '../../../lib/api';
 
 type Status = 'confirmed' | 'pending' | 'cancelled' | 'completed';
 
@@ -9,8 +11,8 @@ type Appointment = {
   id: string;
   caller: string;
   name: string;
-  date: string;
-  time: string;
+  date: string;   // YYYY-MM-DD
+  time: string;   // HH:MM
   duration: string;
   purpose: string;
   status: Status;
@@ -18,87 +20,51 @@ type Appointment = {
   notes?: string;
 };
 
-const appointments: Appointment[] = [
-  {
-    id: 'APT-041',
-    caller: '+234 805 444 5555',
-    name: 'Chidinma Eze',
-    date: '2025-04-18',
-    time: '15:00',
-    duration: '30 min',
-    purpose: 'Fitting session',
-    status: 'confirmed',
-    bookedVia: 'AI call',
-  },
-  {
-    id: 'APT-040',
-    caller: '+234 801 777 8888',
-    name: 'Bola Adeyemi',
-    date: '2025-04-18',
-    time: '11:00',
-    duration: '45 min',
-    purpose: 'Custom order consultation',
-    status: 'confirmed',
-    bookedVia: 'AI call',
-    notes: 'Wants to see fabric swatches for wedding outfit.',
-  },
-  {
-    id: 'APT-039',
-    caller: '+234 802 123 4567',
-    name: 'Kemi Fashola',
-    date: '2025-04-17',
-    time: '14:00',
-    duration: '30 min',
-    purpose: 'Fitting session',
-    status: 'completed',
-    bookedVia: 'Manual',
-  },
-  {
-    id: 'APT-038',
-    caller: '+234 803 999 0000',
-    name: 'Tunde Abiodun',
-    date: '2025-04-17',
-    time: '10:30',
-    duration: '30 min',
-    purpose: 'Product pickup',
-    status: 'cancelled',
-    bookedVia: 'AI call',
-    notes: 'Customer cancelled via WhatsApp.',
-  },
-  {
-    id: 'APT-037',
-    caller: '+234 704 555 1234',
-    name: 'Amara Okafor',
-    date: '2025-04-16',
-    time: '16:00',
-    duration: '60 min',
-    purpose: 'Bulk order discussion',
-    status: 'completed',
-    bookedVia: 'Manual',
-  },
-  {
-    id: 'APT-036',
-    caller: '+234 810 222 3333',
-    name: 'Funmi Sanni',
-    date: '2025-04-22',
-    time: '13:00',
-    duration: '30 min',
-    purpose: 'Fitting session',
-    status: 'pending',
-    bookedVia: 'AI call',
-  },
-  {
-    id: 'APT-035',
-    caller: '+234 706 444 7777',
-    name: 'Emeka Nwosu',
-    date: '2025-04-23',
-    time: '10:00',
-    duration: '45 min',
-    purpose: 'Custom order consultation',
-    status: 'pending',
-    bookedVia: 'AI call',
-  },
-];
+// Raw shape returned by the API
+interface ApiAppointment {
+  id: string;
+  scheduledAt: string;
+  duration: number;
+  serviceType?: string | null;
+  customerName?: string | null;
+  customerPhone?: string | null;
+  notes?: string | null;
+  status: 'SCHEDULED' | 'CONFIRMED' | 'CANCELLED' | 'COMPLETED' | 'NO_SHOW';
+  callId?: string | null;
+}
+
+const STATUS_FROM_API: Record<ApiAppointment['status'], Status> = {
+  SCHEDULED: 'pending',
+  CONFIRMED: 'confirmed',
+  CANCELLED: 'cancelled',
+  COMPLETED: 'completed',
+  NO_SHOW: 'cancelled',
+};
+
+const STATUS_TO_API: Record<Status, ApiAppointment['status']> = {
+  pending: 'SCHEDULED',
+  confirmed: 'CONFIRMED',
+  cancelled: 'CANCELLED',
+  completed: 'COMPLETED',
+};
+
+function fromApi(a: ApiAppointment): Appointment {
+  const dt = new Date(a.scheduledAt);
+  const date = dt.toISOString().slice(0, 10);
+  const time = `${String(dt.getHours()).padStart(2, '0')}:${String(dt.getMinutes()).padStart(2, '0')}`;
+  return {
+    id: a.id,
+    caller: a.customerPhone ?? '',
+    name: a.customerName ?? a.customerPhone ?? 'Unknown',
+    date,
+    time,
+    duration: `${a.duration} min`,
+    purpose: a.serviceType ?? '',
+    status: STATUS_FROM_API[a.status] ?? 'pending',
+    bookedVia: a.callId ? 'AI call' : 'Manual',
+    notes: a.notes ?? undefined,
+  };
+}
 
 const statusConfig: Record<Status, { label: string; cls: string }> = {
   confirmed: { label: 'Confirmed', cls: 'bg-success/10 text-success' },
@@ -121,7 +87,6 @@ function formatTime(t: string) {
   return `${h % 12 || 12}:${String(m).padStart(2, '0')} ${ampm}`;
 }
 
-// Group by date
 function groupByDate(list: Appointment[]) {
   const map = new Map<string, Appointment[]>();
   [...list].sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time)).forEach((apt) => {
@@ -131,20 +96,22 @@ function groupByDate(list: Appointment[]) {
   return map;
 }
 
-function AddModal({ onClose, onSave }: { onClose: () => void; onSave: (a: Appointment) => void }) {
+function AddModal({ onClose, onSave }: { onClose: () => void; onSave: (a: Omit<Appointment, 'id' | 'bookedVia'>) => Promise<void> }) {
   const [form, setForm] = useState({
     name: '', caller: '', date: '', time: '', duration: '30 min', purpose: '', notes: '',
+    status: 'confirmed' as Status,
   });
+  const [saving, setSaving] = useState(false);
 
-  function handleSave() {
+  async function handleSave() {
     if (!form.name || !form.date || !form.time || !form.purpose) return;
-    onSave({
-      id: `APT-${Date.now()}`,
-      ...form,
-      status: 'confirmed',
-      bookedVia: 'Manual',
-    });
-    onClose();
+    setSaving(true);
+    try {
+      await onSave(form);
+      onClose();
+    } finally {
+      setSaving(false);
+    }
   }
 
   const inputCls = 'w-full px-4 py-2.5 rounded-xl border border-cream-dark bg-cream-light text-sm text-primary-dark placeholder:text-cream-dark focus:outline-none focus:border-primary/50';
@@ -203,8 +170,8 @@ function AddModal({ onClose, onSave }: { onClose: () => void; onSave: (a: Appoin
         </div>
         <div className="flex gap-3 justify-end px-6 py-4 border-t border-cream-dark">
           <button onClick={onClose} className="text-sm text-primary-warm hover:text-primary-dark px-4 py-2">Cancel</button>
-          <button onClick={handleSave} className="bg-primary text-cream-light px-5 py-2 rounded-xl text-sm font-medium hover:bg-primary-dark transition-colors">
-            Save appointment
+          <button onClick={handleSave} disabled={saving} className="bg-primary text-cream-light px-5 py-2 rounded-xl text-sm font-medium hover:bg-primary-dark transition-colors disabled:opacity-50">
+            {saving ? 'Saving…' : 'Save appointment'}
           </button>
         </div>
       </div>
@@ -213,26 +180,54 @@ function AddModal({ onClose, onSave }: { onClose: () => void; onSave: (a: Appoin
 }
 
 export default function AppointmentsPage() {
-  const [items, setItems] = useState<Appointment[]>(appointments);
+  const { token, ready } = useAuth();
+
+  const [items, setItems] = useState<Appointment[]>([]);
+  const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<'all' | Status>('all');
   const [view, setView] = useState<'list' | 'calendar'>('list');
   const [selected, setSelected] = useState<Appointment | null>(null);
   const [showAdd, setShowAdd] = useState(false);
 
+  const load = useCallback(() => {
+    if (!token) return;
+    apiGet<{ appointments: ApiAppointment[] }>('/appointments', token)
+      .then(res => setItems((res.appointments ?? []).map(fromApi)))
+      .catch(() => null)
+      .finally(() => setLoading(false));
+  }, [token]);
+
+  useEffect(() => { if (ready) load(); }, [ready, load]);
+
   const filtered = filter === 'all' ? items : items.filter(a => a.status === filter);
   const grouped = groupByDate(filtered);
 
-  function updateStatus(id: string, status: Status) {
+  async function updateStatus(id: string, status: Status) {
     setItems(prev => prev.map(a => a.id === id ? { ...a, status } : a));
     if (selected?.id === id) setSelected(prev => prev ? { ...prev, status } : null);
+    try {
+      await apiPatch(`/appointments/${id}`, { status: STATUS_TO_API[status] }, token);
+    } catch {
+      load();
+    }
   }
 
-  function addAppointment(a: Appointment) {
-    setItems(prev => [...prev, a]);
+  async function addAppointment(data: Omit<Appointment, 'id' | 'bookedVia'>) {
+    const scheduledAt = new Date(`${data.date}T${data.time}:00`).toISOString();
+    const durationMins = parseInt(data.duration) || 30;
+    const created = await apiPost<ApiAppointment>('/appointments', {
+      scheduledAt,
+      duration: durationMins,
+      serviceType: data.purpose || undefined,
+      customerName: data.name || undefined,
+      customerPhone: data.caller || undefined,
+      notes: data.notes || undefined,
+      status: STATUS_TO_API[data.status],
+    }, token);
+    setItems(prev => [...prev, fromApi(created)]);
   }
 
-  // Calendar helpers
-  const today = new Date('2025-04-15');
+  const today = new Date();
   const calYear = today.getFullYear();
   const calMonth = today.getMonth();
   const firstDay = new Date(calYear, calMonth, 1).getDay();
@@ -251,7 +246,6 @@ export default function AppointmentsPage() {
           <p className="text-sm text-primary-warm mt-0.5">Bookings made by your AI agent and manually.</p>
         </div>
         <div className="flex items-center gap-2">
-          {/* View toggle */}
           <div className="flex gap-0.5 bg-cream rounded-xl p-1 border border-cream-dark">
             <button
               onClick={() => setView('list')}
@@ -287,8 +281,14 @@ export default function AppointmentsPage() {
           { label: 'Booked by AI', value: items.filter(a => a.bookedVia === 'AI call').length, color: 'text-primary' },
         ].map(s => (
           <div key={s.label} className="bg-white rounded-2xl border border-cream-dark px-5 py-4">
-            <p className={`text-2xl font-semibold ${s.color}`}>{s.value}</p>
-            <p className="text-xs text-primary-warm mt-0.5">{s.label}</p>
+            {loading ? (
+              <div className="animate-pulse space-y-1.5"><div className="h-7 bg-cream rounded w-10" /><div className="h-3 bg-cream rounded w-24" /></div>
+            ) : (
+              <>
+                <p className={`text-2xl font-semibold ${s.color}`}>{s.value}</p>
+                <p className="text-xs text-primary-warm mt-0.5">{s.label}</p>
+              </>
+            )}
           </div>
         ))}
       </div>
@@ -310,14 +310,22 @@ export default function AppointmentsPage() {
       </div>
 
       {view === 'list' ? (
-        /* ── LIST VIEW ── */
         <div className="flex gap-6">
-          {/* Appointments grouped by date */}
           <div className="flex-1 min-w-0 space-y-6">
-            {grouped.size === 0 && (
+            {loading && (
+              Array.from({ length: 3 }).map((_, i) => (
+                <div key={i} className="bg-white rounded-2xl border border-cream-dark px-5 py-4 animate-pulse flex items-center gap-4">
+                  <div className="w-16 flex-shrink-0 space-y-1.5"><div className="h-4 bg-cream rounded" /><div className="h-3 bg-cream rounded" /></div>
+                  <div className="w-px h-10 bg-cream flex-shrink-0" />
+                  <div className="flex-1 space-y-1.5"><div className="h-4 bg-cream rounded w-36" /><div className="h-3 bg-cream rounded w-52" /></div>
+                  <div className="h-6 bg-cream rounded-full w-20" />
+                </div>
+              ))
+            )}
+            {!loading && grouped.size === 0 && (
               <p className="text-sm text-primary-warm py-12 text-center">No appointments found.</p>
             )}
-            {Array.from(grouped.entries()).map(([date, apts]) => (
+            {!loading && Array.from(grouped.entries()).map(([date, apts]) => (
               <div key={date}>
                 <div className="flex items-center gap-3 mb-3">
                   <p className="text-xs font-semibold text-primary-warm uppercase tracking-wider">{formatDate(date)}</p>
@@ -333,7 +341,6 @@ export default function AppointmentsPage() {
                         selected?.id === apt.id ? 'border-primary/30 shadow-sm' : 'border-cream-dark'
                       )}
                     >
-                      {/* Time block */}
                       <div className="w-16 flex-shrink-0 text-center">
                         <p className="text-sm font-semibold text-primary-dark">{formatTime(apt.time)}</p>
                         <p className="text-xs text-primary-warm">{apt.duration}</p>
@@ -341,7 +348,6 @@ export default function AppointmentsPage() {
 
                       <div className="w-px h-10 bg-cream-dark flex-shrink-0" />
 
-                      {/* Details */}
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2">
                           <p className="text-sm font-medium text-primary-dark">{apt.name}</p>
@@ -362,7 +368,6 @@ export default function AppointmentsPage() {
             ))}
           </div>
 
-          {/* Detail panel */}
           {selected && (
             <div className="w-72 flex-shrink-0 bg-white rounded-2xl border border-cream-dark h-fit sticky top-6">
               <div className="flex items-center justify-between px-5 py-4 border-b border-cream-dark">
@@ -431,9 +436,7 @@ export default function AppointmentsPage() {
           )}
         </div>
       ) : (
-        /* ── CALENDAR VIEW ── */
         <div className="bg-white rounded-2xl border border-cream-dark overflow-hidden">
-          {/* Month header */}
           <div className="px-6 py-4 border-b border-cream-dark flex items-center justify-between">
             <p className="font-semibold text-primary-dark">
               {MONTHS[calMonth]} {calYear}
@@ -441,14 +444,12 @@ export default function AppointmentsPage() {
             <span className="text-xs text-primary-warm">{aptsThisMonth.length} appointments</span>
           </div>
 
-          {/* Day headers */}
           <div className="grid grid-cols-7 border-b border-cream-dark">
             {DAYS.map(d => (
               <div key={d} className="py-2.5 text-center text-xs font-semibold text-primary-warm">{d}</div>
             ))}
           </div>
 
-          {/* Calendar grid */}
           <div className="grid grid-cols-7">
             {calCells.map((day, i) => {
               if (!day) return <div key={i} className="min-h-[90px] bg-cream-light/40 border-r border-b border-cream-dark" />;

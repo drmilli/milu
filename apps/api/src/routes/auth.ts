@@ -219,7 +219,23 @@ authRouter.post('/login', authLimiter, async (req, res, next) => {
       password: z.string().min(1),
     }).parse(req.body);
 
-    const result = await db.select().from(users).where(eq(users.email, email)).limit(1);
+    const result = await db
+      .select({
+        id: users.id,
+        email: users.email,
+        password: users.password,
+        firstName: users.firstName,
+        lastName: users.lastName,
+        role: users.role,
+        businessId: users.businessId,
+        emailVerified: users.emailVerified,
+        businessName: businesses.name,
+      })
+      .from(users)
+      .leftJoin(businesses, eq(businesses.id, users.businessId))
+      .where(eq(users.email, email))
+      .limit(1);
+
     const user = result[0];
     if (!user || !(await bcrypt.compare(password, user.password))) {
       return res.status(401).json({ error: 'Invalid credentials' });
@@ -236,6 +252,7 @@ authRouter.post('/login', authLimiter, async (req, res, next) => {
         role: user.role,
         businessId: user.businessId,
         emailVerified: user.emailVerified,
+        businessName: user.businessName ?? undefined,
       },
     });
   } catch (err) {
@@ -391,16 +408,22 @@ authRouter.get('/me', async (req, res, next) => {
     const header = req.headers.authorization;
     if (!header?.startsWith('Bearer ')) return res.status(401).json({ error: 'Missing token' });
     const payload = verifyToken(header.slice(7));
-    const result = await db.select({
-      id: users.id,
-      email: users.email,
-      firstName: users.firstName,
-      lastName: users.lastName,
-      role: users.role,
-      businessId: users.businessId,
-      emailVerified: users.emailVerified,
-      createdAt: users.createdAt,
-    }).from(users).where(eq(users.id, payload.userId)).limit(1);
+    const result = await db
+      .select({
+        id: users.id,
+        email: users.email,
+        firstName: users.firstName,
+        lastName: users.lastName,
+        role: users.role,
+        businessId: users.businessId,
+        emailVerified: users.emailVerified,
+        createdAt: users.createdAt,
+        businessName: businesses.name,
+      })
+      .from(users)
+      .leftJoin(businesses, eq(businesses.id, users.businessId))
+      .where(eq(users.id, payload.userId))
+      .limit(1);
 
     if (!result.length) return res.status(404).json({ error: 'User not found' });
     return res.json(result[0]);

@@ -1,27 +1,36 @@
 'use client';
 
 import { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { motion } from 'framer-motion';
+import { apiPost } from '../../../lib/api';
+import { saveSession } from '../../../lib/auth';
+import type { StoredUser } from '../../../lib/auth';
 
 const inputCls = 'w-full px-4 py-3 rounded-xl border border-cream-dark bg-cream text-primary-dark placeholder:text-cream-dark focus:outline-none focus:border-primary/50 focus:ring-2 focus:ring-primary/10 transition-all text-sm';
 
 export default function LoginPage() {
+  const router = useRouter();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPw, setShowPw] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError('');
     setLoading(true);
-    // TODO: wire up to /api/v1/auth/login
-    setTimeout(() => {
+    try {
+      const res = await apiPost<{ token: string; user: StoredUser }>('/auth/login', { email, password });
+      saveSession(res.token, res.user);
+      router.replace('/overview');
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Invalid email or password');
+    } finally {
       setLoading(false);
-      setError('Invalid email or password.');
-    }, 1000);
+    }
   }
 
   return (

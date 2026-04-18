@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { motion, AnimatePresence } from 'framer-motion';
+import { apiPost } from '../../../lib/api';
 
 const inputCls = 'w-full px-4 py-3 rounded-xl border border-cream-dark bg-cream text-primary-dark placeholder:text-cream-dark focus:outline-none focus:border-primary/50 focus:ring-2 focus:ring-primary/10 transition-all text-sm';
 
@@ -10,15 +11,20 @@ export default function ForgotPasswordPage() {
   const [email, setEmail] = useState('');
   const [loading, setLoading] = useState(false);
   const [sent, setSent] = useState(false);
+  const [error, setError] = useState('');
 
-  function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    setError('');
     setLoading(true);
-    // TODO: wire up to /api/v1/auth/forgot-password
-    setTimeout(() => {
-      setLoading(false);
+    try {
+      await apiPost('/auth/forgot-password', { email });
       setSent(true);
-    }, 1000);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Something went wrong');
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
@@ -117,6 +123,9 @@ export default function ForgotPasswordPage() {
                     />
                   </div>
 
+                  {error && (
+                    <p className="text-sm text-danger bg-danger/5 border border-danger/20 rounded-xl px-4 py-3">{error}</p>
+                  )}
                   <button
                     type="submit"
                     disabled={loading || !email}

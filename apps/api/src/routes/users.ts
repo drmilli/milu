@@ -3,7 +3,7 @@ import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 import { z } from 'zod';
 import { eq, and } from 'drizzle-orm';
-import { db, users } from '../db';
+import { db, users, businesses } from '../db';
 import { authMiddleware } from '../middleware/auth';
 import { sendTeamInviteEmail } from '../utils/email';
 
@@ -75,7 +75,9 @@ usersRouter.post('/invite', async (req, res, next) => {
       role: users.role,
     });
 
-    await sendTeamInviteEmail(email, businessId, tempPassword);
+    const biz = await db.select({ name: businesses.name }).from(businesses).where(eq(businesses.id, businessId)).limit(1);
+    const businessName = biz[0]?.name ?? 'your team';
+    await sendTeamInviteEmail(email, businessName, tempPassword);
     return res.status(201).json(result[0]);
   } catch (err) {
     next(err);
