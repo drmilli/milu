@@ -101,7 +101,7 @@ export default function AdminDashboardPage() {
             <p className="text-xs text-primary-warm mb-1">{s.label}</p>
             <p className="text-2xl font-bold text-primary-dark font-heading">{s.value}</p>
             <p className={`text-xs mt-1 ${s.up === true ? 'text-success' : s.up === false ? 'text-danger' : 'text-primary-warm'}`}>
-              {s.up === true && '↑ '}{s.up === false && '↓ '}{s.change}
+              {s.up === true ? '↑ ' : s.up == null ? '' : '↓ '}{s.change}
             </p>
           </div>
         ))}
