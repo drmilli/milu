@@ -8,6 +8,7 @@ import { logger } from './config/logger';
 import { swaggerSpec } from './swagger';
 import { apiLimiter } from './middleware/rate-limit';
 import { errorHandler } from './middleware/error-handler';
+import { httpLogger } from './middleware/http-logger';
 import { authRouter } from './routes/auth';
 import { businessesRouter } from './routes/businesses';
 import { callsRouter } from './routes/calls';
@@ -31,6 +32,9 @@ import { apiKeysRouter } from './routes/apiKeys';
 
 const app: Express = express();
 const server = http.createServer(app);
+
+// HTTP request logging — must be first
+app.use(httpLogger);
 
 // CORS
 const origins = env.CORS_ORIGINS.split(',').map((o) => o.trim());
@@ -83,8 +87,17 @@ app.use('/api/v1/api-keys', apiKeysRouter);
 app.use(errorHandler);
 
 server.listen(env.PORT, () => {
-  logger.info(`API server listening on port ${env.PORT}`);
-  logger.info(`Swagger docs → http://localhost:${env.PORT}/docs`);
+  logger.info({
+    port: env.PORT,
+    env: env.NODE_ENV,
+    cors: origins,
+    docs: `http://localhost:${env.PORT}/docs`,
+    db: env.DATABASE_URL.replace(/:\/\/.*@/, '://***@'), // hide credentials
+    twilio: !!env.TWILIO_ACCOUNT_SID,
+    whatsapp: !!env.WHATSAPP_TOKEN,
+    email: !!env.GMAIL_USER,
+    whop: !!env.WHOP_API_KEY,
+  }, 'Milu API started');
 });
 
 export default app;
