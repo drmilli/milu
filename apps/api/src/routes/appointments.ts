@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { eq, and, gte, desc, sql } from 'drizzle-orm';
-import { db, appointments } from '../db';
+import { db, appointments, businesses } from '../db';
 import { authMiddleware } from '../middleware/auth';
 import { notifyBusinessOwners } from '../services/notifications';
 import { dispatchWebhook } from '../services/webhooks';
@@ -122,8 +122,10 @@ appointmentsRouter.post('/', async (req, res, next) => {
     await dispatchWebhook(data.businessId, 'appointment.created', { appointmentId: appt.id, scheduledAt: data.scheduledAt });
 
     const dateStr = data.scheduledAt.toLocaleString('en-NG', { timeZone: 'Africa/Lagos' });
+    const [biz] = await db.select({ name: businesses.name }).from(businesses).where(eq(businesses.id, data.businessId)).limit(1);
+    const businessName = biz?.name ?? 'your provider';
     await sendAppointmentSms(data.customerPhone, data.serviceType ?? 'Appointment', dateStr).catch(() => null);
-    await sendAppointmentReminder(data.customerPhone, data.serviceType ?? 'Appointment', dateStr, data.businessId).catch(() => null);
+    await sendAppointmentReminder(data.customerPhone, data.serviceType ?? 'Appointment', dateStr, businessName).catch(() => null);
 
     return res.status(201).json(appt);
   } catch (err) { next(err); }

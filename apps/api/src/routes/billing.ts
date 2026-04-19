@@ -1,8 +1,8 @@
 import { Router } from 'express';
 import crypto from 'crypto';
 import { z } from 'zod';
-import { eq } from 'drizzle-orm';
-import { db, businesses, users } from '../db';
+import { eq, sql, gte } from 'drizzle-orm';
+import { db, businesses, users, calls } from '../db';
 import { authMiddleware } from '../middleware/auth';
 import { env } from '../config/env';
 import { sendSubscriptionConfirmEmail, sendSubscriptionCancelledEmail } from '../utils/email';
@@ -144,22 +144,68 @@ billingRouter.post('/checkout', authMiddleware, async (req, res, next) => {
  *       200:
  *         description: Subscription details
  */
+const TIER_META: Record<string, { planId: string; planName: string; priceNgn: number; priceUsd: number; callLimit: number | null; memberLimit: number | null }> = {
+  STARTER:    { planId: 'starter',    planName: 'Starter',    priceNgn: 15000, priceUsd: 10, callLimit: 200,  memberLimit: 1    },
+  GROWTH:     { planId: 'growth',     planName: 'Growth',     priceNgn: 45000, priceUsd: 30, callLimit: 500,  memberLimit: null },
+  ENTERPRISE: { planId: 'enterprise', planName: 'Enterprise', priceNgn: 0,     priceUsd: 0,  callLimit: null, memberLimit: null },
+};
+
 billingRouter.get('/subscription/:businessId', authMiddleware, async (req, res, next) => {
   try {
     const [biz] = await db
-      .select({ subscriptionTier: businesses.subscriptionTier, isActive: businesses.isActive })
+      .select({ subscriptionTier: businesses.subscriptionTier, isActive: businesses.isActive, createdAt: businesses.createdAt })
       .from(businesses)
       .where(eq(businesses.id, req.params.businessId))
       .limit(1);
 
     if (!biz) return res.status(404).json({ error: 'Business not found' });
 
-    if (!env.WHOP_API_KEY) {
-      return res.json({ tier: biz.subscriptionTier, isActive: biz.isActive, source: 'local' });
-    }
+    const tier = biz.subscriptionTier ?? 'STARTER';
+    const meta = TIER_META[tier] ?? TIER_META['STARTER'];
 
-    const data = await whopRequest(`/memberships?metadata[businessId]=${req.params.businessId}&status=active`);
-    return res.json({ tier: biz.subscriptionTier, isActive: biz.isActive, whop: data });
+    // Count calls this month
+    const startOfMonth = new Date(); startOfMonth.setDate(1); startOfMonth.setHours(0, 0, 0, 0);
+    const [callCount, memberCount] = await Promise.all([
+      db.select({ n: sql<number>`count(*)` }).from(calls)
+        .where(gte(calls.startedAt, startOfMonth)),
+      db.select({ n: sql<number>`count(*)` }).from(users)
+        .where(eq(users.businessId, req.params.businessId)),
+    ]);
+
+    // Renewal date = same day next month
+    const renewsAt = new Date(biz.createdAt);
+    while (renewsAt <= new Date()) renewsAt.setMonth(renewsAt.getMonth() + 1);
+
+    return res.json({
+      planId: meta.planId,
+      planName: meta.planName,
+      status: biz.isActive ? 'active' : 'cancelled',
+      price: meta.priceNgn,
+      currency: 'NGN',
+      renewsAt: renewsAt.toISOString(),
+      usage: {
+        calls: { used: Number(callCount[0]?.n ?? 0), limit: meta.callLimit },
+        teamMembers: { used: Number(memberCount[0]?.n ?? 0), limit: meta.memberLimit },
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+billingRouter.get('/invoices/:businessId', authMiddleware, async (req, res, next) => {
+  try {
+    // If Whop API key available, try fetching real invoices
+    if (env.WHOP_API_KEY) {
+      try {
+        const data = await whopRequest<{ data?: unknown[] }>(`/memberships?metadata[businessId]=${req.params.businessId}`);
+        return res.json(data?.data ?? []);
+      } catch {
+        // fall through to empty
+      }
+    }
+    // Return empty — invoices managed on Whop's side
+    return res.json([]);
   } catch (err) {
     next(err);
   }

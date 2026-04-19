@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { eq, and, desc, sql } from 'drizzle-orm';
-import { db, orders, contacts } from '../db';
+import { db, orders, contacts, businesses } from '../db';
 import { authMiddleware } from '../middleware/auth';
 import { notifyBusinessOwners } from '../services/notifications';
 import { dispatchWebhook } from '../services/webhooks';
@@ -127,8 +127,10 @@ ordersRouter.post('/', async (req, res, next) => {
     await dispatchWebhook(data.businessId, 'order.created', { orderId: order.id, orderNumber, customerPhone: data.customerPhone });
 
     if (data.customerPhone) {
+      const [biz] = await db.select({ name: businesses.name }).from(businesses).where(eq(businesses.id, data.businessId)).limit(1);
+      const businessName = biz?.name ?? 'your provider';
       await sendOrderSms(data.customerPhone, orderNumber).catch(() => null);
-      await sendOrderConfirmation(data.customerPhone, orderNumber, data.items).catch(() => null);
+      await sendOrderConfirmation(data.customerPhone, orderNumber, data.items, businessName).catch(() => null);
     }
 
     return res.status(201).json(order);

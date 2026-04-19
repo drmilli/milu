@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { eq, and, desc, sql } from 'drizzle-orm';
+import { eq, and, desc, sql, ilike } from 'drizzle-orm';
 import { db, calls, transcripts, escalations } from '../db';
 import { authMiddleware } from '../middleware/auth';
 
@@ -63,7 +63,7 @@ callsRouter.get('/', async (req, res, next) => {
       businessId: z.string().optional(),
       status: z.enum(['ACTIVE', 'COMPLETED', 'FAILED']).optional(),
       resolution: z.enum(['AI', 'HUMAN', 'ABANDONED']).optional(),
-      intent: z.enum(['FAQ', 'BOOKING', 'ORDER_STATUS', 'COMPLAINT', 'ESCALATE', 'UNKNOWN']).optional(),
+      intent: z.string().optional(), // free-text search on callerNumber
     });
     const { page, limit, businessId, status, resolution, intent } = schema.parse(req.query);
 
@@ -74,7 +74,7 @@ callsRouter.get('/', async (req, res, next) => {
       ...(scopedBusinessId ? [eq(calls.businessId, scopedBusinessId)] : []),
       ...(status ? [eq(calls.status, status)] : []),
       ...(resolution ? [eq(calls.resolution, resolution)] : []),
-      ...(intent ? [eq(calls.intent, intent)] : []),
+      ...(intent ? [ilike(calls.callerNumber, `%${intent}%`)] : []),
     ];
 
     const where = conditions.length ? and(...conditions) : undefined;
@@ -85,7 +85,9 @@ callsRouter.get('/', async (req, res, next) => {
     ]);
 
     const total = Number(countResult[0]?.n ?? 0);
-    return res.json({ calls: rows, total, page, limit, totalPages: Math.ceil(total / limit) });
+    // Map duration → durationSeconds for frontend
+    const mapped = rows.map(c => ({ ...c, durationSeconds: c.duration }));
+    return res.json({ calls: mapped, total, page, limit, totalPages: Math.ceil(total / limit) });
   } catch (err) {
     next(err);
   }
@@ -145,8 +147,9 @@ callsRouter.get('/:id', async (req, res, next) => {
  */
 callsRouter.get('/:id/transcript', async (req, res, next) => {
   try {
-    const rows = await db.select().from(transcripts).where(eq(transcripts.callId, req.params.id));
-    return res.json(rows);
+    const rows = await db.select().from(transcripts).where(eq(transcripts.callId, req.params.id)).orderBy(transcripts.createdAt);
+    // Map speaker/text → role/content for frontend
+    return res.json(rows.map(r => ({ id: r.id, role: r.speaker, content: r.text, createdAt: r.createdAt })));
   } catch (err) {
     next(err);
   }

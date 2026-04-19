@@ -36,24 +36,100 @@ export async function sendWhatsAppTemplate(to: string, templateName: string, lan
   });
 }
 
-export async function sendOrderConfirmation(to: string, orderNumber: string, items: { name: string; qty: number }[]) {
-  const itemList = items.map((i) => `• ${i.name} x${i.qty}`).join('\n');
-  return sendWhatsAppText(
-    to,
-    `✅ *Order Confirmed!*\n\nOrder #${orderNumber}\n\n${itemList}\n\nWe'll update you when your order is ready. Reply to this message for help.`,
+export async function sendOrderConfirmation(to: string, orderNumber: string, items: { name: string; qty: number }[], businessName: string) {
+  const itemList = items.map((i) => `  • ${i.name} ×${i.qty}`).join('\n');
+  return sendWhatsAppText(to,
+    `✅ *Order Confirmed!*\n\n` +
+    `Hi! Your order has been received by *${businessName}*.\n\n` +
+    `*Order #${orderNumber}*\n${itemList}\n\n` +
+    `We'll send you an update when your order is ready. Reply to this message if you need help.`
+  );
+}
+
+export async function sendOrderStatusUpdate(to: string, orderNumber: string, status: string, businessName: string) {
+  const statusMessages: Record<string, string> = {
+    CONFIRMED: '✅ Your order has been confirmed and is being prepared.',
+    PROCESSING: '🔄 Your order is currently being processed.',
+    COMPLETED: '🎉 Your order is ready! Please come pick it up or expect delivery soon.',
+    CANCELLED: '❌ Your order has been cancelled. Contact us if this was a mistake.',
+  };
+  const msg = statusMessages[status] ?? `Your order status has been updated to: ${status}`;
+  return sendWhatsAppText(to,
+    `📦 *Order Update — #${orderNumber}*\n\n` +
+    `${msg}\n\n` +
+    `*${businessName}*\nReply to this message for assistance.`
   );
 }
 
 export async function sendAppointmentReminder(to: string, service: string, dateTime: string, businessName: string) {
-  return sendWhatsAppText(
-    to,
-    `📅 *Appointment Reminder*\n\n${businessName}\n\nService: ${service}\nDate/Time: ${dateTime}\n\nReply "CONFIRM" to confirm or "CANCEL" to cancel.`,
+  return sendWhatsAppText(to,
+    `📅 *Appointment Reminder*\n\n` +
+    `You have an upcoming appointment with *${businessName}*.\n\n` +
+    `*Service:* ${service}\n` +
+    `*Date & Time:* ${dateTime}\n\n` +
+    `Reply *CONFIRM* to confirm or *CANCEL* to cancel.\n\n` +
+    `Need to reschedule? Reply to this message.`
+  );
+}
+
+export async function sendAppointmentConfirmation(to: string, service: string, dateTime: string, businessName: string) {
+  return sendWhatsAppText(to,
+    `✅ *Appointment Confirmed!*\n\n` +
+    `Your appointment with *${businessName}* is confirmed.\n\n` +
+    `*Service:* ${service}\n` +
+    `*Date & Time:* ${dateTime}\n\n` +
+    `We'll send you a reminder closer to your appointment. See you soon! 👋`
   );
 }
 
 export async function sendEscalationAlert(to: string, callerNumber: string, summary: string) {
-  return sendWhatsAppText(
-    to,
-    `🔔 *Escalation Alert*\n\nA caller (${callerNumber}) needs your attention.\n\n${summary}\n\nPlease call them back as soon as possible.`,
+  return sendWhatsAppText(to,
+    `🔔 *Action Required — Call Escalation*\n\n` +
+    `Your AI agent has escalated a call that needs your personal attention.\n\n` +
+    `*Caller:* ${callerNumber}\n` +
+    `*Reason:* ${summary}\n\n` +
+    `Please call them back as soon as possible.\n\n` +
+    `_Powered by Milu AI_`
+  );
+}
+
+export async function sendCallbackRequest(to: string, callerNumber: string, businessName: string) {
+  return sendWhatsAppText(to,
+    `📞 *Callback Request*\n\n` +
+    `A customer has requested a callback from *${businessName}*.\n\n` +
+    `*Customer number:* ${callerNumber}\n\n` +
+    `Please call them back at your earliest convenience.\n\n` +
+    `_Powered by Milu AI_`
+  );
+}
+
+export async function sendMissedCallAlert(to: string, callerNumber: string, businessName: string) {
+  return sendWhatsAppText(to,
+    `📵 *Missed Call Alert*\n\n` +
+    `Your AI agent missed a call on *${businessName}*.\n\n` +
+    `*Caller:* ${callerNumber}\n\n` +
+    `Consider calling them back to avoid losing a customer.\n\n` +
+    `_Powered by Milu AI_`
+  );
+}
+
+export async function sendWeeklySummary(to: string, businessName: string, stats: {
+  totalCalls: number;
+  resolved: number;
+  escalated: number;
+  avgDuration: number;
+}) {
+  const resolutionRate = stats.totalCalls > 0
+    ? ((stats.resolved / stats.totalCalls) * 100).toFixed(1)
+    : '0';
+  return sendWhatsAppText(to,
+    `📊 *Weekly Summary — ${businessName}*\n\n` +
+    `Here's how your AI agent performed this week:\n\n` +
+    `📞 Total Calls: *${stats.totalCalls}*\n` +
+    `✅ AI Resolved: *${stats.resolved}* (${resolutionRate}%)\n` +
+    `🔔 Escalated: *${stats.escalated}*\n` +
+    `⏱ Avg Call Duration: *${stats.avgDuration}s*\n\n` +
+    `Keep it up! View full analytics on your dashboard.\n\n` +
+    `_Milu AI · dashboard.miluai.app_`
   );
 }

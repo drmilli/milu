@@ -7,6 +7,7 @@ import { authMiddleware } from '../middleware/auth';
 import { adminGuard } from '../middleware/admin-guard';
 import { env } from '../config/env';
 import { sendTestEmail, sendVerificationEmail, sendPasswordResetEmail, sendTeamInviteEmail, sendSubscriptionConfirmEmail, sendSubscriptionCancelledEmail } from '../utils/email';
+import { sendEscalationAlert, sendOrderConfirmation, sendAppointmentReminder, sendCallbackRequest, sendMissedCallAlert, sendWeeklySummary } from '../services/whatsapp';
 
 export const adminRouter: Router = Router();
 adminRouter.use(authMiddleware, adminGuard);
@@ -517,4 +518,37 @@ adminRouter.get('/settings', (_req, res) => {
 adminRouter.patch('/settings', (_req, res) => {
   // Settings are env-based; acknowledge save without persisting
   return res.json({ message: 'Settings noted (restart required for env changes)' });
+});
+
+// ─── POST /admin/test-whatsapp ────────────────────────────────────────────────
+adminRouter.post('/test-whatsapp', async (req, res, next) => {
+  try {
+    const { to, type } = z.object({
+      to: z.string().min(7),
+      type: z.enum(['escalation', 'order', 'appointment', 'callback', 'missed_call', 'weekly_summary']).default('escalation'),
+    }).parse(req.body);
+
+    switch (type) {
+      case 'escalation':
+        await sendEscalationAlert(to, '+2348012345678', 'Customer is asking about a delayed order and is frustrated.');
+        break;
+      case 'order':
+        await sendOrderConfirmation(to, 'ORD-001', [{ name: 'Jollof Rice', qty: 2 }, { name: 'Chicken', qty: 1 }], 'Amaka\'s Kitchen');
+        break;
+      case 'appointment':
+        await sendAppointmentReminder(to, 'Hair Braiding', 'Saturday, 26 Apr 2026 at 10:00 AM', 'Chioma\'s Salon');
+        break;
+      case 'callback':
+        await sendCallbackRequest(to, '+2348098765432', 'Tunde\'s Pharmacy');
+        break;
+      case 'missed_call':
+        await sendMissedCallAlert(to, '+2347011223344', 'Emeka\'s Store');
+        break;
+      case 'weekly_summary':
+        await sendWeeklySummary(to, 'Amaka\'s Kitchen', { totalCalls: 47, resolved: 38, escalated: 9, avgDuration: 94 });
+        break;
+    }
+
+    return res.json({ message: `WhatsApp ${type} test sent to ${to}` });
+  } catch (err) { next(err); }
 });

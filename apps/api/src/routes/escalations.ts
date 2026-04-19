@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { eq, and, desc, sql } from 'drizzle-orm';
-import { db, escalations } from '../db';
+import { db, escalations, businesses, businessSettings } from '../db';
 import { authMiddleware } from '../middleware/auth';
 import { notifyBusinessOwners } from '../services/notifications';
 import { sendEscalationAlert } from '../services/whatsapp';
@@ -115,6 +115,34 @@ escalationsRouter.get('/:id', async (req, res, next) => {
  *       200:
  *         description: Updated escalation
  */
+escalationsRouter.post('/', async (req, res, next) => {
+  try {
+    const data = z.object({
+      businessId: z.string(),
+      callId: z.string(),
+      callerNumber: z.string(),
+      reason: z.string().default('Agent escalation'),
+      summary: z.string().default('Customer needs assistance'),
+    }).parse(req.body);
+
+    const [esc] = await db.insert(escalations).values({ businessId: data.businessId, callId: data.callId, reason: data.reason, summary: data.summary }).returning();
+    await audit(req, 'escalation.created', 'escalation', esc.id);
+
+    // Alert business owner via WhatsApp if they have a verified number
+    const [settings] = await db.select({ whatsappNumber: businessSettings.whatsappNumber, whatsappVerified: businessSettings.whatsappVerified })
+      .from(businessSettings).where(eq(businessSettings.businessId, data.businessId)).limit(1);
+
+    if (settings?.whatsappVerified && settings.whatsappNumber) {
+      const summary = data.summary ?? data.reason ?? 'Customer needs assistance';
+      await sendEscalationAlert(settings.whatsappNumber, data.callerNumber, summary).catch(() => null);
+    }
+
+    await notifyBusinessOwners(data.businessId, 'Call Escalated', `Caller ${data.callerNumber} needs your attention. ${data.summary ?? data.reason ?? ''}`);
+
+    return res.status(201).json(esc);
+  } catch (err) { next(err); }
+});
+
 escalationsRouter.patch('/:id', async (req, res, next) => {
   try {
     const data = z.object({
