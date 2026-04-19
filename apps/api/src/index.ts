@@ -34,6 +34,9 @@ import { apiKeysRouter } from './routes/apiKeys';
 const app: Express = express();
 const server = http.createServer(app);
 
+// Trust Railway's reverse proxy so rate-limiting uses real client IPs
+app.set('trust proxy', 1);
+
 // HTTP request logging — must be first
 app.use(httpLogger);
 
