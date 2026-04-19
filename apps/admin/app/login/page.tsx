@@ -39,7 +39,9 @@ export default function AdminLoginPage() {
       <div className="w-full max-w-sm">
         <div className="text-center mb-8">
           <div className="inline-flex items-center gap-2 mb-2">
-            <img src="/brand/wordmark.svg" alt="milu." className="h-7 w-auto" />
+            <a href="https://www.miluai.app">
+              <img src="/brand/wordmark.svg" alt="milu." className="h-7 w-auto" />
+            </a>
           </div>
           <span className="block text-xs font-semibold tracking-widest uppercase text-cream/40 mt-1">
             Admin Panel

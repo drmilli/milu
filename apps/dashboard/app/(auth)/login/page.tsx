@@ -37,9 +37,9 @@ export default function LoginPage() {
     <div className="min-h-screen flex">
       {/* Left panel */}
       <div className="hidden lg:flex lg:w-[420px] xl:w-[480px] flex-shrink-0 bg-primary-dark flex-col justify-between p-12">
-        <Link href="/" aria-label="Milu home">
+        <a href="https://www.miluai.app" aria-label="Milu home">
           <img src="/brand/wordmark.svg" alt="milu." className="h-8 w-auto" />
-        </Link>
+        </a>
         <div>
           <p className="font-heading font-bold text-4xl text-cream-light leading-snug mb-4">
             Welcome back.
@@ -59,9 +59,9 @@ export default function LoginPage() {
           transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
           className="w-full max-w-md"
         >
-          <Link href="/" className="lg:hidden inline-block mb-8" aria-label="Milu home">
+          <a href="https://www.miluai.app" className="lg:hidden inline-block mb-8" aria-label="Milu home">
             <img src="/brand/wordmark-dark.svg" alt="milu." className="h-7 w-auto" />
-          </Link>
+          </a>
 
           <div className="mb-8">
             <h1 className="font-heading font-bold text-2xl text-primary-dark mb-1">Log in to Milu</h1>
@@ -130,9 +130,9 @@ export default function LoginPage() {
 
           <p className="mt-8 text-xs text-center text-primary-warm">
             By signing in you agree to our{' '}
-            <a href="http://localhost:3003/legal/terms" className="underline hover:text-primary">Terms</a>
+            <a href="https://www.miluai.app/legal/terms" className="underline hover:text-primary">Terms</a>
             {' '}and{' '}
-            <a href="http://localhost:3003/legal/privacy" className="underline hover:text-primary">Privacy Policy</a>.
+            <a href="https://www.miluai.app/legal/privacy" className="underline hover:text-primary">Privacy Policy</a>.
           </p>
         </motion.div>
       </div>
