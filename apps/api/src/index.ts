@@ -36,7 +36,14 @@ const server = http.createServer(app);
 // HTTP request logging — must be first
 app.use(httpLogger);
 
-// CORS
+// CORS — explicit headers before cors() as a safety net for Railway's proxy
+app.use((_req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type,Authorization,X-Requested-With');
+  next();
+});
+app.options('*', (_req, res) => res.sendStatus(200));
 app.use(cors({ origin: '*' }));
 
 // Parse JSON and capture raw body for webhook signature verification
