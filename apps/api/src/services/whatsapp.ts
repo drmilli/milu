@@ -18,11 +18,13 @@ async function send(to: string, body: Record<string, unknown>) {
     },
     body: JSON.stringify({ messaging_product: 'whatsapp', to: normalizedTo, ...body }),
   });
+  const responseText = await res.text();
   if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`WhatsApp API error ${res.status}: ${err}`);
+    logger.error({ to, status: res.status, response: responseText }, 'WhatsApp API error');
+    throw new Error(`WhatsApp API error ${res.status}: ${responseText}`);
   }
-  return res.json();
+  logger.info({ to, response: responseText }, 'WhatsApp message sent');
+  return JSON.parse(responseText);
 }
 
 export async function sendWhatsAppText(to: string, message: string) {
