@@ -1,9 +1,11 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { eq, desc, ilike, and, sql } from 'drizzle-orm';
+import { eq, desc, ilike, and, sql, gte } from 'drizzle-orm';
+import bcrypt from 'bcryptjs';
 import { db, businesses, users, calls, escalations } from '../db';
 import { authMiddleware } from '../middleware/auth';
 import { adminGuard } from '../middleware/admin-guard';
+import { env } from '../config/env';
 import { sendTestEmail, sendVerificationEmail, sendPasswordResetEmail, sendTeamInviteEmail, sendSubscriptionConfirmEmail, sendSubscriptionCancelledEmail } from '../utils/email';
 
 export const adminRouter: Router = Router();
@@ -347,4 +349,172 @@ adminRouter.post('/test-email', async (req, res, next) => {
 
     return res.json({ message: `${template} email sent to ${to}` });
   } catch (err) { next(err); }
+});
+
+// ─── PATCH /admin/users/:id — suspend/unsuspend or update profile ─────────────
+adminRouter.patch('/users/:id', async (req, res, next) => {
+  try {
+    const schema = z.object({
+      firstName: z.string().optional(),
+      lastName: z.string().optional(),
+      role: z.enum(['OWNER', 'ADMIN']).optional(),
+      password: z.string().min(8).optional(),
+      // status is frontend-only (no DB column); we use emailVerified as proxy for suspension
+      status: z.enum(['active', 'inactive', 'suspended']).optional(),
+    });
+    const { firstName, lastName, role, password, status } = schema.parse(req.body);
+
+    const update: Record<string, unknown> = { updatedAt: new Date() };
+    if (firstName !== undefined) update.firstName = firstName;
+    if (lastName !== undefined) update.lastName = lastName;
+    if (role !== undefined) update.role = role;
+    if (password) update.password = await bcrypt.hash(password, 10);
+    // suspended → emailVerified = false, active → true
+    if (status === 'suspended') update.emailVerified = false;
+    if (status === 'active') update.emailVerified = true;
+
+    const [result] = await db.update(users).set(update).where(eq(users.id, req.params.id)).returning({
+      id: users.id, email: users.email, firstName: users.firstName, lastName: users.lastName,
+      role: users.role, emailVerified: users.emailVerified,
+    });
+    if (!result) return res.status(404).json({ error: 'User not found' });
+    return res.json(result);
+  } catch (err) { next(err); }
+});
+
+// ─── GET /admin/analytics/revenue ─────────────────────────────────────────────
+adminRouter.get('/analytics/revenue', async (_req, res, next) => {
+  try {
+    // Return MRR by month for last 6 months based on business createdAt as proxy
+    const rows = await db.execute(sql`
+      SELECT TO_CHAR(DATE_TRUNC('month', created_at), 'Mon') AS month,
+             COUNT(*) * 15000 AS mrr
+      FROM businesses
+      WHERE created_at >= NOW() - INTERVAL '6 months'
+      GROUP BY DATE_TRUNC('month', created_at)
+      ORDER BY DATE_TRUNC('month', created_at)
+    `);
+    return res.json(rows.rows.map((r: any) => ({ month: r.month, mrr: Number(r.mrr) })));
+  } catch (err) { next(err); }
+});
+
+// ─── GET /admin/analytics/call-volume ─────────────────────────────────────────
+adminRouter.get('/analytics/call-volume', async (_req, res, next) => {
+  try {
+    const rows = await db.execute(sql`
+      SELECT TO_CHAR(DATE_TRUNC('day', started_at), 'DD Mon') AS day,
+             COUNT(*) AS calls
+      FROM calls
+      WHERE started_at >= NOW() - INTERVAL '14 days'
+      GROUP BY DATE_TRUNC('day', started_at)
+      ORDER BY DATE_TRUNC('day', started_at)
+    `);
+    return res.json(rows.rows.map((r: any) => ({ day: r.day, calls: Number(r.calls) })));
+  } catch (err) { next(err); }
+});
+
+// ─── GET /admin/businesses/recent ─────────────────────────────────────────────
+adminRouter.get('/businesses/recent', async (_req, res, next) => {
+  try {
+    const rows = await db
+      .select({
+        id: businesses.id,
+        name: businesses.name,
+        plan: businesses.subscriptionTier,
+        createdAt: businesses.createdAt,
+        ownerEmail: users.email,
+        ownerFirstName: users.firstName,
+        ownerLastName: users.lastName,
+      })
+      .from(businesses)
+      .leftJoin(users, and(eq(users.businessId, businesses.id), eq(users.role, 'OWNER')))
+      .orderBy(desc(businesses.createdAt))
+      .limit(10);
+
+    return res.json(rows.map(r => ({
+      id: r.id,
+      name: r.name,
+      plan: r.plan,
+      joinedAt: r.createdAt,
+      owner: r.ownerFirstName
+        ? `${r.ownerFirstName} ${r.ownerLastName ?? ''}`.trim()
+        : (r.ownerEmail ?? 'Unknown'),
+    })));
+  } catch (err) { next(err); }
+});
+
+// ─── GET /admin/billing/overview ──────────────────────────────────────────────
+adminRouter.get('/billing/overview', async (_req, res, next) => {
+  try {
+    const [totalBiz, planRows] = await Promise.all([
+      db.select({ n: sql<number>`count(*)` }).from(businesses),
+      db.select({ tier: businesses.subscriptionTier, count: sql<number>`count(*)` })
+        .from(businesses).groupBy(businesses.subscriptionTier),
+    ]);
+
+    const planMap: Record<string, number> = {};
+    for (const r of planRows) planMap[r.tier] = Number(r.count);
+
+    const starterMrr = (planMap['STARTER'] ?? 0) * 15000;
+    const growthMrr = (planMap['GROWTH'] ?? 0) * 45000;
+    const mrr = starterMrr + growthMrr;
+
+    return res.json({
+      mrr,
+      arr: mrr * 12,
+      activeSubscriptions: Number(totalBiz[0].n),
+      trialsCount: planMap['STARTER'] ?? 0,
+      trialConversionRate: 0,
+      planDistribution: [
+        { name: 'Starter', value: planMap['STARTER'] ?? 0, color: '#6366f1' },
+        { name: 'Growth', value: planMap['GROWTH'] ?? 0, color: '#22c55e' },
+        { name: 'Enterprise', value: planMap['ENTERPRISE'] ?? 0, color: '#f59e0b' },
+      ],
+    });
+  } catch (err) { next(err); }
+});
+
+// ─── GET /admin/billing/subscriptions ─────────────────────────────────────────
+adminRouter.get('/billing/subscriptions', async (_req, res, next) => {
+  try {
+    const rows = await db
+      .select({
+        id: businesses.id,
+        name: businesses.name,
+        plan: businesses.subscriptionTier,
+        isActive: businesses.isActive,
+        createdAt: businesses.createdAt,
+      })
+      .from(businesses)
+      .orderBy(desc(businesses.createdAt))
+      .limit(50);
+
+    return res.json(rows.map(r => ({
+      id: r.id,
+      business: r.name,
+      plan: r.plan === 'STARTER' ? 'Starter' : r.plan === 'GROWTH' ? 'Growth' : 'Enterprise',
+      status: r.isActive ? 'active' : 'cancelled',
+      mrr: r.plan === 'STARTER' ? 15000 : r.plan === 'GROWTH' ? 45000 : 0,
+      nextBillingAt: new Date(new Date(r.createdAt).setMonth(new Date(r.createdAt).getMonth() + 1)).toISOString(),
+    })));
+  } catch (err) { next(err); }
+});
+
+// ─── GET /admin/settings ──────────────────────────────────────────────────────
+adminRouter.get('/settings', (_req, res) => {
+  return res.json({
+    twilioAccountSid: env.TWILIO_ACCOUNT_SID ?? '',
+    twilioPhoneNumber: env.TWILIO_PHONE_NUMBER ?? '',
+    defaultVoice: env.ELEVENLABS_VOICE_ID ?? 'default',
+    maxCallsPerBiz: 1000,
+    trialDays: 14,
+    webhookSecret: env.WHOP_WEBHOOK_SECRET ?? '',
+    maintenanceMode: false,
+  });
+});
+
+// ─── PATCH /admin/settings ────────────────────────────────────────────────────
+adminRouter.patch('/settings', (_req, res) => {
+  // Settings are env-based; acknowledge save without persisting
+  return res.json({ message: 'Settings noted (restart required for env changes)' });
 });

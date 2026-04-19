@@ -299,7 +299,7 @@ export default function SettingsPage() {
                 form[n.key as keyof typeof form] ? 'bg-primary' : 'bg-cream-dark'
               }`}
             >
-              <span className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow-sm transition-transform ${
+              <span className={`absolute left-0 top-0.5 w-5 h-5 bg-white rounded-full shadow-sm transition-transform duration-200 ${
                 form[n.key as keyof typeof form] ? 'translate-x-5' : 'translate-x-0.5'
               }`} />
             </button>

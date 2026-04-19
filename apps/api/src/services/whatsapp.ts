@@ -1,20 +1,22 @@
 import { env } from '../config/env';
 import { logger } from '../config/logger';
 
-const API_URL = 'https://graph.facebook.com/v19.0';
+const API_URL = 'https://graph.facebook.com/v21.0';
 
 async function send(to: string, body: Record<string, unknown>) {
   if (!env.WHATSAPP_TOKEN || !env.WHATSAPP_PHONE_ID) {
     logger.info({ to, body }, '[DEV] WhatsApp message (no credentials)');
     return;
   }
+  // WhatsApp Cloud API requires E.164 without the leading +
+  const normalizedTo = to.replace(/^\+/, '');
   const res = await fetch(`${API_URL}/${env.WHATSAPP_PHONE_ID}/messages`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${env.WHATSAPP_TOKEN}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ messaging_product: 'whatsapp', to, ...body }),
+    body: JSON.stringify({ messaging_product: 'whatsapp', to: normalizedTo, ...body }),
   });
   if (!res.ok) {
     const err = await res.text();
