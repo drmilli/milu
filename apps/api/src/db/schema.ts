@@ -1,5 +1,6 @@
 import { pgTable, text, timestamp, integer, jsonb, pgEnum, boolean } from 'drizzle-orm/pg-core';
 import { relations } from 'drizzle-orm';
+import { randomUUID } from 'crypto';
 
 // ─── Enums ────────────────────────────────────────────────────────────────────
 export const subscriptionTierEnum = pgEnum('subscription_tier', ['STARTER', 'GROWTH', 'ENTERPRISE']);
@@ -16,7 +17,7 @@ export const escalationStatusEnum = pgEnum('escalation_status', ['OPEN', 'ASSIGN
 
 // ─── Core ─────────────────────────────────────────────────────────────────────
 export const businesses = pgTable('businesses', {
-  id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
+  id: text('id').primaryKey().$defaultFn(() => randomUUID()),
   name: text('name').notNull(),
   industry: text('industry'),
   subscriptionTier: subscriptionTierEnum('subscription_tier').default('STARTER').notNull(),
@@ -27,7 +28,7 @@ export const businesses = pgTable('businesses', {
 });
 
 export const users = pgTable('users', {
-  id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
+  id: text('id').primaryKey().$defaultFn(() => randomUUID()),
   email: text('email').notNull().unique(),
   password: text('password').notNull(),
   firstName: text('first_name'),
@@ -43,7 +44,7 @@ export const users = pgTable('users', {
 });
 
 export const phoneNumbers = pgTable('phone_numbers', {
-  id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
+  id: text('id').primaryKey().$defaultFn(() => randomUUID()),
   number: text('number').notNull().unique(),
   businessId: text('business_id').notNull().references(() => businesses.id, { onDelete: 'cascade' }),
   verified: boolean('verified').default(false).notNull(),
@@ -52,7 +53,7 @@ export const phoneNumbers = pgTable('phone_numbers', {
 });
 
 export const knowledgeBases = pgTable('knowledge_base', {
-  id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
+  id: text('id').primaryKey().$defaultFn(() => randomUUID()),
   businessId: text('business_id').notNull().unique().references(() => businesses.id, { onDelete: 'cascade' }),
   businessName: text('business_name').notNull(),
   operatingHours: jsonb('operating_hours').$type<Record<string, string>>().default({}).notNull(),
@@ -64,7 +65,7 @@ export const knowledgeBases = pgTable('knowledge_base', {
 
 // ─── Agent Config ─────────────────────────────────────────────────────────────
 export const agentConfigs = pgTable('agent_configs', {
-  id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
+  id: text('id').primaryKey().$defaultFn(() => randomUUID()),
   businessId: text('business_id').notNull().unique().references(() => businesses.id, { onDelete: 'cascade' }),
   name: text('name').default('Milu').notNull(),
   language: text('language').default('en').notNull(),
@@ -82,7 +83,7 @@ export const agentConfigs = pgTable('agent_configs', {
 
 // ─── Calls ────────────────────────────────────────────────────────────────────
 export const calls = pgTable('calls', {
-  id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
+  id: text('id').primaryKey().$defaultFn(() => randomUUID()),
   businessId: text('business_id').notNull().references(() => businesses.id),
   callerNumber: text('caller_number').notNull(),
   status: callStatusEnum('status').default('ACTIVE').notNull(),
@@ -95,7 +96,7 @@ export const calls = pgTable('calls', {
 });
 
 export const transcripts = pgTable('transcripts', {
-  id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
+  id: text('id').primaryKey().$defaultFn(() => randomUUID()),
   callId: text('call_id').notNull().references(() => calls.id, { onDelete: 'cascade' }),
   speaker: text('speaker').notNull(),
   text: text('text').notNull(),
@@ -104,7 +105,7 @@ export const transcripts = pgTable('transcripts', {
 });
 
 export const escalations = pgTable('escalations', {
-  id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
+  id: text('id').primaryKey().$defaultFn(() => randomUUID()),
   callId: text('call_id').notNull().unique().references(() => calls.id, { onDelete: 'cascade' }),
   businessId: text('business_id').notNull().references(() => businesses.id),
   reason: text('reason').notNull(),
@@ -117,7 +118,7 @@ export const escalations = pgTable('escalations', {
 
 // ─── CRM Contacts ─────────────────────────────────────────────────────────────
 export const contacts = pgTable('contacts', {
-  id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
+  id: text('id').primaryKey().$defaultFn(() => randomUUID()),
   businessId: text('business_id').notNull().references(() => businesses.id, { onDelete: 'cascade' }),
   phone: text('phone').notNull(),
   name: text('name'),
@@ -132,7 +133,7 @@ export const contacts = pgTable('contacts', {
 
 // ─── Orders ───────────────────────────────────────────────────────────────────
 export const orders = pgTable('orders', {
-  id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
+  id: text('id').primaryKey().$defaultFn(() => randomUUID()),
   businessId: text('business_id').notNull().references(() => businesses.id, { onDelete: 'cascade' }),
   contactId: text('contact_id').references(() => contacts.id, { onDelete: 'set null' }),
   callId: text('call_id').references(() => calls.id, { onDelete: 'set null' }),
@@ -151,7 +152,7 @@ export const orders = pgTable('orders', {
 
 // ─── Appointments ─────────────────────────────────────────────────────────────
 export const appointments = pgTable('appointments', {
-  id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
+  id: text('id').primaryKey().$defaultFn(() => randomUUID()),
   businessId: text('business_id').notNull().references(() => businesses.id, { onDelete: 'cascade' }),
   contactId: text('contact_id').references(() => contacts.id, { onDelete: 'set null' }),
   callId: text('call_id').references(() => calls.id, { onDelete: 'set null' }),
@@ -169,7 +170,7 @@ export const appointments = pgTable('appointments', {
 
 // ─── Callback Requests ────────────────────────────────────────────────────────
 export const callbackRequests = pgTable('callback_requests', {
-  id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
+  id: text('id').primaryKey().$defaultFn(() => randomUUID()),
   businessId: text('business_id').notNull().references(() => businesses.id, { onDelete: 'cascade' }),
   contactId: text('contact_id').references(() => contacts.id, { onDelete: 'set null' }),
   callId: text('call_id').references(() => calls.id, { onDelete: 'set null' }),
@@ -185,7 +186,7 @@ export const callbackRequests = pgTable('callback_requests', {
 
 // ─── Notifications ────────────────────────────────────────────────────────────
 export const notifications = pgTable('notifications', {
-  id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
+  id: text('id').primaryKey().$defaultFn(() => randomUUID()),
   businessId: text('business_id').references(() => businesses.id, { onDelete: 'cascade' }),
   userId: text('user_id').references(() => users.id, { onDelete: 'cascade' }),
   channel: notificationChannelEnum('channel').notNull(),
@@ -200,7 +201,7 @@ export const notifications = pgTable('notifications', {
 
 // ─── Webhook Configs ──────────────────────────────────────────────────────────
 export const webhookConfigs = pgTable('webhook_configs', {
-  id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
+  id: text('id').primaryKey().$defaultFn(() => randomUUID()),
   businessId: text('business_id').notNull().references(() => businesses.id, { onDelete: 'cascade' }),
   url: text('url').notNull(),
   secret: text('secret').notNull(),
@@ -212,7 +213,7 @@ export const webhookConfigs = pgTable('webhook_configs', {
 
 // ─── Audit Logs ───────────────────────────────────────────────────────────────
 export const auditLogs = pgTable('audit_logs', {
-  id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
+  id: text('id').primaryKey().$defaultFn(() => randomUUID()),
   businessId: text('business_id').references(() => businesses.id, { onDelete: 'cascade' }),
   userId: text('user_id').references(() => users.id, { onDelete: 'set null' }),
   action: text('action').notNull(),
@@ -225,7 +226,7 @@ export const auditLogs = pgTable('audit_logs', {
 
 // ─── API Keys ─────────────────────────────────────────────────────────────────
 export const apiKeys = pgTable('api_keys', {
-  id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
+  id: text('id').primaryKey().$defaultFn(() => randomUUID()),
   businessId: text('business_id').notNull().references(() => businesses.id, { onDelete: 'cascade' }),
   name: text('name').notNull(),
   keyHash: text('key_hash').notNull(),
@@ -239,7 +240,7 @@ export const apiKeys = pgTable('api_keys', {
 
 // ─── Settings ─────────────────────────────────────────────────────────────────
 export const businessSettings = pgTable('business_settings', {
-  id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
+  id: text('id').primaryKey().$defaultFn(() => randomUUID()),
   businessId: text('business_id').notNull().unique().references(() => businesses.id, { onDelete: 'cascade' }),
   notifyOnEscalation: boolean('notify_on_escalation').default(true).notNull(),
   notifyOnNewOrder: boolean('notify_on_new_order').default(true).notNull(),
@@ -255,7 +256,7 @@ export const businessSettings = pgTable('business_settings', {
 
 // ─── Phone Verifications (OTP) ────────────────────────────────────────────────
 export const phoneVerifications = pgTable('phone_verifications', {
-  id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
+  id: text('id').primaryKey().$defaultFn(() => randomUUID()),
   businessId: text('business_id').notNull().references(() => businesses.id, { onDelete: 'cascade' }),
   phone: text('phone').notNull(),
   code: text('code').notNull(),
