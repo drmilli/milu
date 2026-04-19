@@ -37,8 +37,7 @@ const server = http.createServer(app);
 app.use(httpLogger);
 
 // CORS
-const origins = env.CORS_ORIGINS.split(',').map((o) => o.trim());
-app.use(cors({ origin: origins, credentials: true }));
+app.use(cors({ origin: '*' }));
 
 // Parse JSON and capture raw body for webhook signature verification
 app.use(express.json({
@@ -90,7 +89,7 @@ server.listen(env.PORT, () => {
   logger.info({
     port: env.PORT,
     env: env.NODE_ENV,
-    cors: origins,
+    cors: '*',
     docs: `http://localhost:${env.PORT}/docs`,
     db: env.DATABASE_URL.replace(/:\/\/.*@/, '://***@'), // hide credentials
     twilio: !!env.TWILIO_ACCOUNT_SID,
