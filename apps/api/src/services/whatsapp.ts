@@ -42,7 +42,7 @@ export async function sendWhatsAppText(to: string, message: string) {
 }
 
 export async function sendWhatsAppTemplate(to: string, templateName: string, languageCode = 'en', components: unknown[] = []) {
-  return send(to, {
+  return sendViaMeta(to, {
     type: 'template',
     template: { name: templateName, language: { code: languageCode }, components },
   });
