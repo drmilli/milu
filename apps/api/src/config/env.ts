@@ -10,6 +10,7 @@ const envSchema = z.object({
   TWILIO_PHONE_NUMBER: z.string().optional(),
   DEEPGRAM_API_KEY: z.string().min(1).optional(),
   ANTHROPIC_API_KEY: z.string().min(1).optional(),
+  OPENAI_API_KEY: z.string().min(1).optional(),
   ELEVENLABS_API_KEY: z.string().min(1).optional(),
   ELEVENLABS_VOICE_ID: z.string().default('default'),
   // Gmail SMTP
