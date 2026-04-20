@@ -9,6 +9,9 @@ const headers = () => ({
 });
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+  if (!env.INFOBIP_API_KEY || !env.INFOBIP_BASE_URL) {
+    throw new Error('Infobip credentials not configured. Set INFOBIP_API_KEY and INFOBIP_BASE_URL in Railway env vars.');
+  }
   const res = await fetch(`${base()}${path}`, {
     method,
     headers: headers(),
@@ -19,6 +22,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     logger.error({ status: res.status, path, response: text }, 'Infobip API error');
     throw new Error(`Infobip error ${res.status}: ${text}`);
   }
+  logger.debug({ method, path, status: res.status }, 'Infobip API call');
   return JSON.parse(text);
 }
 
