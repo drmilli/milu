@@ -2,7 +2,6 @@ import type { Request, Response } from 'express';
 import { eq } from 'drizzle-orm';
 import { db, phoneNumbers, agentConfigs, businesses, calls } from '../db';
 import { logger } from '../config/logger';
-import { randomUUID } from 'crypto';
 
 function twiml(body: string) {
   return `<?xml version="1.0" encoding="UTF-8"?><Response>${body}</Response>`;
@@ -19,15 +18,25 @@ export async function handleTwilioVoiceWebhook(req: Request, res: Response) {
 
   const toNumber = (req.body.To as string) || '';
   const fromNumber = (req.body.From as string) || '';
-  const callSid = (req.body.CallSid as string) || randomUUID();
+  const callSid = (req.body.CallSid as string) || '';
+
+  logger.info({ toNumber, fromNumber, callSid, body: req.body }, 'Inbound Twilio call received');
 
   try {
-    // Find which business owns the called number
+    // Twilio sends To in E.164 (+17177440613); try both with and without + to match DB
     const [phoneRow] = await db
       .select({ businessId: phoneNumbers.businessId })
       .from(phoneNumbers)
       .where(eq(phoneNumbers.number, toNumber))
-      .limit(1);
+      .limit(1)
+      .then(async (rows) => {
+        if (rows.length) return rows;
+        // Try without leading +
+        return db.select({ businessId: phoneNumbers.businessId })
+          .from(phoneNumbers)
+          .where(eq(phoneNumbers.number, toNumber.replace(/^\+/, '')))
+          .limit(1);
+      });
 
     if (!phoneRow) {
       logger.warn({ toNumber, fromNumber }, 'Inbound call to unregistered number');
@@ -47,7 +56,9 @@ export async function handleTwilioVoiceWebhook(req: Request, res: Response) {
     const maxDuration = agentRow?.maxCallDuration ?? 600;
     const businessHoursOnly = agentRow?.businessHoursOnly ?? false;
     const afterHoursMessage = agentRow?.afterHoursMessage ?? 'We are currently closed. Please call back during business hours. Goodbye.';
-    const language = agentRow?.language === 'yo' ? 'en' : (agentRow?.language ?? 'en'); // Twilio Say language codes
+    // Map internal language codes to Twilio-compatible BCP-47 codes for Alice voice
+    const langMap: Record<string, string> = { en: 'en-US', yo: 'en-US', ig: 'en-US', ha: 'en-US', pcm: 'en-US' };
+    const language = langMap[agentRow?.language ?? 'en'] ?? 'en-US';
 
     // Log call to DB
     await db.insert(calls).values({
