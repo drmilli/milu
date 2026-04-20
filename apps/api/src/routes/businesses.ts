@@ -1,10 +1,14 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { eq, and } from 'drizzle-orm';
-import { db, businesses, knowledgeBases, phoneNumbers, users, phoneVerifications } from '../db';
+import { db, businesses, knowledgeBases, knowledgeDocuments, phoneNumbers, users, phoneVerifications } from '../db';
 import { authMiddleware } from '../middleware/auth';
 import { sendCustomSms } from '../services/sms';
 import { searchAvailableNumbers, purchaseNumber, releaseNumber } from '../services/infobip';
+import { scrapeWebsite, extractText, detectFileType } from '../services/document-extract';
+import multer from 'multer';
+
+const docUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
 import { sendTeamInviteEmail } from '../utils/email';
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
@@ -176,6 +180,60 @@ businessesRouter.put('/:id/kb', async (req, res, next) => {
   } catch (err) {
     next(err);
   }
+});
+
+// POST /businesses/:id/kb/scrape-website
+businessesRouter.post('/:id/kb/scrape-website', async (req, res, next) => {
+  try {
+    const { url } = z.object({ url: z.string().url() }).parse(req.body);
+    const content = await scrapeWebsite(url);
+    await db.update(knowledgeBases)
+      .set({ websiteUrl: url, websiteContent: content, websiteScrapedAt: new Date(), updatedAt: new Date() })
+      .where(eq(knowledgeBases.businessId, req.params.id));
+    logger.info({ businessId: req.params.id, url, chars: content.length }, 'Website scraped');
+    return res.json({ url, chars: content.length, preview: content.slice(0, 300) });
+  } catch (err) { next(err); }
+});
+
+// GET /businesses/:id/kb/documents
+businessesRouter.get('/:id/kb/documents', async (req, res, next) => {
+  try {
+    const docs = await db.select().from(knowledgeDocuments)
+      .where(eq(knowledgeDocuments.businessId, req.params.id));
+    return res.json(docs);
+  } catch (err) { next(err); }
+});
+
+// POST /businesses/:id/kb/documents
+businessesRouter.post('/:id/kb/documents', docUpload.single('file'), async (req, res, next) => {
+  try {
+    const file = req.file;
+    if (!file) return res.status(400).json({ error: 'No file uploaded' });
+
+    const fileType = detectFileType(file.mimetype, file.originalname);
+    const extractedText = await extractText(file.buffer, fileType, file.mimetype);
+
+    const [doc] = await db.insert(knowledgeDocuments).values({
+      businessId: req.params.id,
+      name: file.originalname,
+      fileType,
+      extractedText: extractedText || null,
+      sizeBytes: file.size,
+    }).returning();
+
+    logger.info({ businessId: req.params.id, name: file.originalname, fileType, chars: extractedText.length }, 'Document uploaded');
+    return res.status(201).json(doc);
+  } catch (err) { next(err); }
+});
+
+// DELETE /businesses/:id/kb/documents/:docId
+businessesRouter.delete('/:id/kb/documents/:docId', async (req, res, next) => {
+  try {
+    await db.delete(knowledgeDocuments).where(
+      and(eq(knowledgeDocuments.id, req.params.docId), eq(knowledgeDocuments.businessId, req.params.id))
+    );
+    return res.status(204).send();
+  } catch (err) { next(err); }
 });
 
 /**

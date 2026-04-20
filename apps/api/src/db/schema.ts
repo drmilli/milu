@@ -63,7 +63,22 @@ export const knowledgeBases = pgTable('knowledge_base', {
   faqs: jsonb('faqs').$type<{ question: string; answer: string }[]>().default([]).notNull(),
   escalationNumber: text('escalation_number'),
   voiceId: text('voice_id'),
+  websiteUrl: text('website_url'),
+  websiteContent: text('website_content'), // scraped text content
+  websiteScrapedAt: timestamp('website_scraped_at', { withTimezone: true }),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+// ─── Knowledge Documents ──────────────────────────────────────────────────────
+export const knowledgeDocuments = pgTable('knowledge_documents', {
+  id: text('id').primaryKey().$defaultFn(() => randomUUID()),
+  businessId: text('business_id').notNull().references(() => businesses.id, { onDelete: 'cascade' }),
+  name: text('name').notNull(),
+  fileType: text('file_type').notNull(), // 'pdf' | 'docx' | 'txt' | 'image'
+  extractedText: text('extracted_text'),
+  summary: text('summary'), // AI-generated summary
+  sizeBytes: integer('size_bytes'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 });
 
 // ─── Agent Config ─────────────────────────────────────────────────────────────
