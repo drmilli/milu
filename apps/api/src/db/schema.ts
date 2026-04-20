@@ -79,6 +79,8 @@ export const agentConfigs = pgTable('agent_configs', {
   enableRecording: boolean('enable_recording').default(true).notNull(),
   enableTranscription: boolean('enable_transcription').default(true).notNull(),
   voiceId: text('voice_id'),
+  clonedVoiceId: text('cloned_voice_id'), // ElevenLabs custom cloned voice ID
+  clonedVoiceName: text('cloned_voice_name'),
   businessHoursOnly: boolean('business_hours_only').default(false).notNull(),
   afterHoursMessage: text('after_hours_message'),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
