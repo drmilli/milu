@@ -1,14 +1,14 @@
 import { env } from '../config/env';
 import { logger } from '../config/logger';
+import { sendInfobipWhatsApp } from './infobip';
 
 const API_URL = 'https://graph.facebook.com/v21.0';
 
-async function send(to: string, body: Record<string, unknown>) {
+async function sendViaMeta(to: string, body: Record<string, unknown>) {
   if (!env.WHATSAPP_TOKEN || !env.WHATSAPP_PHONE_ID) {
     logger.info({ to, body }, '[DEV] WhatsApp message (no credentials)');
     return;
   }
-  // WhatsApp Cloud API requires E.164 without the leading +
   const normalizedTo = to.replace(/^\+/, '');
   const res = await fetch(`${API_URL}/${env.WHATSAPP_PHONE_ID}/messages`, {
     method: 'POST',
@@ -20,15 +20,25 @@ async function send(to: string, body: Record<string, unknown>) {
   });
   const responseText = await res.text();
   if (!res.ok) {
-    logger.error({ to, status: res.status, response: responseText }, 'WhatsApp API error');
-    throw new Error(`WhatsApp API error ${res.status}: ${responseText}`);
+    logger.error({ to, status: res.status, response: responseText }, 'WhatsApp Meta API error');
+    throw new Error(`WhatsApp Meta API error ${res.status}: ${responseText}`);
   }
-  logger.info({ to, response: responseText }, 'WhatsApp message sent');
+  logger.info({ to, response: responseText }, 'WhatsApp message sent via Meta');
   return JSON.parse(responseText);
 }
 
 export async function sendWhatsAppText(to: string, message: string) {
-  return send(to, { type: 'text', text: { body: message } });
+  // Prefer Infobip (no sandbox restrictions), fall back to Meta
+  if (env.INFOBIP_API_KEY && env.INFOBIP_WHATSAPP_SENDER) {
+    try {
+      await sendInfobipWhatsApp(to, message);
+      logger.info({ to }, 'WhatsApp message sent via Infobip');
+      return;
+    } catch (err) {
+      logger.warn({ err, to }, 'Infobip WhatsApp failed, falling back to Meta');
+    }
+  }
+  return sendViaMeta(to, { type: 'text', text: { body: message } });
 }
 
 export async function sendWhatsAppTemplate(to: string, templateName: string, languageCode = 'en', components: unknown[] = []) {
