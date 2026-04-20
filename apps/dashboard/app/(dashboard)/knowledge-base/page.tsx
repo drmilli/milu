@@ -153,6 +153,7 @@ export default function KnowledgeBasePage() {
         if (!res.ok) { const e = await res.json(); throw new Error(e.error ?? 'Upload failed'); }
         const doc = await res.json() as KnowledgeDoc;
         setDocs(prev => [doc, ...prev]);
+        if (doc.summary || doc.extractedText) setExpandedDoc(doc.id);
       }
     } catch (err: unknown) {
       setUploadError(err instanceof Error ? err.message : 'Upload failed');
@@ -276,11 +277,11 @@ export default function KnowledgeBasePage() {
                     </p>
                   </div>
                   <div className="flex gap-1">
-                    {(doc.summary || doc.extractedText) && (
+                    {!doc.summary && doc.extractedText && (
                       <button
                         onClick={() => setExpandedDoc(expandedDoc === doc.id ? null : doc.id)}
                         className="p-1.5 rounded-lg text-primary-warm hover:bg-cream hover:text-primary-dark transition-colors"
-                        title="View AI breakdown"
+                        title="View extracted text"
                       >
                         <svg className={`w-4 h-4 transition-transform ${expandedDoc === doc.id ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}><path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" /></svg>
                       </button>
@@ -299,18 +300,18 @@ export default function KnowledgeBasePage() {
                   </div>
                 </div>
 
-                {/* AI breakdown — always visible if summary exists, collapsible */}
+                {/* AI breakdown — always shown */}
                 {doc.summary && (
-                  <div className={`border-t border-cream-dark px-4 py-3 ${expandedDoc === doc.id ? '' : 'hidden'}`}>
+                  <div className="border-t border-cream-dark px-4 py-3">
                     <div className="flex items-center gap-1.5 mb-2">
                       <svg className="w-3.5 h-3.5 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" /></svg>
                       <span className="text-xs font-semibold text-primary">AI Breakdown</span>
                     </div>
-                    <div className="text-xs text-primary-dark leading-relaxed whitespace-pre-wrap prose-sm">{doc.summary}</div>
+                    <div className="text-xs text-primary-dark leading-relaxed whitespace-pre-wrap">{doc.summary}</div>
                   </div>
                 )}
 
-                {/* Raw text fallback if no summary */}
+                {/* Raw text fallback if no summary, collapsible */}
                 {!doc.summary && expandedDoc === doc.id && doc.extractedText && (
                   <div className="border-t border-cream-dark px-4 py-3">
                     <p className="text-xs text-primary-warm leading-relaxed whitespace-pre-wrap line-clamp-6">{doc.extractedText}</p>
