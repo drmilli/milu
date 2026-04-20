@@ -24,6 +24,10 @@ const envSchema = z.object({
   WHATSAPP_TOKEN: z.string().optional(),
   WHATSAPP_PHONE_ID: z.string().optional(),
   WHATSAPP_WEBHOOK_VERIFY_TOKEN: z.string().optional(),
+  // Infobip
+  INFOBIP_API_KEY: z.string().optional(),
+  INFOBIP_BASE_URL: z.string().optional(), // e.g. xxxxx.api.infobip.com
+  INFOBIP_WHATSAPP_SENDER: z.string().optional(),
   // Auth
   JWT_SECRET: z.string().min(16),
   ADMIN_JWT_SECRET: z.string().min(16),

@@ -4,6 +4,7 @@ import { eq, and } from 'drizzle-orm';
 import { db, businesses, knowledgeBases, phoneNumbers, users, phoneVerifications } from '../db';
 import { authMiddleware } from '../middleware/auth';
 import { sendCustomSms } from '../services/sms';
+import { searchAvailableNumbers, purchaseNumber, releaseNumber } from '../services/infobip';
 import { sendTeamInviteEmail } from '../utils/email';
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
@@ -366,6 +367,13 @@ businessesRouter.post('/:id/phone-numbers/verify', async (req, res, next) => {
  */
 businessesRouter.delete('/:id/phone-numbers/:numberId', async (req, res, next) => {
   try {
+    const [num] = await db.select().from(phoneNumbers).where(
+      and(eq(phoneNumbers.id, req.params.numberId), eq(phoneNumbers.businessId, req.params.id))
+    ).limit(1);
+    // Release virtual numbers back to Infobip
+    if (num?.isVirtual && num.provider === 'infobip' && num.providerNumberId) {
+      try { await releaseNumber(num.providerNumberId); } catch { /* log but don't block delete */ }
+    }
     await db.delete(phoneNumbers).where(
       and(eq(phoneNumbers.id, req.params.numberId), eq(phoneNumbers.businessId, req.params.id))
     );
@@ -374,6 +382,63 @@ businessesRouter.delete('/:id/phone-numbers/:numberId', async (req, res, next) =
     next(err);
   }
 });
+
+// GET /businesses/:id/phone-numbers/virtual/available?countryCode=NG
+businessesRouter.get('/:id/phone-numbers/virtual/available', async (req, res, next) => {
+  try {
+    const { countryCode } = z.object({ countryCode: z.string().length(2).default('NG') }).parse(req.query);
+    const numbers = await searchAvailableNumbers(countryCode);
+    return res.json(numbers);
+  } catch (err) { next(err); }
+});
+
+// POST /businesses/:id/phone-numbers/virtual/buy
+businessesRouter.post('/:id/phone-numbers/virtual/buy', async (req, res, next) => {
+  try {
+    const { numberKey, label } = z.object({
+      numberKey: z.string(),
+      label: z.string().optional(),
+    }).parse(req.body);
+
+    // Check business doesn't already have a virtual number
+    const existing = await db.select({ id: phoneNumbers.id })
+      .from(phoneNumbers)
+      .where(and(eq(phoneNumbers.businessId, req.params.id), eq(phoneNumbers.isVirtual, true)))
+      .limit(1);
+    if (existing.length) return res.status(409).json({ error: 'Business already has a virtual number' });
+
+    const purchased = await purchaseNumber(numberKey);
+
+    const [phone] = await db.insert(phoneNumbers).values({
+      number: purchased.number,
+      businessId: req.params.id,
+      verified: true,
+      isVirtual: true,
+      provider: 'infobip',
+      providerNumberId: purchased.numberKey,
+      label: label ?? 'Milu Virtual Number',
+    }).returning();
+
+    await audit(req, 'phone_number.virtual_purchased', 'phone_number', phone.id, { number: purchased.number });
+    return res.status(201).json({
+      ...phone,
+      forwardingInstructions: getForwardingInstructions(purchased.number),
+    });
+  } catch (err) { next(err); }
+});
+
+function getForwardingInstructions(virtualNumber: string) {
+  return {
+    virtualNumber,
+    instructions: {
+      general: `Set up call forwarding on your existing business number to ${virtualNumber}`,
+      mtn: `Dial **21*${virtualNumber}# on your MTN line to activate forwarding`,
+      airtel: `Dial **21*${virtualNumber}# on your Airtel line to activate forwarding`,
+      glo: `Dial **21*${virtualNumber}# on your Glo line to activate forwarding`,
+      '9mobile': `Dial **21*${virtualNumber}# on your 9mobile line to activate forwarding`,
+    },
+  };
+}
 
 /**
  * @openapi

@@ -49,6 +49,9 @@ export const phoneNumbers = pgTable('phone_numbers', {
   businessId: text('business_id').notNull().references(() => businesses.id, { onDelete: 'cascade' }),
   verified: boolean('verified').default(false).notNull(),
   label: text('label'),
+  isVirtual: boolean('is_virtual').default(false).notNull(),
+  provider: text('provider'), // 'infobip' | 'twilio' | 'at' | null
+  providerNumberId: text('provider_number_id'), // provider's internal ID for the number
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 });
 
