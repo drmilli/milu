@@ -5,7 +5,7 @@ import { db, businesses, knowledgeBases, knowledgeDocuments, phoneNumbers, users
 import { authMiddleware } from '../middleware/auth';
 import { sendCustomSms } from '../services/sms';
 import { searchAvailableNumbers, purchaseNumber, releaseNumber } from '../services/infobip';
-import { scrapeWebsite, extractText, detectFileType } from '../services/document-extract';
+import { scrapeWebsite, extractText, detectFileType, summariseContent } from '../services/document-extract';
 import multer from 'multer';
 
 const docUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
@@ -214,12 +214,14 @@ businessesRouter.post('/:id/kb/documents', docUpload.single('file'), async (req,
 
     const fileType = detectFileType(file.mimetype, file.originalname);
     const extractedText = await extractText(file.buffer, fileType, file.mimetype);
+    const summary = await summariseContent(extractedText, file.originalname);
 
     const [doc] = await db.insert(knowledgeDocuments).values({
       businessId: req.params.id,
       name: file.originalname,
       fileType,
       extractedText: extractedText || null,
+      summary: summary || null,
       sizeBytes: file.size,
     }).returning();
 

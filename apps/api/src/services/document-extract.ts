@@ -80,6 +80,34 @@ async function describeImageWithClaude(buffer: Buffer, mimetype: string): Promis
   }
 }
 
+export async function summariseContent(content: string, filename: string): Promise<string> {
+  if (!env.ANTHROPIC_API_KEY || !content.trim()) return '';
+  try {
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'x-api-key': env.ANTHROPIC_API_KEY,
+        'anthropic-version': '2023-06-01',
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 1024,
+        messages: [{
+          role: 'user',
+          content: `You are analyzing a business document called "${filename}" that will be used to train an AI customer service agent.\n\nDocument content:\n${content.slice(0, 8000)}\n\nProvide a clear breakdown with:\n1. **What this document is** (1 sentence)\n2. **Key information** (bullet points — products, services, prices, policies, contacts, hours, etc.)\n3. **How the AI agent can use this** (1-2 sentences)\n\nBe concise and practical.`,
+        }],
+      }),
+    });
+    if (!res.ok) throw new Error(`Claude ${res.status}`);
+    const data = await res.json() as { content: Array<{ text: string }> };
+    return data.content[0]?.text ?? '';
+  } catch (err) {
+    logger.error({ err, filename }, 'Document summarisation failed');
+    return '';
+  }
+}
+
 export async function scrapeWebsite(url: string): Promise<string> {
   try {
     const res = await fetch(url, {
