@@ -185,7 +185,9 @@ businessesRouter.put('/:id/kb', async (req, res, next) => {
 // POST /businesses/:id/kb/scrape-website
 businessesRouter.post('/:id/kb/scrape-website', async (req, res, next) => {
   try {
-    const { url } = z.object({ url: z.string().url() }).parse(req.body);
+    const { url } = z.object({
+      url: z.string().transform(u => u.startsWith('http') ? u : `https://${u}`).pipe(z.string().url()),
+    }).parse(req.body);
     const content = await scrapeWebsite(url);
     await db.update(knowledgeBases)
       .set({ websiteUrl: url, websiteContent: content, websiteScrapedAt: new Date(), updatedAt: new Date() })

@@ -124,10 +124,11 @@ export default function KnowledgeBasePage() {
 
   async function handleScrape() {
     if (!websiteUrl.trim()) return;
+    const url = websiteUrl.startsWith('http') ? websiteUrl : `https://${websiteUrl}`;
     setScraping(true); setScrapeError(''); setScrapeResult(null);
     try {
       const result = await apiPost<{ chars: number; preview: string }>(
-        `/businesses/${businessId}/kb/scrape-website`, { url: websiteUrl }, token,
+        `/businesses/${businessId}/kb/scrape-website`, { url }, token,
       );
       setScrapeResult(result);
       setKb(prev => prev ? { ...prev, websiteUrl, websiteScrapedAt: new Date().toISOString() } : prev);
