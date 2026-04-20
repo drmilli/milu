@@ -173,6 +173,66 @@ export async function summariseContent(content: string, filename: string): Promi
   return '';
 }
 
+export interface ChatMessage { role: 'user' | 'assistant'; content: string }
+
+export async function kbChat(
+  messages: ChatMessage[],
+  context: { businessName: string; faqs: { question: string; answer: string }[]; websiteSummary?: string | null; docSummaries: string[] },
+): Promise<string> {
+  const systemPrompt = `You are an AI assistant helping "${context.businessName}" build their AI customer service knowledge base.
+
+Current knowledge base context:
+${context.websiteSummary ? `Website summary:\n${context.websiteSummary}\n` : ''}
+${context.docSummaries.length ? `Uploaded documents:\n${context.docSummaries.map((s, i) => `${i + 1}. ${s}`).join('\n')}\n` : ''}
+${context.faqs.length ? `Current FAQs (${context.faqs.length}):\n${context.faqs.map(f => `Q: ${f.question}\nA: ${f.answer}`).join('\n\n')}` : 'No FAQs yet.'}
+
+Your role:
+- Help the user add useful information to their knowledge base
+- Suggest FAQ entries when appropriate — format them clearly as "Q: ... / A: ..."
+- Ask clarifying questions to extract business details (hours, prices, services, policies, contacts)
+- Be concise and practical — this knowledge will train an AI phone agent
+- When suggesting multiple FAQs, list each on its own line starting with "Q:"`;
+
+  const payload = {
+    model: 'claude-3-5-haiku-20241022',
+    max_tokens: 1024,
+    system: systemPrompt,
+    messages: messages.map(m => ({ role: m.role, content: m.content })),
+  };
+
+  if (env.ANTHROPIC_API_KEY) {
+    try {
+      const res = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: { 'x-api-key': env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) { const b = await res.text(); throw new Error(`Claude ${res.status}: ${b}`); }
+      const data = await res.json() as { content: Array<{ text: string }> };
+      return data.content[0]?.text ?? '';
+    } catch (err) { logger.warn({ err }, 'Claude kbChat failed, trying OpenAI'); }
+  }
+
+  if (env.OPENAI_API_KEY) {
+    try {
+      const res = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${env.OPENAI_API_KEY}`, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          model: 'gpt-4o-mini',
+          max_tokens: 1024,
+          messages: [{ role: 'system', content: systemPrompt }, ...messages],
+        }),
+      });
+      if (!res.ok) { const b = await res.text(); throw new Error(`OpenAI ${res.status}: ${b}`); }
+      const data = await res.json() as { choices: Array<{ message: { content: string } }> };
+      return data.choices[0]?.message?.content ?? '';
+    } catch (err) { logger.error({ err }, 'OpenAI kbChat failed'); }
+  }
+
+  return 'AI is not configured. Please add ANTHROPIC_API_KEY or OPENAI_API_KEY to your environment.';
+}
+
 export async function scrapeWebsite(url: string): Promise<string> {
   try {
     const res = await fetch(url, {

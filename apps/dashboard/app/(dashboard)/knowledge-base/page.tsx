@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useLayoutEffect } from 'react';
 import { useAuth } from '../../../hooks/useAuth';
 import { apiGet, apiPut, apiPost, apiDelete } from '../../../lib/api';
 
@@ -16,6 +16,8 @@ interface KB {
   websiteSummary?: string;
   websiteScrapedAt?: string;
 }
+
+interface ChatMsg { id: string; role: string; content: string; createdAt: string }
 
 interface KnowledgeDoc {
   id: string;
@@ -89,17 +91,26 @@ export default function KnowledgeBasePage() {
   const [expandedDoc, setExpandedDoc] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Chat
+  const [chatMsgs, setChatMsgs] = useState<ChatMsg[]>([]);
+  const [chatInput, setChatInput] = useState('');
+  const [chatSending, setChatSending] = useState(false);
+  const [clearingChat, setClearingChat] = useState(false);
+  const chatEndRef = useRef<HTMLDivElement>(null);
+
   const load = useCallback(() => {
     if (!token || !businessId) return;
     Promise.all([
       apiGet<KB>(`/businesses/${businessId}/kb`, token),
       apiGet<KnowledgeDoc[]>(`/businesses/${businessId}/kb/documents`, token),
-    ]).then(([kbData, docsData]) => {
+      apiGet<ChatMsg[]>(`/businesses/${businessId}/kb/chat`, token),
+    ]).then(([kbData, docsData, chatData]) => {
       setKb(kbData);
       setFaqs(kbData.faqs ?? []);
       setWebsiteUrl(kbData.websiteUrl ?? '');
       setScrapeResult(kbData.websiteContent ? { chars: kbData.websiteContent.length, preview: kbData.websiteContent.slice(0, 300), summary: kbData.websiteSummary } : null);
       setDocs(docsData);
+      setChatMsgs(chatData);
     }).catch(() => null).finally(() => setLoading(false));
   }, [token, businessId]);
 
@@ -167,6 +178,47 @@ export default function KnowledgeBasePage() {
       await apiDelete(`/businesses/${businessId}/kb/documents/${id}`, token);
       setDocs(prev => prev.filter(d => d.id !== id));
     } catch { /* ignore */ } finally { setDeletingDocId(null); }
+  }
+
+  useLayoutEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [chatMsgs]);
+
+  async function sendChat(e?: React.FormEvent) {
+    e?.preventDefault();
+    const msg = chatInput.trim();
+    if (!msg || chatSending) return;
+    const optimistic: ChatMsg = { id: `tmp-${Date.now()}`, role: 'user', content: msg, createdAt: new Date().toISOString() };
+    setChatMsgs(prev => [...prev, optimistic]);
+    setChatInput('');
+    setChatSending(true);
+    try {
+      const { reply } = await apiPost<{ reply: string }>(`/businesses/${businessId}/kb/chat`, { message: msg }, token);
+      const aiMsg: ChatMsg = { id: `tmp-ai-${Date.now()}`, role: 'assistant', content: reply, createdAt: new Date().toISOString() };
+      setChatMsgs(prev => [...prev.filter(m => m.id !== optimistic.id), { ...optimistic, id: `saved-${Date.now()}` }, aiMsg]);
+    } catch {
+      setChatMsgs(prev => prev.filter(m => m.id !== optimistic.id));
+    } finally { setChatSending(false); }
+  }
+
+  async function clearChat() {
+    setClearingChat(true);
+    try {
+      await apiDelete(`/businesses/${businessId}/kb/chat`, token);
+      setChatMsgs([]);
+    } catch { /* ignore */ } finally { setClearingChat(false); }
+  }
+
+  function addFaqFromChat(content: string) {
+    const lines = content.split('\n');
+    const qLine = lines.find(l => l.trim().startsWith('Q:'));
+    const aLine = lines.find(l => l.trim().startsWith('A:'));
+    if (qLine && aLine) {
+      const newFaq = { question: qLine.replace(/^Q:\s*/i, '').trim(), answer: aLine.replace(/^A:\s*/i, '').trim() };
+      const updated = [...faqs, newFaq];
+      setFaqs(updated);
+      persist(updated);
+    }
   }
 
   return (
@@ -339,6 +391,94 @@ export default function KnowledgeBasePage() {
         ) : (
           <p className="text-xs text-primary-warm text-center py-2">No documents uploaded yet.</p>
         )}
+      </Section>
+
+      {/* AI Prompt / Chat */}
+      <Section
+        title="AI Assistant"
+        desc="Chat with AI to build your knowledge base. Ask it to suggest FAQs, refine your business info, or explore what your agent knows."
+        action={
+          chatMsgs.length > 0 ? (
+            <button
+              onClick={clearChat}
+              disabled={clearingChat}
+              className="flex-shrink-0 text-xs text-primary-warm hover:text-danger border border-cream-dark px-3 py-1.5 rounded-lg transition-colors disabled:opacity-40"
+            >
+              {clearingChat ? 'Clearing…' : 'Clear history'}
+            </button>
+          ) : undefined
+        }
+      >
+        {/* Message history */}
+        <div className="h-72 overflow-y-auto flex flex-col gap-3 pr-1">
+          {chatMsgs.length === 0 && !chatSending && (
+            <div className="flex-1 flex flex-col items-center justify-center gap-2 text-center py-8">
+              <svg className="w-8 h-8 text-cream-dark" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M8.625 12a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H8.25m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H12m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0h-.375M21 12c0 4.556-4.03 8.25-9 8.25a9.764 9.764 0 01-2.555-.337A5.972 5.972 0 015.41 20.97a5.969 5.969 0 01-.474-.065 4.48 4.48 0 00.978-2.025c.09-.457-.133-.901-.467-1.226C3.93 16.178 3 14.189 3 12c0-4.556 4.03-8.25 9-8.25s9 3.694 9 8.25z" /></svg>
+              <p className="text-sm text-primary-warm font-medium">Ask me anything about your business</p>
+              <p className="text-xs text-cream-dark max-w-xs">Try: &ldquo;Suggest 5 FAQs for my business&rdquo; or &ldquo;What are my operating hours?&rdquo;</p>
+            </div>
+          )}
+          {chatMsgs.map((msg) => {
+            const isUser = msg.role === 'user';
+            const hasFaq = !isUser && /^Q:/im.test(msg.content) && /^A:/im.test(msg.content);
+            return (
+              <div key={msg.id} className={`flex gap-2 ${isUser ? 'justify-end' : 'justify-start'}`}>
+                {!isUser && (
+                  <div className="flex-shrink-0 w-6 h-6 rounded-full bg-primary/10 flex items-center justify-center mt-0.5">
+                    <svg className="w-3.5 h-3.5 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" /></svg>
+                  </div>
+                )}
+                <div className={`max-w-[80%] ${isUser ? 'bg-primary text-cream-light' : 'bg-cream-light text-primary-dark border border-cream-dark'} rounded-2xl px-3 py-2.5 text-xs leading-relaxed`}>
+                  <p className="whitespace-pre-wrap">{msg.content}</p>
+                  {hasFaq && (
+                    <button
+                      onClick={() => addFaqFromChat(msg.content)}
+                      className="mt-2 text-xs font-medium text-primary bg-primary/10 hover:bg-primary/20 px-2 py-1 rounded-lg transition-colors flex items-center gap-1"
+                    >
+                      <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
+                      Add to FAQs
+                    </button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+          {chatSending && (
+            <div className="flex gap-2 justify-start">
+              <div className="flex-shrink-0 w-6 h-6 rounded-full bg-primary/10 flex items-center justify-center">
+                <svg className="w-3.5 h-3.5 text-primary animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+              </div>
+              <div className="bg-cream-light border border-cream-dark rounded-2xl px-3 py-2.5">
+                <div className="flex gap-1 items-center h-4">
+                  <span className="w-1.5 h-1.5 bg-primary-warm rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                  <span className="w-1.5 h-1.5 bg-primary-warm rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                  <span className="w-1.5 h-1.5 bg-primary-warm rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                </div>
+              </div>
+            </div>
+          )}
+          <div ref={chatEndRef} />
+        </div>
+
+        {/* Input */}
+        <form onSubmit={sendChat} className="flex gap-2 mt-2">
+          <input
+            className={`${inputCls} flex-1`}
+            placeholder="Ask the AI about your business…"
+            value={chatInput}
+            onChange={e => setChatInput(e.target.value)}
+            disabled={chatSending}
+            onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(); } }}
+          />
+          <button
+            type="submit"
+            disabled={chatSending || !chatInput.trim()}
+            className="bg-primary text-cream-light px-4 py-2 rounded-xl text-sm font-medium hover:bg-primary-dark transition-colors disabled:opacity-40 flex items-center gap-2 flex-shrink-0"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5" /></svg>
+            Send
+          </button>
+        </form>
       </Section>
 
       {/* FAQs */}

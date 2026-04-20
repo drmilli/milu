@@ -82,6 +82,15 @@ export const knowledgeDocuments = pgTable('knowledge_documents', {
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 });
 
+// ─── KB Chat History ──────────────────────────────────────────────────────────
+export const kbChats = pgTable('kb_chats', {
+  id: text('id').primaryKey().$defaultFn(() => randomUUID()),
+  businessId: text('business_id').notNull().references(() => businesses.id, { onDelete: 'cascade' }),
+  role: text('role').notNull(), // 'user' | 'assistant'
+  content: text('content').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
 // ─── Agent Config ─────────────────────────────────────────────────────────────
 export const agentConfigs = pgTable('agent_configs', {
   id: text('id').primaryKey().$defaultFn(() => randomUUID()),
@@ -347,6 +356,7 @@ export type Order = typeof orders.$inferSelect;
 export type Appointment = typeof appointments.$inferSelect;
 export type Notification = typeof notifications.$inferSelect;
 export type AgentConfig = typeof agentConfigs.$inferSelect;
+export type KbChat = typeof kbChats.$inferSelect;
 export type CallbackRequest = typeof callbackRequests.$inferSelect;
 export type WebhookConfig = typeof webhookConfigs.$inferSelect;
 export type AuditLog = typeof auditLogs.$inferSelect;

@@ -1,11 +1,11 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { eq, and } from 'drizzle-orm';
-import { db, businesses, knowledgeBases, knowledgeDocuments, phoneNumbers, users, phoneVerifications } from '../db';
+import { db, businesses, knowledgeBases, knowledgeDocuments, kbChats, phoneNumbers, users, phoneVerifications } from '../db';
 import { authMiddleware } from '../middleware/auth';
 import { sendCustomSms } from '../services/sms';
 import { searchAvailableNumbers, purchaseNumber, releaseNumber } from '../services/infobip';
-import { scrapeWebsite, extractText, detectFileType, summariseContent } from '../services/document-extract';
+import { scrapeWebsite, extractText, detectFileType, summariseContent, kbChat, ChatMessage } from '../services/document-extract';
 import multer from 'multer';
 
 const docUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
@@ -237,6 +237,57 @@ businessesRouter.delete('/:id/kb/documents/:docId', async (req, res, next) => {
     await db.delete(knowledgeDocuments).where(
       and(eq(knowledgeDocuments.id, req.params.docId), eq(knowledgeDocuments.businessId, req.params.id))
     );
+    return res.status(204).send();
+  } catch (err) { next(err); }
+});
+
+// GET /businesses/:id/kb/chat  — load conversation history
+businessesRouter.get('/:id/kb/chat', async (req, res, next) => {
+  try {
+    const msgs = await db.select().from(kbChats)
+      .where(eq(kbChats.businessId, req.params.id))
+      .orderBy(kbChats.createdAt);
+    return res.json(msgs);
+  } catch (err) { next(err); }
+});
+
+// POST /businesses/:id/kb/chat  — send a message and get AI reply
+businessesRouter.post('/:id/kb/chat', async (req, res, next) => {
+  try {
+    const { message } = z.object({ message: z.string().min(1).max(2000) }).parse(req.body);
+
+    // Save user message
+    await db.insert(kbChats).values({ businessId: req.params.id, role: 'user', content: message });
+
+    // Load KB context for system prompt
+    const [kb] = await db.select().from(knowledgeBases).where(eq(knowledgeBases.businessId, req.params.id)).limit(1);
+    const docs = await db.select({ summary: knowledgeDocuments.summary, name: knowledgeDocuments.name })
+      .from(knowledgeDocuments).where(eq(knowledgeDocuments.businessId, req.params.id));
+
+    // Load last 20 messages for context
+    const history = await db.select().from(kbChats)
+      .where(eq(kbChats.businessId, req.params.id))
+      .orderBy(kbChats.createdAt);
+    const chatHistory: ChatMessage[] = history.slice(-20).map(m => ({ role: m.role as 'user' | 'assistant', content: m.content }));
+
+    const reply = await kbChat(chatHistory, {
+      businessName: kb?.businessName ?? 'this business',
+      faqs: (kb?.faqs as { question: string; answer: string }[]) ?? [],
+      websiteSummary: kb?.websiteSummary,
+      docSummaries: docs.filter(d => d.summary).map(d => `${d.name}: ${d.summary}`),
+    });
+
+    // Save assistant reply
+    await db.insert(kbChats).values({ businessId: req.params.id, role: 'assistant', content: reply });
+
+    return res.json({ reply });
+  } catch (err) { next(err); }
+});
+
+// DELETE /businesses/:id/kb/chat  — clear conversation history
+businessesRouter.delete('/:id/kb/chat', async (req, res, next) => {
+  try {
+    await db.delete(kbChats).where(eq(kbChats.businessId, req.params.id));
     return res.status(204).send();
   } catch (err) { next(err); }
 });
