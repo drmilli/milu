@@ -271,11 +271,7 @@ businessesRouter.post('/:id/phone-numbers/send-otp', async (req, res, next) => {
     }
 
     const payload: Record<string, unknown> = { message: 'OTP sent', number };
-    // In dev with no SMS provider, surface the code so it can be tested
-    if (!smsSent && env.NODE_ENV !== 'production') payload.devCode = code;
-    if (!smsSent && env.NODE_ENV === 'production') {
-      return res.status(503).json({ error: 'Could not send SMS. Check the number and try again.' });
-    }
+    if (!smsSent) payload.devCode = code; // surface code when SMS fails (Twilio trial restriction)
 
     return res.json(payload);
   } catch (err) { next(err); }

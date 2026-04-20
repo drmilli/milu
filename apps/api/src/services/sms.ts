@@ -14,11 +14,12 @@ async function sendSms(to: string, message: string) {
     return;
   }
 
-  await client.messages.create({
+  const msg = await client.messages.create({
     body: message,
     from: env.TWILIO_PHONE_NUMBER,
     to,
   });
+  logger.info({ to, sid: msg.sid, status: msg.status }, 'SMS sent via Twilio');
 }
 
 export async function sendOrderSms(to: string, orderNumber: string) {
