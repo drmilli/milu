@@ -16,7 +16,7 @@ import { analyticsRouter } from './routes/analytics';
 import { adminRouter } from './routes/admin';
 import { usersRouter } from './routes/users';
 import { billingRouter, handleWhopWebhook } from './routes/billing';
-import { handleAtVoiceWebhook } from './webhooks/at-voice';
+import { handleAtVoiceWebhook, handleAtRecordingWebhook } from './webhooks/at-voice';
 import { handleTwilioVoiceWebhook, handleTwilioVoiceEnd } from './webhooks/twilio-voice';
 import { verifyWhatsAppWebhook, handleWhatsAppWebhook } from './webhooks/whatsapp';
 import { contactsRouter } from './routes/contacts';
@@ -69,6 +69,7 @@ app.get('/health', (_req, res) => res.json({ status: 'ok', env: env.NODE_ENV }))
 
 // Webhooks (no auth, before rate limiting)
 app.post('/webhooks/at/voice', handleAtVoiceWebhook);
+app.post('/webhooks/at/voice/record', handleAtRecordingWebhook);
 app.post('/webhooks/twilio/voice', handleTwilioVoiceWebhook);
 app.post('/webhooks/twilio/voice/end', handleTwilioVoiceEnd);
 app.get('/webhooks/whatsapp', verifyWhatsAppWebhook);
