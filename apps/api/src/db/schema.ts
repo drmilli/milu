@@ -64,7 +64,8 @@ export const knowledgeBases = pgTable('knowledge_base', {
   escalationNumber: text('escalation_number'),
   voiceId: text('voice_id'),
   websiteUrl: text('website_url'),
-  websiteContent: text('website_content'), // scraped text content
+  websiteContent: text('website_content'),
+  websiteSummary: text('website_summary'),
   websiteScrapedAt: timestamp('website_scraped_at', { withTimezone: true }),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 });

@@ -189,11 +189,12 @@ businessesRouter.post('/:id/kb/scrape-website', async (req, res, next) => {
       url: z.string().transform(u => u.startsWith('http') ? u : `https://${u}`).pipe(z.string().url()),
     }).parse(req.body);
     const content = await scrapeWebsite(url);
+    const websiteSummary = await summariseContent(content, url);
     await db.update(knowledgeBases)
-      .set({ websiteUrl: url, websiteContent: content, websiteScrapedAt: new Date(), updatedAt: new Date() })
+      .set({ websiteUrl: url, websiteContent: content, websiteSummary: websiteSummary || null, websiteScrapedAt: new Date(), updatedAt: new Date() })
       .where(eq(knowledgeBases.businessId, req.params.id));
     logger.info({ businessId: req.params.id, url, chars: content.length }, 'Website scraped');
-    return res.json({ url, chars: content.length, preview: content.slice(0, 300) });
+    return res.json({ url, chars: content.length, preview: content.slice(0, 300), summary: websiteSummary || null });
   } catch (err) { next(err); }
 });
 
