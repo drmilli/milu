@@ -53,7 +53,7 @@ async function describeImageWithClaude(buffer: Buffer, mimetype: string): Promis
         'content-type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'claude-haiku-4-5-20251001',
+        model: 'claude-3-5-haiku-20241022',
         max_tokens: 1024,
         messages: [{
           role: 'user',
@@ -91,7 +91,7 @@ export async function summariseContent(content: string, filename: string): Promi
         'content-type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'claude-haiku-4-5-20251001',
+        model: 'claude-3-5-haiku-20241022',
         max_tokens: 1024,
         messages: [{
           role: 'user',
@@ -99,7 +99,10 @@ export async function summariseContent(content: string, filename: string): Promi
         }],
       }),
     });
-    if (!res.ok) throw new Error(`Claude ${res.status}`);
+    if (!res.ok) {
+      const body = await res.text();
+      throw new Error(`Claude ${res.status}: ${body}`);
+    }
     const data = await res.json() as { content: Array<{ text: string }> };
     return data.content[0]?.text ?? '';
   } catch (err) {
