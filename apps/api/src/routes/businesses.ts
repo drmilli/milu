@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { eq, and } from 'drizzle-orm';
-import { db, businesses, knowledgeBases, knowledgeDocuments, kbChats, phoneNumbers, users, phoneVerifications } from '../db';
+import { db, businesses, knowledgeBases, knowledgeDocuments, kbChats, phoneNumbers, users, phoneVerifications, notifications } from '../db';
 import { authMiddleware } from '../middleware/auth';
 import { sendCustomSms } from '../services/sms';
 import { searchAvailableNumbers, purchaseNumber, releaseNumber } from '../services/infobip';
@@ -289,6 +289,18 @@ businessesRouter.delete('/:id/kb/chat', async (req, res, next) => {
   try {
     await db.delete(kbChats).where(eq(kbChats.businessId, req.params.id));
     return res.status(204).send();
+  } catch (err) { next(err); }
+});
+
+// GET /businesses/:id/notifications — in-app notifications for this business
+businessesRouter.get('/:id/notifications', async (req, res, next) => {
+  try {
+    const { desc, isNull } = await import('drizzle-orm');
+    const rows = await db.select().from(notifications)
+      .where(and(eq(notifications.businessId, req.params.id), isNull(notifications.readAt)))
+      .orderBy(desc(notifications.createdAt))
+      .limit(50);
+    return res.json(rows);
   } catch (err) { next(err); }
 });
 
