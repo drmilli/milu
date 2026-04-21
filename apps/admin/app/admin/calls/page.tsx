@@ -61,8 +61,9 @@ export default function CallsPage() {
     if (!token) return;
     const params = new URLSearchParams({ limit: String(pageSize), page: String(page) });
     if (statusFilter !== 'all') params.set('resolution', statusFilter);
-    adminGet<Call[]>(`/admin/calls?${params}`, token)
-      .then(setCalls).catch(() => null).finally(() => setLoading(false));
+    adminGet<{ calls: Call[] } | Call[]>(`/admin/calls?${params}`, token)
+      .then(data => setCalls(Array.isArray(data) ? data : data.calls))
+      .catch(() => null).finally(() => setLoading(false));
   }, [token, page, statusFilter]);
 
   useEffect(() => { if (ready) load(); }, [ready, load]);
