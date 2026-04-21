@@ -10,7 +10,9 @@
       "WebFetch(domain:api.sendchamp.com)",
       "WebSearch",
       "WebFetch(domain:developers.sendchamp.com)",
-      "WebFetch(domain:sendchamp.com)"
+      "WebFetch(domain:sendchamp.com)",
+      "WebFetch(domain:www.npmjs.com)",
+      "WebFetch(domain:github.com)"
     ]
   }
 }
