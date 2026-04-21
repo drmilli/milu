@@ -5,6 +5,7 @@ import { db, businessSettings, phoneVerifications } from '../db';
 import { authMiddleware } from '../middleware/auth';
 import { audit } from '../services/audit';
 import { sendWhatsAppText } from '../services/whatsapp';
+import { sendchampSendOtp, sendchampVerifyOtp } from '../services/sendchamp';
 import { logger } from '../config/logger';
 import { env } from '../config/env';
 
@@ -152,43 +153,48 @@ settingsRouter.put('/:businessId', async (req, res, next) => {
  */
 settingsRouter.post('/:businessId/whatsapp/send-otp', async (req, res, next) => {
   try {
-    const { phone } = z.object({
-      phone: z.string().min(7),
-    }).parse(req.body);
+    const { phone } = z.object({ phone: z.string().min(7) }).parse(req.body);
 
-    // Expire any previous unused OTPs for this business+phone
-    await db.delete(phoneVerifications)
-      .where(and(
+    // Use Sendchamp native OTP if configured (handles generate + send + verify)
+    if (env.SENDCHAMP_API_KEY) {
+      const reference = await sendchampSendOtp(phone, 'whatsapp');
+      // Store reference so verify route can use it
+      await db.delete(phoneVerifications).where(and(
         eq(phoneVerifications.businessId, req.params.businessId),
         eq(phoneVerifications.phone, phone),
         eq(phoneVerifications.used, false),
       ));
+      await db.insert(phoneVerifications).values({
+        businessId: req.params.businessId,
+        phone,
+        code: reference, // store Sendchamp reference as code field
+        expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+      });
+      logger.info({ phone }, 'OTP sent via Sendchamp');
+      return res.json({ message: 'OTP sent to WhatsApp number', phone });
+    }
 
+    // Fallback: generate code manually and send via WhatsApp
+    await db.delete(phoneVerifications).where(and(
+      eq(phoneVerifications.businessId, req.params.businessId),
+      eq(phoneVerifications.phone, phone),
+      eq(phoneVerifications.used, false),
+    ));
     const code = String(Math.floor(100000 + Math.random() * 900000));
-    const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 min
-
     await db.insert(phoneVerifications).values({
-      businessId: req.params.businessId,
-      phone,
-      code,
-      expiresAt,
+      businessId: req.params.businessId, phone, code,
+      expiresAt: new Date(Date.now() + 10 * 60 * 1000),
     });
-
     let sent = true;
     try {
-      await sendWhatsAppText(
-        phone,
-        `Your Milu verification code is *${code}*. It expires in 10 minutes. Do not share this code with anyone.`,
-      );
+      await sendWhatsAppText(phone, `Your Milu verification code is *${code}*. It expires in 10 minutes.`);
     } catch (waErr) {
       sent = false;
       logger.error({ err: waErr, phone }, 'Failed to send WhatsApp OTP');
     }
-
     if (!sent && env.NODE_ENV === 'production') {
-      return res.status(503).json({ error: 'Could not send WhatsApp message. Check your WhatsApp token.' });
+      return res.status(503).json({ error: 'Could not send WhatsApp message.' });
     }
-
     const payload: Record<string, unknown> = { message: 'OTP sent to WhatsApp number', phone };
     if (!sent) payload.devCode = code;
     return res.json(payload);
@@ -235,12 +241,19 @@ settingsRouter.post('/:businessId/whatsapp/verify', async (req, res, next) => {
       .where(and(
         eq(phoneVerifications.businessId, req.params.businessId),
         eq(phoneVerifications.phone, phone),
-        eq(phoneVerifications.code, code),
         eq(phoneVerifications.used, false),
       )).limit(1);
 
     if (!record) return res.status(400).json({ error: 'Invalid code' });
     if (record.expiresAt < new Date()) return res.status(400).json({ error: 'Code expired' });
+
+    // If Sendchamp was used, the code field holds the reference — verify via API
+    if (env.SENDCHAMP_API_KEY && record.code.length > 6) {
+      const valid = await sendchampVerifyOtp(record.code, code);
+      if (!valid) return res.status(400).json({ error: 'Invalid code' });
+    } else if (record.code !== code) {
+      return res.status(400).json({ error: 'Invalid code' });
+    }
 
     // Mark OTP as used
     await db.update(phoneVerifications).set({ used: true }).where(eq(phoneVerifications.id, record.id));

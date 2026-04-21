@@ -27,8 +27,12 @@ const envSchema = z.object({
   WHATSAPP_WEBHOOK_VERIFY_TOKEN: z.string().optional(),
   // Infobip
   INFOBIP_API_KEY: z.string().optional(),
-  INFOBIP_BASE_URL: z.string().optional(), // e.g. xxxxx.api.infobip.com
+  INFOBIP_BASE_URL: z.string().optional(),
   INFOBIP_WHATSAPP_SENDER: z.string().optional(),
+  // Sendchamp
+  SENDCHAMP_API_KEY: z.string().optional(),
+  SENDCHAMP_WHATSAPP_SENDER: z.string().optional(), // WhatsApp-enabled number e.g. 2348120678278
+  SENDCHAMP_SENDER_ID: z.string().optional(),       // SMS sender ID
   // Auth
   JWT_SECRET: z.string().min(16),
   ADMIN_JWT_SECRET: z.string().min(16),

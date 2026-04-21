@@ -1,6 +1,7 @@
 import { env } from '../config/env';
 import { logger } from '../config/logger';
 import { sendInfobipWhatsApp } from './infobip';
+import { sendchampWhatsApp } from './sendchamp';
 
 const API_URL = 'https://graph.facebook.com/v21.0';
 
@@ -28,7 +29,15 @@ async function sendViaMeta(to: string, body: Record<string, unknown>) {
 }
 
 export async function sendWhatsAppText(to: string, message: string) {
-  // Prefer Infobip (no sandbox restrictions), fall back to Meta
+  // Priority: Sendchamp → Infobip → Meta
+  if (env.SENDCHAMP_API_KEY && env.SENDCHAMP_WHATSAPP_SENDER) {
+    try {
+      await sendchampWhatsApp(to, message);
+      return;
+    } catch (err) {
+      logger.warn({ err, to }, 'Sendchamp WhatsApp failed, trying Infobip');
+    }
+  }
   if (env.INFOBIP_API_KEY && env.INFOBIP_WHATSAPP_SENDER) {
     try {
       await sendInfobipWhatsApp(to, message);
