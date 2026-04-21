@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { useAdminAuth } from '../../../../hooks/useAdminAuth';
-import { adminGet, adminPatch } from '../../../../lib/api';
+import { adminGet, adminPatch, adminPost, adminDelete } from '../../../../lib/api';
 
 interface BusinessDetail {
   id: string;
@@ -65,7 +65,17 @@ function timeAgo(iso: string) {
   return `${Math.floor(h / 24)}d ago`;
 }
 
-const tabs = ['Overview', 'Agent', 'Calls', 'Team', 'Billing'];
+interface PhoneNumber {
+  id: string;
+  number: string;
+  label: string | null;
+  provider: string | null;
+  isVirtual: boolean;
+  verified: boolean;
+  createdAt: string;
+}
+
+const tabs = ['Overview', 'Agent', 'Calls', 'Team', 'Billing', 'Phone Numbers'];
 
 export default function BusinessDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -78,6 +88,13 @@ export default function BusinessDetailPage() {
   const [statusInput, setStatusInput] = useState('');
   const [saving, setSaving] = useState(false);
 
+  const [phoneNums, setPhoneNums] = useState<PhoneNumber[]>([]);
+  const [phoneLoading, setPhoneLoading] = useState(false);
+  const [newNumber, setNewNumber] = useState('');
+  const [newLabel, setNewLabel] = useState('');
+  const [newProvider, setNewProvider] = useState<'infobip' | 'twilio' | 'at'>('infobip');
+  const [addingPhone, setAddingPhone] = useState(false);
+
   const load = useCallback(() => {
     if (!token || !id) return;
     adminGet<BusinessDetail>(`/admin/businesses/${id}`, token)
@@ -89,6 +106,41 @@ export default function BusinessDetailPage() {
   }, [token, id]);
 
   useEffect(() => { if (ready) load(); }, [ready, load]);
+
+  const loadPhoneNums = useCallback(() => {
+    if (!token || !id) return;
+    setPhoneLoading(true);
+    adminGet<PhoneNumber[]>(`/admin/businesses/${id}/phone-numbers`, token)
+      .then(setPhoneNums).catch(() => null).finally(() => setPhoneLoading(false));
+  }, [token, id]);
+
+  useEffect(() => { if (tab === 'Phone Numbers' && token && id) loadPhoneNums(); }, [tab, loadPhoneNums, token, id]);
+
+  async function handleAddPhone() {
+    if (!token || !id || !newNumber.trim()) return;
+    setAddingPhone(true);
+    try {
+      await adminPost(`/admin/businesses/${id}/phone-numbers`, {
+        number: newNumber.trim(),
+        label: newLabel.trim() || undefined,
+        provider: newProvider,
+        isVirtual: true,
+      }, token);
+      setNewNumber('');
+      setNewLabel('');
+      loadPhoneNums();
+    } catch {
+      // ignore
+    } finally {
+      setAddingPhone(false);
+    }
+  }
+
+  async function handleRemovePhone(numberId: string) {
+    if (!token || !id) return;
+    await adminDelete(`/admin/businesses/${id}/phone-numbers/${numberId}`, token).catch(() => null);
+    setPhoneNums(prev => prev.filter(p => p.id !== numberId));
+  }
 
   async function handleSave() {
     if (!token || !id) return;
@@ -306,6 +358,94 @@ export default function BusinessDetailPage() {
           {(biz.team ?? []).length === 0 && (
             <div className="py-10 text-center text-primary-warm text-sm">No team members.</div>
           )}
+        </div>
+      )}
+
+      {tab === 'Phone Numbers' && (
+        <div className="space-y-5">
+          {/* Assign number form */}
+          <div className="bg-white rounded-2xl border border-cream-dark p-5 space-y-4">
+            <h3 className="text-sm font-semibold text-primary-dark">Assign virtual call line</h3>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <input
+                type="text"
+                placeholder="Number e.g. +2349000001234"
+                value={newNumber}
+                onChange={e => setNewNumber(e.target.value)}
+                className="col-span-1 text-sm border border-cream-dark rounded-lg px-3 py-2 bg-cream-light text-primary-dark placeholder:text-primary-warm/50 focus:outline-none focus:border-primary/50"
+              />
+              <input
+                type="text"
+                placeholder="Label (optional)"
+                value={newLabel}
+                onChange={e => setNewLabel(e.target.value)}
+                className="text-sm border border-cream-dark rounded-lg px-3 py-2 bg-cream-light text-primary-dark placeholder:text-primary-warm/50 focus:outline-none focus:border-primary/50"
+              />
+              <div className="flex gap-2">
+                <select
+                  value={newProvider}
+                  onChange={e => setNewProvider(e.target.value as 'infobip' | 'twilio' | 'at')}
+                  className="flex-1 text-sm border border-cream-dark rounded-lg px-3 py-2 bg-cream-light text-primary-dark focus:outline-none focus:border-primary/50"
+                >
+                  <option value="infobip">Infobip</option>
+                  <option value="twilio">Twilio</option>
+                  <option value="at">Africa&apos;s Talking</option>
+                </select>
+                <button
+                  onClick={handleAddPhone}
+                  disabled={addingPhone || !newNumber.trim()}
+                  className="px-4 py-2 bg-primary text-cream-light text-sm rounded-lg hover:bg-primary-dark transition-colors disabled:opacity-50 whitespace-nowrap"
+                >
+                  {addingPhone ? 'Adding…' : 'Assign'}
+                </button>
+              </div>
+            </div>
+            <p className="text-xs text-primary-warm">
+              Enter a number you have already purchased/rented from the provider. It will immediately appear in the business&apos;s AI Call Line tab.
+            </p>
+          </div>
+
+          {/* Existing numbers */}
+          <div className="bg-white rounded-2xl border border-cream-dark overflow-hidden">
+            <div className="px-5 py-3.5 border-b border-cream-dark bg-cream-light/60 flex items-center justify-between">
+              <h3 className="text-xs font-semibold text-primary-warm uppercase tracking-wider">Virtual numbers assigned</h3>
+              <span className="text-xs text-primary-warm">{phoneNums.length} number{phoneNums.length !== 1 ? 's' : ''}</span>
+            </div>
+            {phoneLoading ? (
+              <div className="py-10 text-center text-primary-warm text-sm animate-pulse">Loading…</div>
+            ) : phoneNums.length === 0 ? (
+              <div className="py-12 text-center space-y-1">
+                <p className="text-sm font-medium text-primary-dark">No virtual numbers yet</p>
+                <p className="text-xs text-primary-warm">Assign one above to enable AI call handling for this business.</p>
+              </div>
+            ) : (
+              <div className="divide-y divide-cream-dark">
+                {phoneNums.map(p => (
+                  <div key={p.id} className="flex items-center justify-between px-5 py-4">
+                    <div className="flex items-center gap-4">
+                      <div className="w-9 h-9 rounded-xl bg-primary/10 flex items-center justify-center">
+                        <svg className="w-4 h-4 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 6.75c0 8.284 6.716 15 15 15h2.25a2.25 2.25 0 002.25-2.25v-1.372c0-.516-.351-.966-.852-1.091l-4.423-1.106c-.44-.11-.902.055-1.173.417l-.97 1.293c-.282.376-.769.542-1.21.38a12.035 12.035 0 01-7.143-7.143c-.162-.441.004-.928.38-1.21l1.293-.97c.363-.271.527-.734.417-1.173L6.963 3.102a1.125 1.125 0 00-1.091-.852H4.5A2.25 2.25 0 002.25 4.5v2.25z" />
+                        </svg>
+                      </div>
+                      <div>
+                        <p className="text-sm font-semibold text-primary-dark font-mono">{p.number}</p>
+                        <p className="text-xs text-primary-warm capitalize">
+                          {p.label ? `${p.label} · ` : ''}{p.provider ?? 'infobip'} · Virtual
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => handleRemovePhone(p.id)}
+                      className="text-xs text-danger hover:text-danger/70 transition-colors px-2 py-1 rounded-lg hover:bg-danger/5"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       )}
 

@@ -36,3 +36,7 @@ export function adminPatch<T>(path: string, body: unknown, token: string) {
     headers: { Authorization: `Bearer ${token}` },
   });
 }
+
+export function adminDelete<T>(path: string, token: string) {
+  return apiFetch<T>(path, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } });
+}

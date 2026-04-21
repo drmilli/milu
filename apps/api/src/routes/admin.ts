@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { eq, desc, ilike, and, sql, gte } from 'drizzle-orm';
 import bcrypt from 'bcryptjs';
-import { db, businesses, users, calls, escalations } from '../db';
+import { db, businesses, users, calls, escalations, phoneNumbers } from '../db';
 import { authMiddleware } from '../middleware/auth';
 import { adminGuard } from '../middleware/admin-guard';
 import { env } from '../config/env';
@@ -518,6 +518,46 @@ adminRouter.get('/settings', (_req, res) => {
 adminRouter.patch('/settings', (_req, res) => {
   // Settings are env-based; acknowledge save without persisting
   return res.json({ message: 'Settings noted (restart required for env changes)' });
+});
+
+// ─── Phone number management ─────────────────────────────────────────────────
+
+adminRouter.get('/businesses/:id/phone-numbers', async (req, res, next) => {
+  try {
+    const rows = await db.select().from(phoneNumbers)
+      .where(eq(phoneNumbers.businessId, req.params.id))
+      .orderBy(desc(phoneNumbers.createdAt));
+    return res.json(rows);
+  } catch (err) { next(err); }
+});
+
+adminRouter.post('/businesses/:id/phone-numbers', async (req, res, next) => {
+  try {
+    const body = z.object({
+      number: z.string().min(7),
+      label: z.string().optional(),
+      provider: z.enum(['infobip', 'twilio', 'at']).default('infobip'),
+      providerNumberId: z.string().optional(),
+      isVirtual: z.boolean().default(true),
+    }).parse(req.body);
+
+    const [row] = await db.insert(phoneNumbers).values({
+      ...body,
+      businessId: req.params.id,
+      verified: true,
+    }).returning();
+    return res.status(201).json(row);
+  } catch (err) { next(err); }
+});
+
+adminRouter.delete('/businesses/:id/phone-numbers/:numberId', async (req, res, next) => {
+  try {
+    const [deleted] = await db.delete(phoneNumbers)
+      .where(and(eq(phoneNumbers.id, req.params.numberId), eq(phoneNumbers.businessId, req.params.id)))
+      .returning({ id: phoneNumbers.id });
+    if (!deleted) return res.status(404).json({ error: 'Number not found' });
+    return res.status(204).send();
+  } catch (err) { next(err); }
 });
 
 // ─── POST /admin/test-whatsapp ────────────────────────────────────────────────
