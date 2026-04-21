@@ -20,6 +20,7 @@ import { handleAtVoiceWebhook, handleAtRecordingWebhook } from './webhooks/at-vo
 import { handleTwilioVoiceWebhook, handleTwilioVoiceEnd } from './webhooks/twilio-voice';
 import { handleInfobipVoiceWebhook, handleInfobipRecordingWebhook } from './webhooks/infobip-voice';
 import { verifyWhatsAppWebhook, handleWhatsAppWebhook } from './webhooks/whatsapp';
+import { handleSendchampWebhook } from './webhooks/sendchamp';
 import { contactsRouter } from './routes/contacts';
 import { ordersRouter } from './routes/orders';
 import { appointmentsRouter } from './routes/appointments';
@@ -78,6 +79,7 @@ app.post('/webhooks/infobip/voice/record', handleInfobipRecordingWebhook);
 app.get('/webhooks/whatsapp', verifyWhatsAppWebhook);
 app.post('/webhooks/whatsapp', handleWhatsAppWebhook);
 app.post('/webhooks/whop', handleWhopWebhook);
+app.post('/webhooks/sendchamp', handleSendchampWebhook);
 
 // Rate limiting on all API routes
 app.use('/api/v1', apiLimiter);
