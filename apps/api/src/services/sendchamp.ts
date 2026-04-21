@@ -4,7 +4,8 @@ import { logger } from '../config/logger';
 function getSdk() {
   if (!env.SENDCHAMP_API_KEY) throw new Error('SENDCHAMP_API_KEY not set');
   // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { Sendchamp } = require('sendchamp-sdk');
+  const mod = require('sendchamp-sdk');
+  const Sendchamp = mod.default ?? mod.Sendchamp ?? mod;
   return new Sendchamp({ publicKey: env.SENDCHAMP_API_KEY, mode: 'live' });
 }
 
