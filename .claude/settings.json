@@ -12,7 +12,9 @@
       "WebFetch(domain:developers.sendchamp.com)",
       "WebFetch(domain:sendchamp.com)",
       "WebFetch(domain:www.npmjs.com)",
-      "WebFetch(domain:github.com)"
+      "WebFetch(domain:github.com)",
+      "Bash(node -e \"const sdk = require\\('/Users/ok/Documents/projects/milu/node_modules/sendchamp-sdk'\\); console.log\\(Object.keys\\(sdk\\)\\); console.log\\(typeof sdk.default\\); console.log\\(typeof sdk.Sendchamp\\);\")",
+      "Bash(node -e \"const sdk = require\\('/Users/ok/Documents/projects/milu/apps/api/node_modules/sendchamp-sdk'\\); console.log\\(Object.keys\\(sdk\\)\\); console.log\\(typeof sdk.default\\); console.log\\(typeof sdk.Sendchamp\\);\")"
     ]
   }
 }

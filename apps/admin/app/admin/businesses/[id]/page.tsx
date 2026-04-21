@@ -92,7 +92,7 @@ export default function BusinessDetailPage() {
   const [phoneLoading, setPhoneLoading] = useState(false);
   const [newNumber, setNewNumber] = useState('');
   const [newLabel, setNewLabel] = useState('');
-  const [newProvider, setNewProvider] = useState<'infobip' | 'twilio' | 'at'>('infobip');
+  const [newProvider, setNewProvider] = useState<'infobip' | 'twilio' | 'at'>('twilio');
   const [addingPhone, setAddingPhone] = useState(false);
 
   const load = useCallback(() => {
@@ -387,7 +387,6 @@ export default function BusinessDetailPage() {
                   onChange={e => setNewProvider(e.target.value as 'infobip' | 'twilio' | 'at')}
                   className="flex-1 text-sm border border-cream-dark rounded-lg px-3 py-2 bg-cream-light text-primary-dark focus:outline-none focus:border-primary/50"
                 >
-                  <option value="infobip">Infobip</option>
                   <option value="twilio">Twilio</option>
                   <option value="at">Africa&apos;s Talking</option>
                 </select>

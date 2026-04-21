@@ -1,16 +1,60 @@
-import { Router } from 'express';
+import { Router, type Request, type Response, type NextFunction } from 'express';
 import { z } from 'zod';
 import { eq, desc, ilike, and, sql, gte } from 'drizzle-orm';
 import bcrypt from 'bcryptjs';
 import { db, businesses, users, calls, escalations, phoneNumbers } from '../db';
-import { authMiddleware } from '../middleware/auth';
 import { adminGuard } from '../middleware/admin-guard';
+import { signAdminToken, verifyAdminToken } from '../utils/jwt';
+import { authLimiter } from '../middleware/rate-limit';
 import { env } from '../config/env';
 import { sendTestEmail, sendVerificationEmail, sendPasswordResetEmail, sendTeamInviteEmail, sendSubscriptionConfirmEmail, sendSubscriptionCancelledEmail } from '../utils/email';
 import { sendEscalationAlert, sendOrderConfirmation, sendAppointmentReminder, sendCallbackRequest, sendMissedCallAlert, sendWeeklySummary } from '../services/whatsapp';
 
+// ─── Admin JWT middleware (uses ADMIN_JWT_SECRET) ─────────────────────────────
+function adminAuthMiddleware(req: Request, res: Response, next: NextFunction) {
+  const header = req.headers.authorization;
+  if (!header?.startsWith('Bearer ')) return res.status(401).json({ error: 'Missing authorization token' });
+  try {
+    req.user = verifyAdminToken(header.slice(7));
+    next();
+  } catch {
+    return res.status(401).json({ error: 'Invalid or expired admin token' });
+  }
+}
+
+// ─── Public admin login (no auth required) ───────────────────────────────────
+export const adminAuthRouter: Router = Router();
+
+adminAuthRouter.post('/login', authLimiter, async (req, res, next) => {
+  try {
+    const { email, password } = z.object({
+      email: z.string().email(),
+      password: z.string().min(1),
+    }).parse(req.body);
+
+    const [user] = await db
+      .select({ id: users.id, email: users.email, password: users.password, firstName: users.firstName, lastName: users.lastName, role: users.role, businessId: users.businessId })
+      .from(users)
+      .where(eq(users.email, email))
+      .limit(1);
+
+    if (!user || !(await bcrypt.compare(password, user.password))) {
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+    if (user.role !== 'ADMIN') {
+      return res.status(403).json({ error: 'Access restricted to Milu admin team.' });
+    }
+
+    const token = signAdminToken({ userId: user.id, businessId: user.businessId ?? undefined, role: user.role });
+    return res.json({
+      token,
+      user: { id: user.id, email: user.email, firstName: user.firstName, lastName: user.lastName, role: user.role },
+    });
+  } catch (err) { next(err); }
+});
+
 export const adminRouter: Router = Router();
-adminRouter.use(authMiddleware, adminGuard);
+adminRouter.use(adminAuthMiddleware, adminGuard);
 
 /**
  * @openapi
