@@ -77,26 +77,54 @@ adminRouter.use(adminAuthMiddleware, adminGuard);
  */
 adminRouter.get('/stats', async (_req, res, next) => {
   try {
-    const [bizCount, userCount, callCount, escalationCount, activeBiz] = await Promise.all([
+    const now = new Date();
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+    const [
+      bizCount, activeBiz, newBizThisMonth,
+      callCount, callsThisMonth, callsLastMonth,
+      escalationCount, escalationsToday, escalationBizToday,
+      planCounts, resolvedCalls,
+    ] = await Promise.all([
       db.select({ n: sql<number>`count(*)` }).from(businesses),
-      db.select({ n: sql<number>`count(*)` }).from(users),
-      db.select({ n: sql<number>`count(*)` }).from(calls),
-      db.select({ n: sql<number>`count(*)` }).from(escalations),
       db.select({ n: sql<number>`count(*)` }).from(businesses).where(eq(businesses.isActive, true)),
+      db.select({ n: sql<number>`count(*)` }).from(businesses).where(gte(businesses.createdAt, startOfMonth)),
+      db.select({ n: sql<number>`count(*)` }).from(calls),
+      db.select({ n: sql<number>`count(*)` }).from(calls).where(gte(calls.startedAt, startOfMonth)),
+      db.select({ n: sql<number>`count(*)` }).from(calls).where(and(gte(calls.startedAt, startOfLastMonth), sql`${calls.startedAt} < ${startOfMonth}`)),
+      db.select({ n: sql<number>`count(*)` }).from(escalations),
+      db.select({ n: sql<number>`count(*)` }).from(escalations).where(gte(escalations.createdAt, startOfToday)),
+      db.select({ n: sql<number>`count(distinct ${escalations.businessId})` }).from(escalations).where(gte(escalations.createdAt, startOfToday)),
+      db.select({ tier: businesses.subscriptionTier, count: sql<number>`count(*)` }).from(businesses).groupBy(businesses.subscriptionTier),
+      db.select({ n: sql<number>`count(*)` }).from(calls).where(eq(calls.resolution, 'AI')),
     ]);
 
-    const planCounts = await db
-      .select({ tier: businesses.subscriptionTier, count: sql<number>`count(*)` })
-      .from(businesses)
-      .groupBy(businesses.subscriptionTier);
+    const planMap: Record<string, number> = {};
+    for (const r of planCounts) planMap[r.tier] = Number(r.count);
+    const starterMrr = (planMap['STARTER'] ?? 0) * 15000;
+    const growthMrr = (planMap['GROWTH'] ?? 0) * 45000;
+    const mrr = starterMrr + growthMrr;
+    const totalCalls = Number(callCount[0].n);
+    const aiResolved = Number(resolvedCalls[0].n);
+    const thisMonthCalls = Number(callsThisMonth[0].n);
+    const lastMonthCalls = Number(callsLastMonth[0].n);
 
     return res.json({
-      businesses: Number(bizCount[0].n),
+      totalBusinesses: Number(bizCount[0].n),
       activeBusinesses: Number(activeBiz[0].n),
-      users: Number(userCount[0].n),
-      calls: Number(callCount[0].n),
-      escalations: Number(escalationCount[0].n),
-      planBreakdown: planCounts.map((r) => ({ tier: r.tier, count: Number(r.count) })),
+      newBusinessesThisMonth: Number(newBizThisMonth[0].n),
+      activeTrials: planMap['STARTER'] ?? 0,
+      trialsExpiringSoon: 0,
+      callsThisMonth: thisMonthCalls,
+      callsGrowthPct: lastMonthCalls > 0 ? ((thisMonthCalls - lastMonthCalls) / lastMonthCalls) * 100 : 0,
+      mrr,
+      mrrGrowth: 0,
+      aiResolutionRate: totalCalls > 0 ? (aiResolved / totalCalls) * 100 : 0,
+      aiResolutionRateChange: 0,
+      escalationsToday: Number(escalationsToday[0].n),
+      escalationBusinessCount: Number(escalationBizToday[0].n),
     });
   } catch (err) {
     next(err);
@@ -657,6 +685,9 @@ adminRouter.get('/settings', (_req, res) => {
     trialDays: 14,
     webhookSecret: env.WHOP_WEBHOOK_SECRET ?? '',
     maintenanceMode: false,
+    // Legacy AT fields returned as empty (Twilio is primary provider)
+    atApiKey: '',
+    atUsername: '',
   });
 });
 

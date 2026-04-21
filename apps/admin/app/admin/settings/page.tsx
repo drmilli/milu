@@ -7,13 +7,15 @@ import { adminGet, adminPatch } from '../../../lib/api';
 const inputCls = 'w-full px-4 py-2.5 rounded-xl border border-cream-dark bg-cream-light text-sm text-primary-dark placeholder:text-cream-dark focus:outline-none focus:border-primary/50 focus:ring-2 focus:ring-primary/10 transition-all';
 
 interface SystemConfig {
-  atApiKey: string;
-  atUsername: string;
+  twilioAccountSid: string;
+  twilioPhoneNumber: string;
   defaultVoice: string;
   maxCallsPerBiz: number;
   trialDays: number;
   webhookSecret: string;
   maintenanceMode: boolean;
+  atApiKey: string;
+  atUsername: string;
 }
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
@@ -130,15 +132,15 @@ export default function SettingsPage() {
         </div>
       ) : config ? (
         <>
-          {/* Africa's Talking */}
-          <Section title="Africa's Talking">
-            <Field label="API Key" hint="Used for all inbound call routing and provisioning.">
-              <input type="password" className={inputCls} value={config.atApiKey}
-                onChange={e => updateConfig('atApiKey', e.target.value)} />
+          {/* Twilio */}
+          <Section title="Twilio">
+            <Field label="Account SID" hint="Used for all inbound call routing and number provisioning.">
+              <input type="password" className={inputCls} value={config.twilioAccountSid}
+                onChange={e => updateConfig('twilioAccountSid', e.target.value)} />
             </Field>
-            <Field label="Username">
-              <input className={inputCls} value={config.atUsername}
-                onChange={e => updateConfig('atUsername', e.target.value)} />
+            <Field label="Primary phone number" hint="Default Twilio number used for outbound calls.">
+              <input className={inputCls} value={config.twilioPhoneNumber}
+                onChange={e => updateConfig('twilioPhoneNumber', e.target.value)} />
             </Field>
           </Section>
 
