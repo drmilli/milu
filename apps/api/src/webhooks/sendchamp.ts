@@ -95,10 +95,10 @@ async function handleVoiceEvent(payload: Record<string, unknown>) {
     const duration = (payload.duration ?? payload.call_duration) as number | undefined;
     await db.update(calls)
       .set({
-        status: 'completed',
+        status: 'COMPLETED',
         duration: duration ?? null,
         endedAt: new Date(),
       })
-      .where(eq(calls.providerCallId, callId));
+      .where(eq(calls.id, callId));
   }
 }
