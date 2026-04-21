@@ -31,6 +31,7 @@ type AvailableNumber = {
 
 type Step = 'idle' | 'sending' | 'awaiting_code' | 'verifying' | 'done';
 type VirtualStep = 'idle' | 'searching' | 'selecting' | 'buying' | 'done';
+type Carrier = 'mtn' | 'airtel' | 'glo' | '9mobile';
 
 const inputCls = 'w-full px-4 py-2.5 rounded-xl border border-cream-dark bg-cream-light text-sm text-primary-dark placeholder:text-cream-dark focus:outline-none focus:border-primary/50 focus:ring-2 focus:ring-primary/10 transition-all';
 
@@ -49,6 +50,14 @@ export default function PhoneNumbersPage() {
   const [loadingNums, setLoadingNums] = useState(true);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [forwardingInfo, setForwardingInfo] = useState<ForwardingInstructions | null>(null);
+  const [selectedCarrier, setSelectedCarrier] = useState<Carrier>('mtn');
+  const [copied, setCopied] = useState<string | null>(null);
+
+  function copyCode(code: string, key: string) {
+    navigator.clipboard.writeText(code).catch(() => null);
+    setCopied(key);
+    setTimeout(() => setCopied(null), 2000);
+  }
 
   // UI tabs
   const [activeTab, setActiveTab] = useState<'call-line' | 'business'>('call-line');
@@ -379,18 +388,75 @@ export default function PhoneNumbersPage() {
                       <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}><path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" /></svg>
                     </button>
                   </div>
-                  {/* Forwarding codes */}
-                  <div className="bg-cream-light rounded-xl p-3 space-y-2">
-                    <p className="text-xs font-semibold text-primary-dark">Forward your business number to this:</p>
-                    <div className="grid grid-cols-2 gap-2">
-                      {Object.entries(FORWARDING_CODES).map(([key, { label, code: codeFn }]) => (
-                        <div key={key} className="flex items-center gap-2">
-                          <span className="text-xs text-primary-warm w-12 flex-shrink-0">{label}</span>
-                          <code className="text-xs font-mono text-primary-dark bg-white px-1.5 py-0.5 rounded border border-cream-dark">{codeFn(n.number)}</code>
-                        </div>
-                      ))}
+                  {/* Forwarding setup guide */}
+                  <div className="border border-primary/15 rounded-xl overflow-hidden">
+                    <div className="bg-primary/5 px-4 py-2.5 flex items-center gap-2 border-b border-primary/10">
+                      <svg className="w-4 h-4 text-primary flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M8.25 9.75h4.875a2.625 2.625 0 010 5.25H12M8.25 9.75L10.5 7.5M8.25 9.75L10.5 12m9-7.243V21.75l-3.75-1.5-3.75 1.5-3.75-1.5-3.75 1.5V4.757c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0111.186 0c1.1.128 1.907 1.077 1.907 2.185z" /></svg>
+                      <p className="text-xs font-semibold text-primary">Set up call forwarding on your SIM</p>
                     </div>
-                    <p className="text-xs text-primary-warm">Dial from your business SIM to activate forwarding.</p>
+                    <div className="p-4 space-y-4 bg-white">
+                      {/* Step 1 — pick carrier */}
+                      <div className="space-y-2">
+                        <p className="text-xs font-semibold text-primary-dark flex items-center gap-1.5">
+                          <span className="w-5 h-5 rounded-full bg-primary text-cream-light flex items-center justify-center text-[10px] font-bold flex-shrink-0">1</span>
+                          Select your network carrier
+                        </p>
+                        <div className="grid grid-cols-4 gap-1.5">
+                          {(Object.entries(FORWARDING_CODES) as [Carrier, typeof FORWARDING_CODES[Carrier]][]).map(([key, { label }]) => (
+                            <button
+                              key={key}
+                              onClick={() => setSelectedCarrier(key)}
+                              className={`py-1.5 rounded-lg text-xs font-medium transition-all border ${selectedCarrier === key ? 'bg-primary text-cream-light border-primary' : 'border-cream-dark text-primary-warm hover:border-primary/40 hover:text-primary-dark'}`}
+                            >
+                              {label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Step 2 — dial the code */}
+                      <div className="space-y-2">
+                        <p className="text-xs font-semibold text-primary-dark flex items-center gap-1.5">
+                          <span className="w-5 h-5 rounded-full bg-primary text-cream-light flex items-center justify-center text-[10px] font-bold flex-shrink-0">2</span>
+                          Open your phone dialer and type this code
+                        </p>
+                        <div className="flex items-center gap-2 bg-cream-light rounded-xl px-4 py-3 border border-cream-dark">
+                          <code className="flex-1 text-lg font-mono font-bold text-primary-dark tracking-wider">
+                            {FORWARDING_CODES[selectedCarrier].code(n.number)}
+                          </code>
+                          <button
+                            onClick={() => copyCode(FORWARDING_CODES[selectedCarrier].code(n.number), `${n.id}-${selectedCarrier}`)}
+                            className={`flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg transition-all ${copied === `${n.id}-${selectedCarrier}` ? 'bg-success/10 text-success' : 'bg-white border border-cream-dark text-primary-warm hover:text-primary-dark hover:border-primary/30'}`}
+                          >
+                            {copied === `${n.id}-${selectedCarrier}` ? (
+                              <><svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" /></svg>Copied</>
+                            ) : (
+                              <><svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 17.25v3.375c0 .621-.504 1.125-1.125 1.125h-9.75a1.125 1.125 0 01-1.125-1.125V7.875c0-.621.504-1.125 1.125-1.125H6.75a9.06 9.06 0 011.5.124m7.5 10.376h3.375c.621 0 1.125-.504 1.125-1.125V11.25c0-4.46-3.243-8.161-7.5-8.876a9.06 9.06 0 00-1.5-.124H9.375c-.621 0-1.125.504-1.125 1.125v3.5m7.5 10.375H9.375a1.125 1.125 0 01-1.125-1.125v-9.25m12 6.625v-1.875a3.375 3.375 0 00-3.375-3.375h-1.5a1.125 1.125 0 01-1.125-1.125v-1.5a3.375 3.375 0 00-3.375-3.375H9.75" /></svg>Copy</>
+                            )}
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Step 3 — press call */}
+                      <div className="space-y-1">
+                        <p className="text-xs font-semibold text-primary-dark flex items-center gap-1.5">
+                          <span className="w-5 h-5 rounded-full bg-primary text-cream-light flex items-center justify-center text-[10px] font-bold flex-shrink-0">3</span>
+                          Press the green call button
+                        </p>
+                        <p className="text-xs text-primary-warm pl-6.5">You'll hear a confirmation tone or message from your carrier when forwarding is active.</p>
+                      </div>
+
+                      {/* To cancel */}
+                      <div className="pt-1 border-t border-cream-dark">
+                        <p className="text-xs text-primary-warm">
+                          To cancel forwarding later, dial{' '}
+                          <code className="font-mono text-primary-dark bg-cream px-1 py-0.5 rounded">
+                            {selectedCarrier === 'mtn' ? '##21#' : selectedCarrier === 'airtel' ? '##21#' : '#62#'}
+                          </code>{' '}
+                          from your SIM.
+                        </p>
+                      </div>
+                    </div>
                   </div>
                 </div>
               ))}
