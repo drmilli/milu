@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { eq, and, desc, isNull } from 'drizzle-orm';
+import { eq, and, sql } from 'drizzle-orm';
 import { db, businesses, knowledgeBases, knowledgeDocuments, kbChats, phoneNumbers, users, phoneVerifications, notifications } from '../db';
 import { authMiddleware } from '../middleware/auth';
 import { sendCustomSms } from '../services/sms';
@@ -296,8 +296,8 @@ businessesRouter.delete('/:id/kb/chat', async (req, res, next) => {
 businessesRouter.get('/:id/notifications', async (req, res, next) => {
   try {
     const rows = await db.select().from(notifications)
-      .where(and(eq(notifications.businessId, req.params.id), isNull(notifications.readAt)))
-      .orderBy(desc(notifications.createdAt))
+      .where(and(eq(notifications.businessId, req.params.id), sql`${notifications.readAt} is null`))
+      .orderBy(sql`${notifications.createdAt} desc`)
       .limit(50);
     return res.json(rows);
   } catch (err) { next(err); }
