@@ -2,7 +2,7 @@ import { Router, type Request, type Response, type NextFunction } from 'express'
 import { z } from 'zod';
 import { eq, desc, ilike, and, sql, gte } from 'drizzle-orm';
 import bcrypt from 'bcryptjs';
-import { db, businesses, users, calls, escalations, phoneNumbers } from '../db';
+import { db, businesses, users, calls, escalations, phoneNumbers, agentConfigs } from '../db';
 import { adminGuard } from '../middleware/admin-guard';
 import { signAdminToken, verifyAdminToken } from '../utils/jwt';
 import { authLimiter } from '../middleware/rate-limit';
@@ -133,35 +133,52 @@ adminRouter.get('/stats', async (_req, res, next) => {
  */
 adminRouter.get('/businesses', async (req, res, next) => {
   try {
-    const { page, limit, search, tier, isActive } = z.object({
+    const { page, limit, search } = z.object({
       page: z.coerce.number().min(1).default(1),
       limit: z.coerce.number().min(1).max(100).default(20),
       search: z.string().optional(),
-      tier: z.enum(['STARTER', 'GROWTH', 'ENTERPRISE']).optional(),
-      isActive: z.coerce.boolean().optional(),
     }).parse(req.query);
 
     const conditions: any[] = [];
     if (search) conditions.push(ilike(businesses.name, `%${search}%`));
-    if (tier) conditions.push(eq(businesses.subscriptionTier, tier));
-    if (isActive !== undefined) conditions.push(eq(businesses.isActive, isActive));
     const where = conditions.length ? and(...conditions) : undefined;
 
     const [rows, countResult] = await Promise.all([
-      db.select().from(businesses).where(where).orderBy(desc(businesses.createdAt)).limit(limit).offset((page - 1) * limit),
+      db.select({
+        id: businesses.id,
+        name: businesses.name,
+        industry: businesses.industry,
+        subscriptionTier: businesses.subscriptionTier,
+        isActive: businesses.isActive,
+        createdAt: businesses.createdAt,
+      }).from(businesses).where(where).orderBy(desc(businesses.createdAt)).limit(limit).offset((page - 1) * limit),
       db.select({ n: sql<number>`count(*)` }).from(businesses).where(where),
     ]);
 
     const enriched = await Promise.all(rows.map(async (b) => {
-      const [userCount, callCount] = await Promise.all([
-        db.select({ n: sql<number>`count(*)` }).from(users).where(eq(users.businessId, b.id)),
+      const [ownerRows, callCountRows] = await Promise.all([
+        db.select({ email: users.email, firstName: users.firstName, lastName: users.lastName })
+          .from(users).where(and(eq(users.businessId, b.id), eq(users.role, 'OWNER'))).limit(1),
         db.select({ n: sql<number>`count(*)` }).from(calls).where(eq(calls.businessId, b.id)),
       ]);
-      return { ...b, _count: { users: Number(userCount[0].n), calls: Number(callCount[0].n) } };
+      const owner = ownerRows[0];
+      const planMrr: Record<string, number> = { STARTER: 15000, GROWTH: 45000, ENTERPRISE: 0 };
+      return {
+        id: b.id,
+        name: b.name,
+        industry: b.industry ?? '',
+        owner: owner ? [owner.firstName, owner.lastName].filter(Boolean).join(' ') || owner.email : 'Unknown',
+        email: owner?.email ?? '',
+        plan: b.subscriptionTier === 'STARTER' ? 'Starter' : b.subscriptionTier === 'GROWTH' ? 'Growth' : 'Enterprise',
+        status: b.isActive ? 'active' : 'suspended',
+        calls: Number(callCountRows[0]?.n ?? 0),
+        mrr: planMrr[b.subscriptionTier] ?? 0,
+        joined: b.createdAt.toISOString(),
+      };
     }));
 
     const total = Number(countResult[0].n);
-    return res.json({ businesses: enriched, total, page, limit, totalPages: Math.ceil(total / limit) });
+    return res.json(enriched); // UI expects array directly
   } catch (err) {
     next(err);
   }
@@ -191,13 +208,63 @@ adminRouter.get('/businesses/:id', async (req, res, next) => {
     const [biz] = await db.select().from(businesses).where(eq(businesses.id, req.params.id)).limit(1);
     if (!biz) return res.status(404).json({ error: 'Business not found' });
 
-    const [members, recentCalls] = await Promise.all([
+    const startOfMonth = new Date(); startOfMonth.setDate(1); startOfMonth.setHours(0,0,0,0);
+
+    const [members, recentCalls, callTotal, callMonth, escalationCount, agentRow] = await Promise.all([
       db.select({ id: users.id, email: users.email, firstName: users.firstName, lastName: users.lastName, role: users.role })
         .from(users).where(eq(users.businessId, req.params.id)),
-      db.select().from(calls).where(eq(calls.businessId, req.params.id)).orderBy(desc(calls.startedAt)).limit(10),
+      db.select({ id: calls.id, callerNumber: calls.callerNumber, duration: calls.duration, resolution: calls.resolution, intent: calls.intent, startedAt: calls.startedAt })
+        .from(calls).where(eq(calls.businessId, req.params.id)).orderBy(desc(calls.startedAt)).limit(10),
+      db.select({ n: sql<number>`count(*)` }).from(calls).where(eq(calls.businessId, req.params.id)),
+      db.select({ n: sql<number>`count(*)` }).from(calls).where(and(eq(calls.businessId, req.params.id), gte(calls.startedAt, startOfMonth))),
+      db.select({ n: sql<number>`count(*)` }).from(escalations).where(eq(escalations.businessId, req.params.id)),
+      db.select().from(agentConfigs).where(eq(agentConfigs.businessId, req.params.id)).limit(1),
     ]);
 
-    return res.json({ ...biz, users: members, recentCalls });
+    const owner = members.find(m => m.role === 'OWNER');
+    const total = Number(callTotal[0]?.n ?? 0);
+    const aiResolved = recentCalls.filter(c => c.resolution === 'AI').length;
+    const planMrr: Record<string, number> = { STARTER: 15000, GROWTH: 45000, ENTERPRISE: 0 };
+    const agent = agentRow[0];
+
+    return res.json({
+      id: biz.id,
+      name: biz.name,
+      industry: biz.industry ?? '',
+      owner: owner ? [owner.firstName, owner.lastName].filter(Boolean).join(' ') || owner.email : 'Unknown',
+      email: owner?.email ?? '',
+      phone: undefined,
+      plan: biz.subscriptionTier === 'STARTER' ? 'Starter' : biz.subscriptionTier === 'GROWTH' ? 'Growth' : 'Enterprise',
+      status: biz.isActive ? 'active' : 'suspended',
+      joined: biz.createdAt.toISOString(),
+      mrr: planMrr[biz.subscriptionTier] ?? 0,
+      callsThisMonth: Number(callMonth[0]?.n ?? 0),
+      callsTotal: total,
+      resolutionRate: total > 0 ? Math.round((aiResolved / Math.min(total, 10)) * 100) : 0,
+      escalations: Number(escalationCount[0]?.n ?? 0),
+      agent: agent ? {
+        voiceId: agent.voiceId,
+        tone: agent.tone,
+        greeting: agent.greeting,
+        faqCount: undefined,
+      } : undefined,
+      team: members.map(m => ({
+        id: m.id,
+        name: [m.firstName, m.lastName].filter(Boolean).join(' ') || m.email,
+        email: m.email,
+        role: m.role,
+      })),
+      recentCalls: recentCalls.map(c => ({
+        id: c.id,
+        caller: c.callerNumber,
+        durationSeconds: c.duration ?? 0,
+        resolution: c.resolution ?? 'ABANDONED',
+        intent: c.intent,
+        startedAt: c.startedAt.toISOString(),
+      })),
+      invoices: [],
+      subscription: { nextBillingAt: undefined },
+    });
   } catch (err) {
     next(err);
   }
@@ -230,18 +297,21 @@ adminRouter.get('/businesses/:id', async (req, res, next) => {
  */
 adminRouter.patch('/businesses/:id', async (req, res, next) => {
   try {
-    const schema = z.object({
-      subscriptionTier: z.enum(['STARTER', 'GROWTH', 'ENTERPRISE']).optional(),
-      isActive: z.boolean().optional(),
-    });
-    const data = schema.parse(req.body);
-    const result = await db
-      .update(businesses)
-      .set({ ...data, updatedAt: new Date() })
-      .where(eq(businesses.id, req.params.id))
-      .returning();
-    if (!result.length) return res.status(404).json({ error: 'Business not found' });
-    return res.json(result[0]);
+    const { plan, status } = z.object({
+      plan: z.string().optional(),
+      status: z.string().optional(),
+    }).parse(req.body);
+
+    const update: Record<string, unknown> = { updatedAt: new Date() };
+    if (plan) {
+      const tierMap: Record<string, string> = { Starter: 'STARTER', Growth: 'GROWTH', Enterprise: 'ENTERPRISE' };
+      update.subscriptionTier = tierMap[plan] ?? plan.toUpperCase();
+    }
+    if (status !== undefined) update.isActive = status === 'active' || status === 'trial';
+
+    const [result] = await db.update(businesses).set(update).where(eq(businesses.id, req.params.id)).returning();
+    if (!result) return res.status(404).json({ error: 'Business not found' });
+    return res.json({ ok: true });
   } catch (err) {
     next(err);
   }
@@ -296,12 +366,23 @@ adminRouter.get('/users', async (req, res, next) => {
         businessId: users.businessId,
         emailVerified: users.emailVerified,
         createdAt: users.createdAt,
-      }).from(users).where(where).orderBy(desc(users.createdAt)).limit(limit).offset((page - 1) * limit),
+        businessName: businesses.name,
+      }).from(users)
+        .leftJoin(businesses, eq(businesses.id, users.businessId))
+        .where(where).orderBy(desc(users.createdAt)).limit(limit).offset((page - 1) * limit),
       db.select({ n: sql<number>`count(*)` }).from(users).where(where),
     ]);
 
     const total = Number(countResult[0].n);
-    return res.json({ users: rows, total, page, limit, totalPages: Math.ceil(total / limit) });
+    return res.json(rows.map(u => ({
+      id: u.id,
+      name: [u.firstName, u.lastName].filter(Boolean).join(' ') || u.email,
+      email: u.email,
+      business: u.businessName ?? '—',
+      role: u.role,
+      lastActive: u.createdAt.toISOString(),
+      status: u.emailVerified ? 'active' : 'suspended',
+    })));
   } catch (err) {
     next(err);
   }
@@ -330,16 +411,37 @@ adminRouter.get('/calls', async (req, res, next) => {
   try {
     const { page, limit } = z.object({
       page: z.coerce.number().min(1).default(1),
-      limit: z.coerce.number().min(1).max(100).default(20),
+      limit: z.coerce.number().min(1).max(100).default(50),
     }).parse(req.query);
 
     const [rows, countResult] = await Promise.all([
-      db.select().from(calls).orderBy(desc(calls.startedAt)).limit(limit).offset((page - 1) * limit),
+      db.select({
+        id: calls.id,
+        callerNumber: calls.callerNumber,
+        duration: calls.duration,
+        resolution: calls.resolution,
+        intent: calls.intent,
+        startedAt: calls.startedAt,
+        businessName: businesses.name,
+      }).from(calls)
+        .leftJoin(businesses, eq(businesses.id, calls.businessId))
+        .orderBy(desc(calls.startedAt)).limit(limit).offset((page - 1) * limit),
       db.select({ n: sql<number>`count(*)` }).from(calls),
     ]);
 
     const total = Number(countResult[0].n);
-    return res.json({ calls: rows, total, page, limit, totalPages: Math.ceil(total / limit) });
+    return res.json({
+      calls: rows.map(c => ({
+        id: c.id,
+        business: c.businessName ?? '—',
+        caller: c.callerNumber,
+        durationSeconds: c.duration ?? 0,
+        resolution: c.resolution ?? 'ABANDONED',
+        intent: c.intent,
+        startedAt: c.startedAt.toISOString(),
+      })),
+      total, page, limit, totalPages: Math.ceil(total / limit),
+    });
   } catch (err) {
     next(err);
   }
