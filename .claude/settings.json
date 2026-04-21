@@ -4,7 +4,13 @@
       "Bash(git add *)",
       "Bash(git push *)",
       "Bash(git commit *)",
-      "Bash(pnpm install *)"
+      "Bash(pnpm install *)",
+      "WebFetch(domain:sendchamp.readme.io)",
+      "WebFetch(domain:docs.sendchamp.com)",
+      "WebFetch(domain:api.sendchamp.com)",
+      "WebSearch",
+      "WebFetch(domain:developers.sendchamp.com)",
+      "WebFetch(domain:sendchamp.com)"
     ]
   }
 }
