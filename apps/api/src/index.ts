@@ -77,6 +77,9 @@ app.post('/webhooks/twilio/voice/end', handleTwilioVoiceEnd);
 app.post('/webhooks/twilio/message-status', handleTwilioMessageStatus);
 app.post('/webhooks/twilio/incoming-message', handleTwilioIncomingMessage);
 app.post('/webhooks/twilio/incoming-message/fallback', handleTwilioIncomingMessageFallback);
+app.get('/webhooks/twilio/message-status', (_req, res) => res.sendStatus(200));
+app.get('/webhooks/twilio/incoming-message', (_req, res) => res.sendStatus(200));
+app.get('/webhooks/twilio/incoming-message/fallback', (_req, res) => res.sendStatus(200));
 // Infobip voice webhooks removed — using Twilio only for calls
 app.get('/webhooks/whatsapp', verifyWhatsAppWebhook);
 app.post('/webhooks/whatsapp', handleWhatsAppWebhook);
