@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
+    "prestart": "npm run -w @milu/agent-core build && npm run build",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
     "db:generate": "drizzle-kit generate",
@@ -32,7 +33,7 @@
     "pino-http": "^11.0.0",
     "pino-pretty": "^11.2.0",
     "sendchamp-sdk": "^1.1.0",
-    "@milu/agent-core": "workspace:*",
+    "@milu/agent-core": "0.1.0",
     "swagger-jsdoc": "^6.2.8",
     "swagger-ui-express": "^5.0.1",
     "twilio": "^5.13.1",

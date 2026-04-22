@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useAuth } from '../../../hooks/useAuth';
-import { apiGet, apiPut, apiPost, apiDelete } from '../../../lib/api';
+import { apiGet, apiPut, apiDelete } from '../../../lib/api';
 
 interface AgentConfig {
   name: string;

@@ -443,7 +443,7 @@ export default function PhoneNumbersPage() {
                           <span className="w-5 h-5 rounded-full bg-primary text-cream-light flex items-center justify-center text-[10px] font-bold flex-shrink-0">3</span>
                           Press the green call button
                         </p>
-                        <p className="text-xs text-primary-warm pl-6.5">You'll hear a confirmation tone or message from your carrier when forwarding is active.</p>
+                        <p className="text-xs text-primary-warm pl-6.5">You&apos;ll hear a confirmation tone or message from your carrier when forwarding is active.</p>
                       </div>
 
                       {/* To cancel */}

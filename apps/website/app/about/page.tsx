@@ -62,7 +62,7 @@ export default function AboutPage() {
               <span className="gradient-text italic">for Africa.</span>
             </h1>
             <p className="text-lg text-primary-warm leading-relaxed mb-6">
-              Milu started from a simple observation: African businesses — salons, pharmacies, logistics companies, restaurants — miss hundreds of calls every week. Not because they don't care. Because they're busy running their business.
+              Milu started from a simple observation: African businesses — salons, pharmacies, logistics companies, restaurants — miss hundreds of calls every week. Not because they don&apos;t care. Because they&apos;re busy running their business.
             </p>
             <p className="text-lg text-primary-warm leading-relaxed">
               Every missed call is a lost customer. We built Milu so that every business, regardless of size, can answer every call — intelligently, affordably, and in a way that actually reflects their brand.
