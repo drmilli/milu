@@ -11,6 +11,10 @@
     "resolveJsonModule": true,
     "declaration": true,
     "declarationMap": true,
-    "sourceMap": true
+    "sourceMap": true,
+    "paths": {
+      "@milu/agent-core": ["packages/agent-core/src/index.ts"],
+      "@milu/db": ["packages/db/src/client.ts"]
+    }
   }
 }

@@ -1,6 +1,6 @@
 import type { Request, Response } from 'express';
 import { eq } from 'drizzle-orm';
-import { db, phoneNumbers, agentConfigs, businesses, calls } from '../db';
+import { db, phoneNumbers, agentConfigs, businesses, calls, knowledgeBases } from '../db';
 import { logger } from '../config/logger';
 
 function xml(body: string) {
@@ -48,9 +48,10 @@ export async function handleAtVoiceWebhook(req: Request, res: Response) {
 
     const { businessId } = phoneRow;
 
-    const [[agentRow], [bizRow]] = await Promise.all([
+    const [[agentRow], [bizRow], [kbRow]] = await Promise.all([
       db.select().from(agentConfigs).where(eq(agentConfigs.businessId, businessId)).limit(1),
       db.select({ name: businesses.name }).from(businesses).where(eq(businesses.id, businessId)).limit(1),
+      db.select({ operatingHours: knowledgeBases.operatingHours }).from(knowledgeBases).where(eq(knowledgeBases.businessId, businessId)).limit(1),
     ]);
 
     const greeting = agentRow?.greeting
@@ -70,9 +71,29 @@ export async function handleAtVoiceWebhook(req: Request, res: Response) {
 
     logger.info({ businessId, callerNumber, destinationNumber, sessionId }, 'AT call answered');
 
-    if (businessHoursOnly) {
-      // TODO: check actual business hours from knowledge_base
-      // For now always within hours
+    if (businessHoursOnly && kbRow?.operatingHours) {
+      const now = new Date();
+      const days = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+      const currentDay = days[now.getDay()];
+      const hours = kbRow.operatingHours as Record<string, string>; // e.g., { monday: "09:00-17:00" }
+      
+      const todayHours = hours[currentDay];
+      if (!todayHours || todayHours.toLowerCase() === 'closed') {
+        return res.send(xml(`<Say>${afterHoursMessage}</Say><Hangup/>`));
+      }
+
+      const [start, end] = todayHours.split('-');
+      if (start && end) {
+        const currentTime = now.getHours() * 60 + now.getMinutes();
+        const [startH, startM] = start.split(':').map(Number);
+        const [endH, endM] = end.split(':').map(Number);
+        const startTime = startH * 60 + startM;
+        const endTime = endH * 60 + endM;
+
+        if (currentTime < startTime || currentTime > endTime) {
+          return res.send(xml(`<Say>${afterHoursMessage}</Say><Hangup/>`));
+        }
+      }
     }
 
     if (!enableRecording) {
