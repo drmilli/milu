@@ -125,3 +125,73 @@ export async function handleTwilioVoiceEnd(req: Request, res: Response) {
 
   return res.send(twiml('<Hangup/>'));
 }
+
+function maskPhone(value: string) {
+  const cleaned = value.replace(/^whatsapp:/, '');
+  const last4 = cleaned.slice(-4);
+  const prefix = cleaned.slice(0, Math.max(0, cleaned.length - 4));
+  const maskedPrefix = prefix.replace(/\d/g, '*');
+  return `${maskedPrefix}${last4}`;
+}
+
+export async function handleTwilioMessageStatus(req: Request, res: Response) {
+  res.sendStatus(200);
+
+  const body = req.body as Record<string, unknown>;
+  const messageSid = (body.MessageSid as string | undefined) ?? (body.SmsSid as string | undefined) ?? '';
+  const messageStatus = (body.MessageStatus as string | undefined) ?? (body.SmsStatus as string | undefined) ?? '';
+  const to = (body.To as string | undefined) ?? '';
+  const from = (body.From as string | undefined) ?? '';
+  const errorCode = body.ErrorCode as string | number | undefined;
+  const errorMessage = body.ErrorMessage as string | undefined;
+
+  logger.info({
+    sid: messageSid,
+    status: messageStatus,
+    to: to ? maskPhone(to) : undefined,
+    from: from ? maskPhone(from) : undefined,
+    errorCode: errorCode ?? null,
+    errorMessage: errorMessage ?? null,
+  }, 'Twilio message status');
+}
+
+export async function handleTwilioIncomingMessage(req: Request, res: Response) {
+  const body = req.body as Record<string, unknown>;
+  const messageSid = (body.MessageSid as string | undefined) ?? (body.SmsSid as string | undefined) ?? '';
+  const messageStatus = (body.MessageStatus as string | undefined) ?? (body.SmsStatus as string | undefined) ?? '';
+  const to = (body.To as string | undefined) ?? '';
+  const from = (body.From as string | undefined) ?? '';
+  const text = (body.Body as string | undefined) ?? '';
+  const numMedia = body.NumMedia as string | number | undefined;
+
+  logger.info({
+    sid: messageSid,
+    status: messageStatus || 'inbound',
+    to: to ? maskPhone(to) : undefined,
+    from: from ? maskPhone(from) : undefined,
+    textPreview: text ? `${text.slice(0, 140)}${text.length > 140 ? '…' : ''}` : '',
+    numMedia: numMedia ?? null,
+  }, 'Twilio incoming message');
+
+  return res.sendStatus(200);
+}
+
+export async function handleTwilioIncomingMessageFallback(req: Request, res: Response) {
+  const body = req.body as Record<string, unknown>;
+  const messageSid = (body.MessageSid as string | undefined) ?? (body.SmsSid as string | undefined) ?? '';
+  const to = (body.To as string | undefined) ?? '';
+  const from = (body.From as string | undefined) ?? '';
+  const errorCode = body.ErrorCode as string | number | undefined;
+  const errorMessage = body.ErrorMessage as string | undefined;
+
+  logger.warn({
+    sid: messageSid,
+    to: to ? maskPhone(to) : undefined,
+    from: from ? maskPhone(from) : undefined,
+    errorCode: errorCode ?? null,
+    errorMessage: errorMessage ?? null,
+    body,
+  }, 'Twilio incoming message fallback');
+
+  return res.sendStatus(200);
+}

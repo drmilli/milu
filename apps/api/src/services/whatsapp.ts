@@ -38,11 +38,13 @@ async function sendViaTwilioWhatsApp(to: string, message: string) {
   const normalize = (v: string) => (v.startsWith('whatsapp:') ? v : `whatsapp:${v}`);
   const toNormalized = normalize(to);
   const fromNormalized = normalize(fromRaw);
+  const statusCallbackUrl = `${env.API_URL.replace(/\/$/, '')}/webhooks/twilio/message-status`;
 
   logger.info({
     to: maskPhone(toNormalized),
     from: maskPhone(fromNormalized),
     messageChars: message.length,
+    statusCallbackUrl,
   }, 'WhatsApp send attempt (Twilio)');
 
   try {
@@ -50,6 +52,7 @@ async function sendViaTwilioWhatsApp(to: string, message: string) {
       body: message,
       from: fromNormalized,
       to: toNormalized,
+      statusCallback: statusCallbackUrl,
     });
     logger.info({
       to: maskPhone(toNormalized),
