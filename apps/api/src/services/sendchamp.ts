@@ -14,7 +14,7 @@ function getSdk() {
 export async function sendchampWhatsApp(to: string, message: string): Promise<void> {
   const sdk = getSdk();
   const normalised = to.replace(/^\+/, '');
-  const whatsapp = sdk.WhatsApp();
+  const whatsapp = sdk.WHATSAPP;
   await whatsapp.sendText({
     sender: env.SENDCHAMP_WHATSAPP_SENDER ?? '',
     recipient: normalised,
@@ -28,8 +28,8 @@ export async function sendchampWhatsApp(to: string, message: string): Promise<vo
 export async function sendchampSendOtp(phone: string, channel: 'whatsapp' | 'sms' | 'voice' = 'whatsapp'): Promise<string> {
   const sdk = getSdk();
   const normalised = phone.replace(/^\+/, '');
-  const verification = sdk.Verification();
-  const res = await verification.create({
+  const verification = sdk.VERIFICATION;
+  const res = await verification.sendOTP({
     channel: channel.toUpperCase(),
     sender: channel === 'sms' ? (env.SENDCHAMP_SENDER_ID ?? 'Milu') : (env.SENDCHAMP_WHATSAPP_SENDER ?? ''),
     token_type: 'numeric',
@@ -45,8 +45,8 @@ export async function sendchampSendOtp(phone: string, channel: 'whatsapp' | 'sms
 export async function sendchampVerifyOtp(reference: string, code: string): Promise<boolean> {
   try {
     const sdk = getSdk();
-    const verification = sdk.Verification();
-    const res = await verification.verifyOTP({
+    const verification = sdk.VERIFICATION;
+    const res = await verification.confirm({
       verification_reference: reference,
       verification_code: code,
     });
@@ -61,8 +61,8 @@ export async function sendchampVerifyOtp(reference: string, code: string): Promi
 export async function sendchampVoice(phones: string[], message: string, repeat = 1): Promise<void> {
   const sdk = getSdk();
   const normalised = phones.map(p => p.replace(/^\+/, ''));
-  const voice = sdk.Voice();
-  await voice.sendVoice({
+  const voice = sdk.VOICE;
+  await voice.send({
     customer_mobile_number: normalised,
     message,
     type: 'outgoing',
