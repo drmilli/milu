@@ -104,6 +104,7 @@ export default function BusinessDetailPage() {
   const [twilioNums, setTwilioNums] = useState<TwilioIncomingNumber[]>([]);
   const [twilioLoading, setTwilioLoading] = useState(false);
   const [assigningSid, setAssigningSid] = useState<string | null>(null);
+  const [phoneError, setPhoneError] = useState('');
 
   const load = useCallback(() => {
     if (!token || !id) return;
@@ -140,6 +141,7 @@ export default function BusinessDetailPage() {
 
   async function handleAddPhone() {
     if (!token || !id || !newNumber.trim()) return;
+    setPhoneError('');
     setAddingPhone(true);
     try {
       await adminPost(`/admin/businesses/${id}/phone-numbers`, {
@@ -151,21 +153,26 @@ export default function BusinessDetailPage() {
       setNewLabel('');
       loadPhoneNums();
     } catch {
-      // ignore
+      setPhoneError('Failed to assign number. Check that the number is valid and not assigned to another business.');
     } finally {
       setAddingPhone(false);
     }
   }
 
-  async function handleAssignTwilio(sid: string) {
+  async function handleAssignTwilio(n: TwilioIncomingNumber) {
     if (!token || !id) return;
-    setAssigningSid(sid);
+    setPhoneError('');
+    setAssigningSid(n.sid);
     try {
-      await adminPost(`/admin/businesses/${id}/phone-numbers/twilio/assign`, { phoneNumberSid: sid }, token);
+      if (n.assignedBusinessId && n.assignedBusinessId !== id) {
+        const ok = window.confirm(`This number is currently assigned to "${n.assignedBusinessName ?? 'another business'}". Move it to this business?`);
+        if (!ok) return;
+      }
+      await adminPost(`/admin/businesses/${id}/phone-numbers/twilio/assign`, { phoneNumberSid: n.sid, phoneNumber: n.phoneNumber }, token);
       loadPhoneNums();
       loadTwilioNums();
     } catch {
-      // ignore
+      setPhoneError('Failed to assign Twilio number. Check Twilio credentials and server logs.');
     } finally {
       setAssigningSid(null);
     }
@@ -429,6 +436,7 @@ export default function BusinessDetailPage() {
             <p className="text-xs text-primary-warm">
               Enter a Twilio number to assign to this business. It will immediately appear in the business&apos;s AI Call Line tab.
             </p>
+            {phoneError && <p className="text-xs text-danger">{phoneError}</p>}
           </div>
 
           {/* Twilio owned numbers */}
@@ -459,8 +467,8 @@ export default function BusinessDetailPage() {
                 {twilioNums.map(n => {
                   const assignedElsewhere = !!n.assignedBusinessId && n.assignedBusinessId !== id;
                   const assignedHere = n.assignedBusinessId === id;
-                  const disabled = assignedElsewhere || assignedHere || assigningSid === n.sid;
-                  const label = assignedHere ? 'Assigned' : assignedElsewhere ? `In use (${n.assignedBusinessName ?? 'another business'})` : 'Assign';
+                  const disabled = assignedHere || assigningSid === n.sid;
+                  const label = assignedHere ? 'Assigned' : assignedElsewhere ? 'Move here' : 'Assign';
 
                   return (
                     <div key={n.sid} className="flex items-center justify-between px-5 py-4">
@@ -469,7 +477,7 @@ export default function BusinessDetailPage() {
                         <p className="text-xs text-primary-warm">{n.friendlyName ?? '—'}</p>
                       </div>
                       <button
-                        onClick={() => handleAssignTwilio(n.sid)}
+                        onClick={() => handleAssignTwilio(n)}
                         disabled={disabled}
                         className="text-xs px-3 py-1.5 rounded-lg border border-cream-dark text-primary-warm hover:text-primary hover:border-primary/30 transition-colors disabled:opacity-50"
                       >

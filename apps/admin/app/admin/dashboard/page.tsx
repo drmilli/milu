@@ -63,20 +63,28 @@ export default function AdminDashboardPage() {
   const [callVolume, setCallVolume] = useState<CallVolumePoint[]>([]);
   const [recentSignups, setRecentSignups] = useState<RecentSignup[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
 
   const load = useCallback(() => {
     if (!token) return;
-    Promise.all([
+    setLoading(true);
+    setError('');
+    Promise.allSettled([
       adminGet<AdminStats>('/admin/stats', token),
       adminGet<RevenuePoint[]>('/admin/analytics/revenue', token),
       adminGet<CallVolumePoint[]>('/admin/analytics/call-volume', token),
       adminGet<RecentSignup[]>('/admin/businesses/recent', token),
-    ]).then(([s, rev, vol, signups]) => {
-      setStats(s);
-      setRevenue(rev);
-      setCallVolume(vol);
-      setRecentSignups(signups);
-    }).catch(() => null).finally(() => setLoading(false));
+    ]).then((results) => {
+      const [statsRes, revRes, volRes, signupsRes] = results;
+
+      if (statsRes.status === 'fulfilled') setStats(statsRes.value);
+      if (revRes.status === 'fulfilled') setRevenue(revRes.value);
+      if (volRes.status === 'fulfilled') setCallVolume(volRes.value);
+      if (signupsRes.status === 'fulfilled') setRecentSignups(signupsRes.value);
+
+      const failed = results.filter(r => r.status === 'rejected').length;
+      if (failed) setError('Some dashboard data failed to load. Check API URL, admin token, and server logs.');
+    }).finally(() => setLoading(false));
   }, [token]);
 
   useEffect(() => { if (ready) load(); }, [ready, load]);
@@ -92,6 +100,11 @@ export default function AdminDashboardPage() {
 
   return (
     <div className="p-6 lg:p-8 space-y-8">
+      {error && (
+        <div className="bg-danger/10 border border-danger/20 text-danger rounded-2xl px-5 py-4 text-sm">
+          {error}
+        </div>
+      )}
       {/* Stats grid */}
       <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
         {loading ? (
@@ -104,7 +117,11 @@ export default function AdminDashboardPage() {
               {s.up === true ? '↑ ' : s.up == null ? '' : '↓ '}{s.change}
             </p>
           </div>
-        ))}
+        )) ?? (
+          <div className="col-span-2 lg:col-span-3 bg-white rounded-2xl border border-cream-dark p-6 text-sm text-primary-warm">
+            No stats available yet.
+          </div>
+        )}
       </div>
 
       {/* Charts */}

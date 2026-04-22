@@ -878,27 +878,40 @@ adminRouter.post('/businesses/:id/phone-numbers/twilio/buy', async (req, res, ne
       voiceMethod: 'POST',
     });
 
-    const [existing] = await db.select({ id: phoneNumbers.id }).from(phoneNumbers)
+    const [existing] = await db.select({
+      id: phoneNumbers.id,
+      provider: phoneNumbers.provider,
+    }).from(phoneNumbers)
       .where(or(eq(phoneNumbers.number, incoming.phoneNumber), eq(phoneNumbers.providerNumberId, incoming.sid)))
       .limit(1);
-    if (existing) return res.status(409).json({ error: 'Number already assigned in Milu' });
+    if (existing?.provider && existing.provider !== 'twilio') return res.status(409).json({ error: 'Number already exists with a different provider' });
 
-    const [row] = await db.insert(phoneNumbers).values({
-      number: incoming.phoneNumber,
-      businessId: req.params.id,
-      verified: true,
-      label: label ?? 'Milu Number',
-      isVirtual: true,
-      provider: 'twilio',
-      providerNumberId: incoming.sid,
-    }).returning();
+    const nextLabel = label ?? incoming.friendlyName ?? 'Milu Number';
+    const [row] = existing
+      ? await db.update(phoneNumbers).set({
+        businessId: req.params.id,
+        verified: true,
+        label: nextLabel,
+        isVirtual: true,
+        provider: 'twilio',
+        providerNumberId: incoming.sid,
+      }).where(eq(phoneNumbers.id, existing.id)).returning()
+      : await db.insert(phoneNumbers).values({
+        number: incoming.phoneNumber,
+        businessId: req.params.id,
+        verified: true,
+        label: nextLabel,
+        isVirtual: true,
+        provider: 'twilio',
+        providerNumberId: incoming.sid,
+      }).returning();
 
     const [biz] = await db.select({ name: businesses.name }).from(businesses).where(eq(businesses.id, req.params.id)).limit(1);
     const owners = await db.select({ email: users.email }).from(users)
       .where(and(eq(users.businessId, req.params.id), eq(users.role, 'OWNER')));
     await Promise.all(owners.filter(o => !!o.email).map(o => sendPhoneNumberAssignedEmail(o.email!, biz?.name ?? 'your business', row.number)));
 
-    return res.status(201).json({ ...row, twilioSid: incoming.sid });
+    return res.status(existing ? 200 : 201).json({ ...row, twilioSid: incoming.sid });
   } catch (err) { next(err); }
 });
 
@@ -907,41 +920,63 @@ adminRouter.post('/businesses/:id/phone-numbers/twilio/assign', async (req, res,
     const client = getTwilioClient();
     if (!client) return res.status(400).json({ error: 'Twilio is not configured' });
 
-    const { phoneNumberSid, label } = z.object({
+    const { phoneNumberSid, phoneNumber, label } = z.object({
       phoneNumberSid: z.string().min(5),
+      phoneNumber: z.string().min(7).optional(),
       label: z.string().optional(),
     }).parse(req.body);
 
-    const incoming = await client.incomingPhoneNumbers(phoneNumberSid).fetch();
+    let number = phoneNumber;
+    let friendlyName = label;
+    let sid = phoneNumberSid;
+    if (!number) {
+      const incoming = await client.incomingPhoneNumbers(phoneNumberSid).fetch();
+      number = incoming.phoneNumber;
+      friendlyName = label ?? incoming.friendlyName ?? undefined;
+      sid = incoming.sid;
+    }
 
     const apiUrl = env.API_URL.replace(/\/$/, '');
-    await client.incomingPhoneNumbers(phoneNumberSid).update({
+    void client.incomingPhoneNumbers(phoneNumberSid).update({
       voiceUrl: `${apiUrl}/webhooks/twilio/voice`,
       voiceMethod: 'POST',
-      friendlyName: label ?? incoming.friendlyName ?? undefined,
+      friendlyName: friendlyName ?? undefined,
     });
 
-    const [existing] = await db.select({ id: phoneNumbers.id }).from(phoneNumbers)
-      .where(or(eq(phoneNumbers.number, incoming.phoneNumber), eq(phoneNumbers.providerNumberId, incoming.sid)))
+    const [existing] = await db.select({
+      id: phoneNumbers.id,
+      provider: phoneNumbers.provider,
+    }).from(phoneNumbers)
+      .where(or(eq(phoneNumbers.number, number), eq(phoneNumbers.providerNumberId, sid)))
       .limit(1);
-    if (existing) return res.status(409).json({ error: 'Number already assigned in Milu' });
+    if (existing?.provider && existing.provider !== 'twilio') return res.status(409).json({ error: 'Number already exists with a different provider' });
 
-    const [row] = await db.insert(phoneNumbers).values({
-      number: incoming.phoneNumber,
-      businessId: req.params.id,
-      verified: true,
-      label: label ?? incoming.friendlyName ?? 'Milu Number',
-      isVirtual: true,
-      provider: 'twilio',
-      providerNumberId: incoming.sid,
-    }).returning();
+    const nextLabel = friendlyName ?? 'Milu Number';
+    const [row] = existing
+      ? await db.update(phoneNumbers).set({
+        businessId: req.params.id,
+        verified: true,
+        label: nextLabel,
+        isVirtual: true,
+        provider: 'twilio',
+        providerNumberId: sid,
+      }).where(eq(phoneNumbers.id, existing.id)).returning()
+      : await db.insert(phoneNumbers).values({
+        number,
+        businessId: req.params.id,
+        verified: true,
+        label: nextLabel,
+        isVirtual: true,
+        provider: 'twilio',
+        providerNumberId: sid,
+      }).returning();
 
     const [biz] = await db.select({ name: businesses.name }).from(businesses).where(eq(businesses.id, req.params.id)).limit(1);
     const owners = await db.select({ email: users.email }).from(users)
       .where(and(eq(users.businessId, req.params.id), eq(users.role, 'OWNER')));
     await Promise.all(owners.filter(o => !!o.email).map(o => sendPhoneNumberAssignedEmail(o.email!, biz?.name ?? 'your business', row.number)));
 
-    return res.status(201).json({ ...row, twilioSid: incoming.sid });
+    return res.status(existing ? 200 : 201).json({ ...row, twilioSid: sid });
   } catch (err) { next(err); }
 });
 
@@ -964,23 +999,32 @@ adminRouter.post('/businesses/:id/phone-numbers', async (req, res, next) => {
       isVirtual: z.boolean().default(true),
     }).parse(req.body);
 
-    const [existing] = await db.select({ id: phoneNumbers.id }).from(phoneNumbers)
+    const [existing] = await db.select({ id: phoneNumbers.id, provider: phoneNumbers.provider }).from(phoneNumbers)
       .where(eq(phoneNumbers.number, body.number))
       .limit(1);
-    if (existing) return res.status(409).json({ error: 'Number already assigned in Milu' });
+    if (existing && existing.provider && existing.provider !== 'twilio') return res.status(409).json({ error: 'Number already exists with a different provider' });
 
-    const [row] = await db.insert(phoneNumbers).values({
-      ...body,
-      businessId: req.params.id,
-      verified: true,
-    }).returning();
+    const [row] = existing
+      ? await db.update(phoneNumbers).set({
+        businessId: req.params.id,
+        verified: true,
+        label: body.label ?? null,
+        isVirtual: body.isVirtual,
+        provider: 'twilio',
+        providerNumberId: body.providerNumberId ?? null,
+      }).where(eq(phoneNumbers.id, existing.id)).returning()
+      : await db.insert(phoneNumbers).values({
+        ...body,
+        businessId: req.params.id,
+        verified: true,
+      }).returning();
 
     const [biz] = await db.select({ name: businesses.name }).from(businesses).where(eq(businesses.id, req.params.id)).limit(1);
     const owners = await db.select({ email: users.email }).from(users)
       .where(and(eq(users.businessId, req.params.id), eq(users.role, 'OWNER')));
     await Promise.all(owners.filter(o => !!o.email).map(o => sendPhoneNumberAssignedEmail(o.email!, biz?.name ?? 'your business', row.number)));
 
-    return res.status(201).json(row);
+    return res.status(existing ? 200 : 201).json(row);
   } catch (err) { next(err); }
 });
 

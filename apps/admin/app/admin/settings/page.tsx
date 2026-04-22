@@ -268,7 +268,8 @@ export default function SettingsPage() {
         </div>
       )}
 
-      <Section title="WhatsApp inbox">
+      <div id="whatsapp-inbox">
+        <Section title="WhatsApp inbox">
         <div className="flex gap-2">
           <input
             className={inputCls}
@@ -357,7 +358,8 @@ export default function SettingsPage() {
           {waError && <p className="text-xs text-danger">{waError}</p>}
           <p className="text-xs text-primary-warm">Tip: click any message row to autofill the recipient for a reply.</p>
         </div>
-      </Section>
+        </Section>
+      </div>
 
       {/* Admin profile — always shown */}
       <Section title="Admin profile">
