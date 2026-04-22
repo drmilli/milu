@@ -75,6 +75,14 @@ interface PhoneNumber {
   createdAt: string;
 }
 
+interface TwilioIncomingNumber {
+  sid: string;
+  phoneNumber: string;
+  friendlyName: string | null;
+  assignedBusinessId: string | null;
+  assignedBusinessName: string | null;
+}
+
 const tabs = ['Overview', 'Agent', 'Calls', 'Team', 'Billing', 'Phone Numbers'];
 
 export default function BusinessDetailPage() {
@@ -93,6 +101,9 @@ export default function BusinessDetailPage() {
   const [newNumber, setNewNumber] = useState('');
   const [newLabel, setNewLabel] = useState('');
   const [addingPhone, setAddingPhone] = useState(false);
+  const [twilioNums, setTwilioNums] = useState<TwilioIncomingNumber[]>([]);
+  const [twilioLoading, setTwilioLoading] = useState(false);
+  const [assigningSid, setAssigningSid] = useState<string | null>(null);
 
   const load = useCallback(() => {
     if (!token || !id) return;
@@ -113,7 +124,19 @@ export default function BusinessDetailPage() {
       .then(setPhoneNums).catch(() => null).finally(() => setPhoneLoading(false));
   }, [token, id]);
 
-  useEffect(() => { if (tab === 'Phone Numbers' && token && id) loadPhoneNums(); }, [tab, loadPhoneNums, token, id]);
+  const loadTwilioNums = useCallback(() => {
+    if (!token) return;
+    setTwilioLoading(true);
+    adminGet<TwilioIncomingNumber[]>('/admin/twilio/incoming-numbers?limit=50', token)
+      .then(setTwilioNums).catch(() => null).finally(() => setTwilioLoading(false));
+  }, [token]);
+
+  useEffect(() => {
+    if (tab === 'Phone Numbers' && token && id) {
+      loadPhoneNums();
+      loadTwilioNums();
+    }
+  }, [tab, loadPhoneNums, loadTwilioNums, token, id]);
 
   async function handleAddPhone() {
     if (!token || !id || !newNumber.trim()) return;
@@ -131,6 +154,20 @@ export default function BusinessDetailPage() {
       // ignore
     } finally {
       setAddingPhone(false);
+    }
+  }
+
+  async function handleAssignTwilio(sid: string) {
+    if (!token || !id) return;
+    setAssigningSid(sid);
+    try {
+      await adminPost(`/admin/businesses/${id}/phone-numbers/twilio/assign`, { phoneNumberSid: sid }, token);
+      loadPhoneNums();
+      loadTwilioNums();
+    } catch {
+      // ignore
+    } finally {
+      setAssigningSid(null);
     }
   }
 
@@ -392,6 +429,57 @@ export default function BusinessDetailPage() {
             <p className="text-xs text-primary-warm">
               Enter a Twilio number to assign to this business. It will immediately appear in the business&apos;s AI Call Line tab.
             </p>
+          </div>
+
+          {/* Twilio owned numbers */}
+          <div className="bg-white rounded-2xl border border-cream-dark overflow-hidden">
+            <div className="px-5 py-3.5 border-b border-cream-dark bg-cream-light/60 flex items-center justify-between">
+              <div>
+                <h3 className="text-xs font-semibold text-primary-warm uppercase tracking-wider">Twilio numbers in account</h3>
+                <p className="text-xs text-primary-warm/80 mt-0.5">Pick a number you already bought on Twilio and assign it to this business.</p>
+              </div>
+              <button
+                onClick={loadTwilioNums}
+                disabled={twilioLoading}
+                className="text-xs px-3 py-1.5 rounded-lg border border-cream-dark text-primary-warm hover:text-primary hover:border-primary/30 transition-colors disabled:opacity-50"
+              >
+                {twilioLoading ? 'Refreshing…' : 'Refresh'}
+              </button>
+            </div>
+
+            {twilioLoading ? (
+              <div className="py-10 text-center text-primary-warm text-sm animate-pulse">Loading…</div>
+            ) : twilioNums.length === 0 ? (
+              <div className="py-12 text-center space-y-1">
+                <p className="text-sm font-medium text-primary-dark">No Twilio numbers found</p>
+                <p className="text-xs text-primary-warm">Buy a number in Twilio or check Twilio credentials on the API.</p>
+              </div>
+            ) : (
+              <div className="divide-y divide-cream-dark">
+                {twilioNums.map(n => {
+                  const assignedElsewhere = !!n.assignedBusinessId && n.assignedBusinessId !== id;
+                  const assignedHere = n.assignedBusinessId === id;
+                  const disabled = assignedElsewhere || assignedHere || assigningSid === n.sid;
+                  const label = assignedHere ? 'Assigned' : assignedElsewhere ? `In use (${n.assignedBusinessName ?? 'another business'})` : 'Assign';
+
+                  return (
+                    <div key={n.sid} className="flex items-center justify-between px-5 py-4">
+                      <div>
+                        <p className="text-sm font-semibold text-primary-dark font-mono">{n.phoneNumber}</p>
+                        <p className="text-xs text-primary-warm">{n.friendlyName ?? '—'}</p>
+                      </div>
+                      <button
+                        onClick={() => handleAssignTwilio(n.sid)}
+                        disabled={disabled}
+                        className="text-xs px-3 py-1.5 rounded-lg border border-cream-dark text-primary-warm hover:text-primary hover:border-primary/30 transition-colors disabled:opacity-50"
+                      >
+                        {assigningSid === n.sid ? 'Assigning…' : label}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
 
           {/* Existing numbers */}

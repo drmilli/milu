@@ -1,6 +1,6 @@
 import { Router, type Request, type Response, type NextFunction } from 'express';
 import { z } from 'zod';
-import { eq, desc, ilike, and, sql, gte } from 'drizzle-orm';
+import { eq, desc, ilike, and, or, sql, gte, inArray } from 'drizzle-orm';
 import bcrypt from 'bcryptjs';
 import twilio from 'twilio';
 import { db, businesses, users, calls, escalations, phoneNumbers, agentConfigs } from '../db';
@@ -740,6 +740,60 @@ adminRouter.get('/twilio/available-numbers', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+adminRouter.get('/twilio/incoming-numbers', async (req, res, next) => {
+  try {
+    const client = getTwilioClient();
+    if (!client) return res.status(400).json({ error: 'Twilio is not configured' });
+
+    const { limit, search } = z.object({
+      limit: z.coerce.number().min(1).max(100).default(50),
+      search: z.string().optional(),
+    }).parse(req.query);
+
+    const list = await client.incomingPhoneNumbers.list({ limit });
+    const filtered = (search?.trim()
+      ? list.filter((n: any) => {
+        const q = search.trim().toLowerCase();
+        return String(n.phoneNumber ?? '').toLowerCase().includes(q)
+          || String(n.friendlyName ?? '').toLowerCase().includes(q);
+      })
+      : list
+    );
+
+    const sids = filtered.map((n: any) => n.sid).filter(Boolean) as string[];
+    const assignedRows = sids.length
+      ? await db.select({
+        providerNumberId: phoneNumbers.providerNumberId,
+        businessId: phoneNumbers.businessId,
+        businessName: businesses.name,
+      })
+        .from(phoneNumbers)
+        .leftJoin(businesses, eq(businesses.id, phoneNumbers.businessId))
+        .where(and(eq(phoneNumbers.provider, 'twilio'), inArray(phoneNumbers.providerNumberId, sids)))
+      : [];
+
+    const assignedBySid = new Map<string, { businessId: string; businessName: string }>();
+    for (const row of assignedRows) {
+      if (row.providerNumberId && row.businessId) {
+        assignedBySid.set(row.providerNumberId, { businessId: row.businessId, businessName: row.businessName ?? '' });
+      }
+    }
+
+    return res.json(filtered.map((n: any) => {
+      const assigned = assignedBySid.get(n.sid);
+      return {
+        sid: n.sid,
+        phoneNumber: n.phoneNumber,
+        friendlyName: n.friendlyName,
+        dateCreated: n.dateCreated,
+        capabilities: n.capabilities,
+        assignedBusinessId: assigned?.businessId ?? null,
+        assignedBusinessName: assigned?.businessName ?? null,
+      };
+    }));
+  } catch (err) { next(err); }
+});
+
 adminRouter.post('/businesses/:id/phone-numbers/twilio/buy', async (req, res, next) => {
   try {
     const client = getTwilioClient();
@@ -757,6 +811,11 @@ adminRouter.post('/businesses/:id/phone-numbers/twilio/buy', async (req, res, ne
       voiceUrl: `${apiUrl}/webhooks/twilio/voice`,
       voiceMethod: 'POST',
     });
+
+    const [existing] = await db.select({ id: phoneNumbers.id }).from(phoneNumbers)
+      .where(or(eq(phoneNumbers.number, incoming.phoneNumber), eq(phoneNumbers.providerNumberId, incoming.sid)))
+      .limit(1);
+    if (existing) return res.status(409).json({ error: 'Number already assigned in Milu' });
 
     const [row] = await db.insert(phoneNumbers).values({
       number: incoming.phoneNumber,
@@ -788,6 +847,18 @@ adminRouter.post('/businesses/:id/phone-numbers/twilio/assign', async (req, res,
     }).parse(req.body);
 
     const incoming = await client.incomingPhoneNumbers(phoneNumberSid).fetch();
+
+    const apiUrl = env.API_URL.replace(/\/$/, '');
+    await client.incomingPhoneNumbers(phoneNumberSid).update({
+      voiceUrl: `${apiUrl}/webhooks/twilio/voice`,
+      voiceMethod: 'POST',
+      friendlyName: label ?? incoming.friendlyName ?? undefined,
+    });
+
+    const [existing] = await db.select({ id: phoneNumbers.id }).from(phoneNumbers)
+      .where(or(eq(phoneNumbers.number, incoming.phoneNumber), eq(phoneNumbers.providerNumberId, incoming.sid)))
+      .limit(1);
+    if (existing) return res.status(409).json({ error: 'Number already assigned in Milu' });
 
     const [row] = await db.insert(phoneNumbers).values({
       number: incoming.phoneNumber,
@@ -826,6 +897,11 @@ adminRouter.post('/businesses/:id/phone-numbers', async (req, res, next) => {
       providerNumberId: z.string().optional(),
       isVirtual: z.boolean().default(true),
     }).parse(req.body);
+
+    const [existing] = await db.select({ id: phoneNumbers.id }).from(phoneNumbers)
+      .where(eq(phoneNumbers.number, body.number))
+      .limit(1);
+    if (existing) return res.status(409).json({ error: 'Number already assigned in Milu' });
 
     const [row] = await db.insert(phoneNumbers).values({
       ...body,
