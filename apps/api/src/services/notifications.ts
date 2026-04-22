@@ -79,7 +79,8 @@ export async function sendNotification(opts: SendOptions): Promise<void> {
 
 export async function notifyBusinessOwners(businessId: string, title: string, body: string, data?: Record<string, unknown>) {
   const [settings] = await db.select().from(businessSettings).where(eq(businessSettings.businessId, businessId)).limit(1);
-  const channels = (settings?.notifyChannels ?? ['EMAIL']) as Channel[];
+  const configured = (settings?.notifyChannels ?? ['EMAIL']) as Channel[];
+  const channels = Array.from(new Set<Channel>(['EMAIL', ...configured]));
 
   const owners = await db.select({ id: users.id, email: users.email }).from(users)
     .where(eq(users.businessId, businessId));

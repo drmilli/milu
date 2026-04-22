@@ -207,6 +207,36 @@ export async function sendSubscriptionCancelledEmail(to: string, businessName: s
   `, 'Your Milu subscription has been cancelled'));
 }
 
+export async function sendPhoneNumberAssignedEmail(to: string, businessName: string, miluNumber: string) {
+  const instructions = `
+    <p style="font-size:13px; font-weight:600; color:#3B2314; margin-bottom:10px;">Call forwarding instructions</p>
+    <p style="font-size:13px; color:#5C3D2E; margin:0 0 12px;">
+      Forward your existing business line to <strong>${miluNumber}</strong> so Milu can answer calls for you.
+    </p>
+    <table cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;">
+      <tr><td style="font-size:13px; color:#7A5230; padding:5px 0; width:140px;">General</td><td style="font-size:13px; color:#3B2314; font-weight:600; font-family:monospace; padding:5px 0;">**21*${miluNumber}#</td></tr>
+      <tr><td style="font-size:13px; color:#7A5230; padding:5px 0;">MTN</td><td style="font-size:13px; color:#3B2314; font-weight:600; font-family:monospace; padding:5px 0;">**21*${miluNumber}#</td></tr>
+      <tr><td style="font-size:13px; color:#7A5230; padding:5px 0;">Airtel</td><td style="font-size:13px; color:#3B2314; font-weight:600; font-family:monospace; padding:5px 0;">**21*${miluNumber}#</td></tr>
+      <tr><td style="font-size:13px; color:#7A5230; padding:5px 0;">Glo</td><td style="font-size:13px; color:#3B2314; font-weight:600; font-family:monospace; padding:5px 0;">**21*${miluNumber}#</td></tr>
+      <tr><td style="font-size:13px; color:#7A5230; padding:5px 0;">9mobile</td><td style="font-size:13px; color:#3B2314; font-weight:600; font-family:monospace; padding:5px 0;">**21*${miluNumber}#</td></tr>
+    </table>
+    <p style="font-size:12px; color:#7A5230; margin:12px 0 0;">If the code doesn't work on your network, contact your carrier support and ask for "call forwarding (unconditional)".</p>
+  `;
+
+  await send(to, `Your Milu number for ${businessName} is ready`, layout(`
+    ${successBadge('Number assigned')}
+    ${heading('Your Milu number is ready')}
+    ${para(`A Milu phone number has been assigned to <strong>${businessName}</strong>.`)}
+    ${infoBox(`
+      <p style="font-size:13px; color:#7A5230; margin:0;">Milu number</p>
+      <p style="font-size:18px; color:#3B2314; font-weight:700; margin:6px 0 0;">${miluNumber}</p>
+    `)}
+    ${divider()}
+    ${infoBox(instructions)}
+    ${ctaButton(`${env.APP_URL}/dashboard/settings`, 'Open settings')}
+  `, `Milu number assigned: ${miluNumber}`));
+}
+
 // ─── Test email ───────────────────────────────────────────────────────────────
 
 export async function sendTestEmail(to: string) {

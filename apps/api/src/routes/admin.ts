@@ -2,13 +2,19 @@ import { Router, type Request, type Response, type NextFunction } from 'express'
 import { z } from 'zod';
 import { eq, desc, ilike, and, sql, gte } from 'drizzle-orm';
 import bcrypt from 'bcryptjs';
+import twilio from 'twilio';
 import { db, businesses, users, calls, escalations, phoneNumbers, agentConfigs } from '../db';
 import { adminGuard } from '../middleware/admin-guard';
 import { signAdminToken, verifyAdminToken } from '../utils/jwt';
 import { authLimiter } from '../middleware/rate-limit';
 import { env } from '../config/env';
-import { sendTestEmail, sendVerificationEmail, sendPasswordResetEmail, sendTeamInviteEmail, sendSubscriptionConfirmEmail, sendSubscriptionCancelledEmail } from '../utils/email';
+import { sendTestEmail, sendVerificationEmail, sendPasswordResetEmail, sendTeamInviteEmail, sendSubscriptionConfirmEmail, sendSubscriptionCancelledEmail, sendPhoneNumberAssignedEmail } from '../utils/email';
 import { sendEscalationAlert, sendOrderConfirmation, sendAppointmentReminder, sendCallbackRequest, sendMissedCallAlert, sendWeeklySummary } from '../services/whatsapp';
+
+function getTwilioClient() {
+  if (!env.TWILIO_ACCOUNT_SID || !env.TWILIO_AUTH_TOKEN) return null;
+  return twilio(env.TWILIO_ACCOUNT_SID, env.TWILIO_AUTH_TOKEN);
+}
 
 // ─── Admin JWT middleware (uses ADMIN_JWT_SECRET) ─────────────────────────────
 function adminAuthMiddleware(req: Request, res: Response, next: NextFunction) {
@@ -699,6 +705,109 @@ adminRouter.patch('/settings', (_req, res) => {
 
 // ─── Phone number management ─────────────────────────────────────────────────
 
+adminRouter.get('/twilio/available-numbers', async (req, res, next) => {
+  try {
+    const client = getTwilioClient();
+    if (!client) return res.status(400).json({ error: 'Twilio is not configured' });
+
+    const { countryCode, type, areaCode, limit } = z.object({
+      countryCode: z.string().length(2).default('NG'),
+      type: z.enum(['local', 'tollFree', 'mobile', 'national']).default('local'),
+      areaCode: z.string().optional(),
+      limit: z.coerce.number().min(1).max(50).default(10),
+    }).parse(req.query);
+
+    const baseOpts: Record<string, unknown> = { limit, voiceEnabled: true };
+    if (areaCode) baseOpts.areaCode = areaCode;
+
+    const list = await (type === 'tollFree'
+      ? client.availablePhoneNumbers(countryCode).tollFree.list(baseOpts as any)
+      : type === 'mobile'
+        ? client.availablePhoneNumbers(countryCode).mobile.list(baseOpts as any)
+        : type === 'national'
+          ? client.availablePhoneNumbers(countryCode).national.list(baseOpts as any)
+          : client.availablePhoneNumbers(countryCode).local.list(baseOpts as any)
+    );
+
+    return res.json(list.map((n: any) => ({
+      phoneNumber: n.phoneNumber,
+      friendlyName: n.friendlyName,
+      locality: n.locality,
+      region: n.region,
+      isoCountry: n.isoCountry,
+      capabilities: n.capabilities,
+    })));
+  } catch (err) { next(err); }
+});
+
+adminRouter.post('/businesses/:id/phone-numbers/twilio/buy', async (req, res, next) => {
+  try {
+    const client = getTwilioClient();
+    if (!client) return res.status(400).json({ error: 'Twilio is not configured' });
+
+    const { phoneNumber, label } = z.object({
+      phoneNumber: z.string().min(7),
+      label: z.string().optional(),
+    }).parse(req.body);
+
+    const apiUrl = env.API_URL.replace(/\/$/, '');
+    const incoming = await client.incomingPhoneNumbers.create({
+      phoneNumber,
+      friendlyName: label ?? 'Milu Number',
+      voiceUrl: `${apiUrl}/webhooks/twilio/voice`,
+      voiceMethod: 'POST',
+    });
+
+    const [row] = await db.insert(phoneNumbers).values({
+      number: incoming.phoneNumber,
+      businessId: req.params.id,
+      verified: true,
+      label: label ?? 'Milu Number',
+      isVirtual: true,
+      provider: 'twilio',
+      providerNumberId: incoming.sid,
+    }).returning();
+
+    const [biz] = await db.select({ name: businesses.name }).from(businesses).where(eq(businesses.id, req.params.id)).limit(1);
+    const owners = await db.select({ email: users.email }).from(users)
+      .where(and(eq(users.businessId, req.params.id), eq(users.role, 'OWNER')));
+    await Promise.all(owners.filter(o => !!o.email).map(o => sendPhoneNumberAssignedEmail(o.email!, biz?.name ?? 'your business', row.number)));
+
+    return res.status(201).json({ ...row, twilioSid: incoming.sid });
+  } catch (err) { next(err); }
+});
+
+adminRouter.post('/businesses/:id/phone-numbers/twilio/assign', async (req, res, next) => {
+  try {
+    const client = getTwilioClient();
+    if (!client) return res.status(400).json({ error: 'Twilio is not configured' });
+
+    const { phoneNumberSid, label } = z.object({
+      phoneNumberSid: z.string().min(5),
+      label: z.string().optional(),
+    }).parse(req.body);
+
+    const incoming = await client.incomingPhoneNumbers(phoneNumberSid).fetch();
+
+    const [row] = await db.insert(phoneNumbers).values({
+      number: incoming.phoneNumber,
+      businessId: req.params.id,
+      verified: true,
+      label: label ?? incoming.friendlyName ?? 'Milu Number',
+      isVirtual: true,
+      provider: 'twilio',
+      providerNumberId: incoming.sid,
+    }).returning();
+
+    const [biz] = await db.select({ name: businesses.name }).from(businesses).where(eq(businesses.id, req.params.id)).limit(1);
+    const owners = await db.select({ email: users.email }).from(users)
+      .where(and(eq(users.businessId, req.params.id), eq(users.role, 'OWNER')));
+    await Promise.all(owners.filter(o => !!o.email).map(o => sendPhoneNumberAssignedEmail(o.email!, biz?.name ?? 'your business', row.number)));
+
+    return res.status(201).json({ ...row, twilioSid: incoming.sid });
+  } catch (err) { next(err); }
+});
+
 adminRouter.get('/businesses/:id/phone-numbers', async (req, res, next) => {
   try {
     const rows = await db.select().from(phoneNumbers)
@@ -713,7 +822,7 @@ adminRouter.post('/businesses/:id/phone-numbers', async (req, res, next) => {
     const body = z.object({
       number: z.string().min(7),
       label: z.string().optional(),
-      provider: z.enum(['infobip', 'twilio', 'at']).default('infobip'),
+      provider: z.enum(['twilio']).default('twilio'),
       providerNumberId: z.string().optional(),
       isVirtual: z.boolean().default(true),
     }).parse(req.body);
@@ -723,6 +832,12 @@ adminRouter.post('/businesses/:id/phone-numbers', async (req, res, next) => {
       businessId: req.params.id,
       verified: true,
     }).returning();
+
+    const [biz] = await db.select({ name: businesses.name }).from(businesses).where(eq(businesses.id, req.params.id)).limit(1);
+    const owners = await db.select({ email: users.email }).from(users)
+      .where(and(eq(users.businessId, req.params.id), eq(users.role, 'OWNER')));
+    await Promise.all(owners.filter(o => !!o.email).map(o => sendPhoneNumberAssignedEmail(o.email!, biz?.name ?? 'your business', row.number)));
+
     return res.status(201).json(row);
   } catch (err) { next(err); }
 });

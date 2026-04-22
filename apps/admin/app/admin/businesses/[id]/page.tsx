@@ -92,7 +92,6 @@ export default function BusinessDetailPage() {
   const [phoneLoading, setPhoneLoading] = useState(false);
   const [newNumber, setNewNumber] = useState('');
   const [newLabel, setNewLabel] = useState('');
-  const [newProvider, setNewProvider] = useState<'infobip' | 'twilio' | 'at'>('twilio');
   const [addingPhone, setAddingPhone] = useState(false);
 
   const load = useCallback(() => {
@@ -123,7 +122,6 @@ export default function BusinessDetailPage() {
       await adminPost(`/admin/businesses/${id}/phone-numbers`, {
         number: newNumber.trim(),
         label: newLabel.trim() || undefined,
-        provider: newProvider,
         isVirtual: true,
       }, token);
       setNewNumber('');
@@ -382,25 +380,17 @@ export default function BusinessDetailPage() {
                 className="text-sm border border-cream-dark rounded-lg px-3 py-2 bg-cream-light text-primary-dark placeholder:text-primary-warm/50 focus:outline-none focus:border-primary/50"
               />
               <div className="flex gap-2">
-                <select
-                  value={newProvider}
-                  onChange={e => setNewProvider(e.target.value as 'infobip' | 'twilio' | 'at')}
-                  className="flex-1 text-sm border border-cream-dark rounded-lg px-3 py-2 bg-cream-light text-primary-dark focus:outline-none focus:border-primary/50"
-                >
-                  <option value="twilio">Twilio</option>
-                  <option value="at">Africa&apos;s Talking</option>
-                </select>
                 <button
                   onClick={handleAddPhone}
                   disabled={addingPhone || !newNumber.trim()}
-                  className="px-4 py-2 bg-primary text-cream-light text-sm rounded-lg hover:bg-primary-dark transition-colors disabled:opacity-50 whitespace-nowrap"
+                  className="px-4 py-2 bg-primary text-cream-light text-sm rounded-lg hover:bg-primary-dark transition-colors disabled:opacity-50 whitespace-nowrap w-full"
                 >
                   {addingPhone ? 'Adding…' : 'Assign'}
                 </button>
               </div>
             </div>
             <p className="text-xs text-primary-warm">
-              Enter a number you have already purchased/rented from the provider. It will immediately appear in the business&apos;s AI Call Line tab.
+              Enter a Twilio number to assign to this business. It will immediately appear in the business&apos;s AI Call Line tab.
             </p>
           </div>
 
@@ -430,7 +420,7 @@ export default function BusinessDetailPage() {
                       <div>
                         <p className="text-sm font-semibold text-primary-dark font-mono">{p.number}</p>
                         <p className="text-xs text-primary-warm capitalize">
-                          {p.label ? `${p.label} · ` : ''}{p.provider ?? 'infobip'} · Virtual
+                          {p.label ? `${p.label} · ` : ''}{p.provider ?? 'twilio'} · Virtual
                         </p>
                       </div>
                     </div>

@@ -16,7 +16,6 @@ import { analyticsRouter } from './routes/analytics';
 import { adminRouter, adminAuthRouter } from './routes/admin';
 import { usersRouter } from './routes/users';
 import { billingRouter, handleWhopWebhook } from './routes/billing';
-import { handleAtVoiceWebhook, handleAtRecordingWebhook } from './webhooks/at-voice';
 import { handleTwilioVoiceWebhook, handleTwilioVoiceEnd, handleTwilioMessageStatus, handleTwilioIncomingMessage, handleTwilioIncomingMessageFallback } from './webhooks/twilio-voice';
 // Infobip voice removed — using Twilio only for calls
 import { verifyWhatsAppWebhook, handleWhatsAppWebhook } from './webhooks/whatsapp';
@@ -70,8 +69,6 @@ app.get('/docs.json', (_req, res) => res.json(swaggerSpec));
 app.get('/health', (_req, res) => res.json({ status: 'ok', env: env.NODE_ENV }));
 
 // Webhooks (no auth, before rate limiting)
-app.post('/webhooks/at/voice', handleAtVoiceWebhook);
-app.post('/webhooks/at/voice/record', handleAtRecordingWebhook);
 app.post('/webhooks/twilio/voice', handleTwilioVoiceWebhook);
 app.post('/webhooks/twilio/voice/end', handleTwilioVoiceEnd);
 app.post('/webhooks/twilio/message-status', handleTwilioMessageStatus);
