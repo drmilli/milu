@@ -1,13 +1,8 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "baseUrl": "../..",
-    "paths": {
-      "@milu/agent-core": ["packages/agent-core/src/index.ts"],
-      "@milu/db": ["packages/db/src/client.ts"]
-    },
     "outDir": "dist",
     "types": ["node"]
   },
-  "include": ["src", "../../packages/agent-core/src", "../../packages/db/src", "../../node_modules"]
+  "include": ["src"]
 }

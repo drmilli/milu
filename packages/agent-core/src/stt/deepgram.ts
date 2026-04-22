@@ -43,7 +43,13 @@ export class DeepgramSTT extends EventEmitter<DeepgramSTTEvents> {
   }
 
   send(audio: Buffer) {
-    this.connection?.send(audio);
+    const bufferLike = audio.buffer;
+    if (bufferLike instanceof ArrayBuffer) {
+      this.connection?.send(bufferLike.slice(audio.byteOffset, audio.byteOffset + audio.byteLength));
+      return;
+    }
+    const copy = Uint8Array.from(audio);
+    this.connection?.send(copy.buffer);
   }
 
   close() {

@@ -146,7 +146,8 @@ agentRouter.post('/:businessId/voice-clone', upload.array('files', 5), async (re
     form.append('name', name);
     form.append('description', `Voice clone for business ${req.params.businessId}`);
     for (const file of files) {
-      form.append('files', new Blob([file.buffer], { type: file.mimetype }), file.originalname);
+      const bytes = new Uint8Array(file.buffer);
+      form.append('files', new Blob([bytes], { type: file.mimetype }), file.originalname);
     }
 
     const elRes = await fetch('https://api.elevenlabs.io/v1/voices/add', {
