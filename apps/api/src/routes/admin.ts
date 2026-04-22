@@ -860,11 +860,15 @@ adminRouter.post('/whatsapp/send', async (req, res, next) => {
 
     try {
       const msg = await sendWhatsAppText(recipient, message);
-      const meta = msg?.sid ? { twilioSid: msg.sid, to: msg.to, from: msg.from, status: msg.status } : {};
+      const meta = msg?.sid ? { twilioSid: msg.sid, to: msg.to, from: msg.from, twilioStatus: msg.status } : {};
       const nextData = Object.keys(meta).length ? sql`${notifications.data} || ${JSON.stringify(meta)}::jsonb` : notifications.data;
+      const normalized = (msg?.status ?? '').toLowerCase();
+      const nextStatus = (normalized === 'delivered' || normalized === 'sent' || normalized === 'read')
+        ? 'SENT'
+        : 'PENDING';
 
       const [updated] = await db.update(notifications)
-        .set({ status: 'SENT', data: nextData as any })
+        .set({ status: nextStatus as any, data: nextData as any })
         .where(eq(notifications.id, notif.id))
         .returning();
 

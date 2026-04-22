@@ -162,14 +162,22 @@ export async function handleTwilioMessageStatus(req: Request, res: Response) {
       ? 'FAILED'
       : null;
 
-  if (status) {
-    try {
-      await db.update(notifications)
-        .set({ status })
-        .where(sql`${notifications.data}->>'twilioSid' = ${messageSid}`);
-    } catch (err) {
-      logger.error({ err, messageSid, status }, 'Failed to update WhatsApp notification status');
-    }
+  try {
+    const meta = {
+      twilioStatus: messageStatus,
+      errorCode: errorCode ?? null,
+      errorMessage: errorMessage ?? null,
+      to,
+      from,
+    };
+    await db.update(notifications)
+      .set({
+        ...(status ? { status } : {}),
+        data: sql`${notifications.data} || ${JSON.stringify(meta)}::jsonb`,
+      } as any)
+      .where(sql`${notifications.data}->>'twilioSid' = ${messageSid}`);
+  } catch (err) {
+    logger.error({ err, messageSid, status }, 'Failed to update WhatsApp notification status');
   }
 }
 

@@ -76,6 +76,9 @@ export default function SettingsPage() {
     const v = data?.[key];
     return typeof v === 'string' ? v : '';
   }
+  function dataAny(data: Record<string, unknown> | null | undefined, key: string) {
+    return data?.[key];
+  }
 
   const load = useCallback(() => {
     if (!token) return;
@@ -305,6 +308,9 @@ export default function SettingsPage() {
                 const from = dataStr(m.data, 'from');
                 const to = dataStr(m.data, 'to');
                 const otherParty = m.recipient ?? (direction === 'inbound' ? from : to) ?? '';
+                const errorCode = dataAny(m.data, 'errorCode');
+                const errorMessage = dataStr(m.data, 'errorMessage');
+                const twilioStatus = dataStr(m.data, 'twilioStatus');
                 const ts = new Date(m.createdAt).toLocaleString();
                 const label = direction === 'inbound' ? `From ${otherParty}` : `To ${otherParty}`;
                 return (
@@ -318,10 +324,15 @@ export default function SettingsPage() {
                       <div className="min-w-0">
                         <p className="text-xs font-semibold text-primary-dark truncate">{label}</p>
                         <p className="text-xs text-primary-warm truncate mt-0.5">{m.body}</p>
+                        {(errorCode || errorMessage) && (
+                          <p className="text-[11px] text-danger truncate mt-1">
+                            Error {String(errorCode ?? '')}{errorMessage ? ` — ${errorMessage}` : ''}
+                          </p>
+                        )}
                       </div>
                       <div className="text-right flex-shrink-0">
                         <p className="text-[11px] text-primary-warm">{ts}</p>
-                        <p className="text-[11px] text-primary-warm mt-0.5">{m.status}</p>
+                        <p className="text-[11px] text-primary-warm mt-0.5">{twilioStatus ? `${m.status} (${twilioStatus})` : m.status}</p>
                       </div>
                     </div>
                   </button>
