@@ -11,6 +11,13 @@ import { env } from '../config/env';
 export const settingsRouter: Router = Router();
 settingsRouter.use(authMiddleware);
 
+function maskPhone(value: string) {
+  const last4 = value.slice(-4);
+  const prefix = value.slice(0, Math.max(0, value.length - 4));
+  const maskedPrefix = prefix.replace(/\d/g, '*');
+  return `${maskedPrefix}${last4}`;
+}
+
 /**
  * @openapi
  * tags:
@@ -154,6 +161,8 @@ settingsRouter.post('/:businessId/whatsapp/send-otp', async (req, res, next) => 
   try {
     const { phone } = z.object({ phone: z.string().min(7) }).parse(req.body);
 
+    logger.info({ businessId: req.params.businessId, phone: maskPhone(phone) }, 'WhatsApp OTP requested');
+
     await db.delete(phoneVerifications).where(and(
       eq(phoneVerifications.businessId, req.params.businessId),
       eq(phoneVerifications.phone, phone),
@@ -170,6 +179,9 @@ settingsRouter.post('/:businessId/whatsapp/send-otp', async (req, res, next) => 
     } catch (waErr) {
       sent = false;
       logger.error({ err: waErr, phone }, 'Failed to send WhatsApp OTP');
+    }
+    if (sent) {
+      logger.info({ businessId: req.params.businessId, phone: maskPhone(phone) }, 'WhatsApp OTP sent');
     }
     if (!sent && env.NODE_ENV === 'production') {
       return res.status(503).json({ error: 'Could not send WhatsApp message.' });

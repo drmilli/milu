@@ -4,6 +4,14 @@ import twilio from 'twilio';
 
 const API_URL = 'https://graph.facebook.com/v21.0';
 
+function maskPhone(value: string) {
+  const cleaned = value.replace(/^whatsapp:/, '');
+  const last4 = cleaned.slice(-4);
+  const prefix = cleaned.slice(0, Math.max(0, cleaned.length - 4));
+  const maskedPrefix = prefix.replace(/\d/g, '*');
+  return `${maskedPrefix}${last4}`;
+}
+
 function getTwilioClient() {
   if (!env.TWILIO_ACCOUNT_SID || !env.TWILIO_AUTH_TOKEN) return null;
   return twilio(env.TWILIO_ACCOUNT_SID, env.TWILIO_AUTH_TOKEN);
@@ -15,6 +23,12 @@ async function sendViaTwilioWhatsApp(to: string, message: string) {
 
   if (!client || !fromRaw) {
     if (env.NODE_ENV === 'production') {
+      logger.error({
+        twilioAccountSid: !!env.TWILIO_ACCOUNT_SID,
+        twilioAuthToken: !!env.TWILIO_AUTH_TOKEN,
+        twilioWhatsAppFrom: !!env.TWILIO_WHATSAPP_FROM,
+        twilioPhoneNumber: !!env.TWILIO_PHONE_NUMBER,
+      }, 'Twilio WhatsApp is not configured');
       throw new Error('Twilio WhatsApp is not configured');
     }
     logger.info({ to, message }, '[DEV] WhatsApp (Twilio not configured)');
@@ -22,13 +36,43 @@ async function sendViaTwilioWhatsApp(to: string, message: string) {
   }
 
   const normalize = (v: string) => (v.startsWith('whatsapp:') ? v : `whatsapp:${v}`);
-  const msg = await client.messages.create({
-    body: message,
-    from: normalize(fromRaw),
-    to: normalize(to),
-  });
+  const toNormalized = normalize(to);
+  const fromNormalized = normalize(fromRaw);
 
-  logger.info({ to, sid: msg.sid, status: msg.status }, 'WhatsApp message sent via Twilio');
+  logger.info({
+    to: maskPhone(toNormalized),
+    from: maskPhone(fromNormalized),
+    messageChars: message.length,
+  }, 'WhatsApp send attempt (Twilio)');
+
+  try {
+    const msg = await client.messages.create({
+      body: message,
+      from: fromNormalized,
+      to: toNormalized,
+    });
+    logger.info({
+      to: maskPhone(toNormalized),
+      sid: msg.sid,
+      status: msg.status,
+      errorCode: (msg as any).errorCode,
+      errorMessage: (msg as any).errorMessage,
+    }, 'WhatsApp sent (Twilio)');
+  } catch (err) {
+    const e = err as any;
+    logger.error({
+      err: e,
+      to: maskPhone(toNormalized),
+      from: maskPhone(fromNormalized),
+      twilio: {
+        code: e?.code,
+        status: e?.status,
+        moreInfo: e?.moreInfo,
+        details: e?.details,
+      },
+    }, 'WhatsApp send failed (Twilio)');
+    throw err;
+  }
 }
 
 async function sendViaMeta(to: string, body: Record<string, unknown>) {
