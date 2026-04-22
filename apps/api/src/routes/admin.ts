@@ -1,15 +1,15 @@
 import { Router, type Request, type Response, type NextFunction } from 'express';
 import { z } from 'zod';
-import { eq, desc, ilike, and, or, sql, gte, inArray } from 'drizzle-orm';
+import { eq, desc, ilike, and, or, sql, gte, inArray, lt } from 'drizzle-orm';
 import bcrypt from 'bcryptjs';
 import twilio from 'twilio';
-import { db, businesses, users, calls, escalations, phoneNumbers, agentConfigs } from '../db';
+import { db, businesses, users, calls, escalations, phoneNumbers, agentConfigs, notifications } from '../db';
 import { adminGuard } from '../middleware/admin-guard';
 import { signAdminToken, verifyAdminToken } from '../utils/jwt';
 import { authLimiter } from '../middleware/rate-limit';
 import { env } from '../config/env';
 import { sendTestEmail, sendVerificationEmail, sendPasswordResetEmail, sendTeamInviteEmail, sendSubscriptionConfirmEmail, sendSubscriptionCancelledEmail, sendPhoneNumberAssignedEmail } from '../utils/email';
-import { sendEscalationAlert, sendOrderConfirmation, sendAppointmentReminder, sendCallbackRequest, sendMissedCallAlert, sendWeeklySummary } from '../services/whatsapp';
+import { sendEscalationAlert, sendOrderConfirmation, sendAppointmentReminder, sendCallbackRequest, sendMissedCallAlert, sendWeeklySummary, sendWhatsAppText } from '../services/whatsapp';
 
 function getTwilioClient() {
   if (!env.TWILIO_ACCOUNT_SID || !env.TWILIO_AUTH_TOKEN) return null;
@@ -791,6 +791,72 @@ adminRouter.get('/twilio/incoming-numbers', async (req, res, next) => {
         assignedBusinessName: assigned?.businessName ?? null,
       };
     }));
+  } catch (err) { next(err); }
+});
+
+adminRouter.get('/whatsapp/messages', async (req, res, next) => {
+  try {
+    const { limit, before, search } = z.object({
+      limit: z.coerce.number().min(1).max(200).default(50),
+      before: z.string().optional(),
+      search: z.string().optional(),
+    }).parse(req.query);
+
+    const conditions = [eq(notifications.channel, 'WHATSAPP')];
+    if (before) conditions.push(lt(notifications.createdAt, new Date(before)));
+    if (search?.trim()) conditions.push(ilike(notifications.recipient, `%${search.trim()}%`));
+
+    const rows = await db.select({
+      id: notifications.id,
+      title: notifications.title,
+      body: notifications.body,
+      status: notifications.status,
+      recipient: notifications.recipient,
+      data: notifications.data,
+      createdAt: notifications.createdAt,
+    }).from(notifications)
+      .where(and(...conditions))
+      .orderBy(desc(notifications.createdAt))
+      .limit(limit);
+
+    return res.json(rows);
+  } catch (err) { next(err); }
+});
+
+adminRouter.post('/whatsapp/send', async (req, res, next) => {
+  try {
+    const { to, message } = z.object({
+      to: z.string().min(7),
+      message: z.string().min(1),
+    }).parse(req.body);
+
+    const normalize = (v: string) => (v.startsWith('whatsapp:') ? v : `whatsapp:${v}`);
+    const recipient = normalize(to.trim());
+
+    const [notif] = await db.insert(notifications).values({
+      channel: 'WHATSAPP',
+      status: 'PENDING',
+      title: 'Outgoing WhatsApp',
+      body: message,
+      recipient,
+      data: { direction: 'outbound', to: recipient },
+    }).returning();
+
+    try {
+      const msg = await sendWhatsAppText(recipient, message);
+      const meta = msg?.sid ? { twilioSid: msg.sid, to: msg.to, from: msg.from, status: msg.status } : {};
+      const nextData = Object.keys(meta).length ? sql`${notifications.data} || ${JSON.stringify(meta)}::jsonb` : notifications.data;
+
+      const [updated] = await db.update(notifications)
+        .set({ status: 'SENT', data: nextData as any })
+        .where(eq(notifications.id, notif.id))
+        .returning();
+
+      return res.json(updated ?? notif);
+    } catch (err) {
+      await db.update(notifications).set({ status: 'FAILED' }).where(eq(notifications.id, notif.id));
+      throw err;
+    }
   } catch (err) { next(err); }
 });
 

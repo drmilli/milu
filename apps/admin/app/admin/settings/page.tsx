@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { useAdminAuth } from '../../../hooks/useAdminAuth';
-import { adminGet, adminPatch } from '../../../lib/api';
+import { adminGet, adminPatch, adminPost } from '../../../lib/api';
 
 const inputCls = 'w-full px-4 py-2.5 rounded-xl border border-cream-dark bg-cream-light text-sm text-primary-dark placeholder:text-cream-dark focus:outline-none focus:border-primary/50 focus:ring-2 focus:ring-primary/10 transition-all';
 
@@ -17,6 +17,16 @@ interface SystemConfig {
   atApiKey: string;
   atUsername: string;
 }
+
+type WhatsAppLog = {
+  id: string;
+  title: string;
+  body: string;
+  status: string;
+  recipient: string | null;
+  data: Record<string, unknown> | null;
+  createdAt: string;
+};
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -55,6 +65,18 @@ export default function SettingsPage() {
   const [profileSaving, setProfileSaving] = useState(false);
   const [profileSaved, setProfileSaved] = useState(false);
 
+  const [waLogs, setWaLogs] = useState<WhatsAppLog[]>([]);
+  const [waLoading, setWaLoading] = useState(false);
+  const [waSearch, setWaSearch] = useState('');
+  const [waTo, setWaTo] = useState('');
+  const [waBody, setWaBody] = useState('');
+  const [waSending, setWaSending] = useState(false);
+  const [waError, setWaError] = useState('');
+  function dataStr(data: Record<string, unknown> | null | undefined, key: string) {
+    const v = data?.[key];
+    return typeof v === 'string' ? v : '';
+  }
+
   const load = useCallback(() => {
     if (!token) return;
     adminGet<SystemConfig>('/admin/settings', token)
@@ -66,6 +88,21 @@ export default function SettingsPage() {
   useEffect(() => {
     if (ready) load();
   }, [ready, load]);
+
+  const loadWhatsAppLogs = useCallback(() => {
+    if (!token) return;
+    setWaLoading(true);
+    const q = waSearch.trim();
+    const searchQuery = q ? `&search=${encodeURIComponent(q)}` : '';
+    adminGet<WhatsAppLog[]>(`/admin/whatsapp/messages?limit=50${searchQuery}`, token)
+      .then(setWaLogs)
+      .catch(() => null)
+      .finally(() => setWaLoading(false));
+  }, [token, waSearch]);
+
+  useEffect(() => {
+    if (ready) loadWhatsAppLogs();
+  }, [ready, loadWhatsAppLogs]);
 
   useEffect(() => {
     if (user) {
@@ -108,6 +145,22 @@ export default function SettingsPage() {
       // silently ignore profile save errors
     } finally {
       setProfileSaving(false);
+    }
+  }
+
+  async function sendWhatsApp() {
+    if (!token) return;
+    if (!waTo.trim() || !waBody.trim()) return;
+    setWaError('');
+    setWaSending(true);
+    try {
+      await adminPost('/admin/whatsapp/send', { to: waTo.trim(), message: waBody.trim() }, token);
+      setWaBody('');
+      loadWhatsAppLogs();
+    } catch (err: unknown) {
+      setWaError(err instanceof Error ? err.message : 'Failed to send WhatsApp message');
+    } finally {
+      setWaSending(false);
     }
   }
 
@@ -214,6 +267,97 @@ export default function SettingsPage() {
           Could not load settings.
         </div>
       )}
+
+      <Section title="WhatsApp inbox">
+        <div className="flex gap-2">
+          <input
+            className={inputCls}
+            value={waSearch}
+            onChange={e => setWaSearch(e.target.value)}
+            placeholder="Search by customer number (e.g. +234...)"
+          />
+          <button
+            onClick={loadWhatsAppLogs}
+            disabled={waLoading}
+            className="px-4 py-2.5 rounded-xl border border-cream-dark text-sm text-primary-warm hover:text-primary hover:border-primary/30 transition-colors disabled:opacity-50 whitespace-nowrap"
+          >
+            {waLoading ? 'Loading…' : 'Refresh'}
+          </button>
+        </div>
+
+        <div className="border border-cream-dark rounded-2xl overflow-hidden">
+          <div className="bg-cream-light/60 px-4 py-2.5 border-b border-cream-dark flex items-center justify-between">
+            <span className="text-xs font-semibold text-primary-warm uppercase tracking-wider">Recent messages</span>
+            <span className="text-xs text-primary-warm">{waLogs.length} message{waLogs.length !== 1 ? 's' : ''}</span>
+          </div>
+          {waLoading ? (
+            <div className="py-10 text-center text-primary-warm text-sm animate-pulse">Loading…</div>
+          ) : waLogs.length === 0 ? (
+            <div className="py-12 text-center space-y-1">
+              <p className="text-sm font-medium text-primary-dark">No messages yet</p>
+              <p className="text-xs text-primary-warm">Make sure Twilio WhatsApp webhooks are pointing to the API.</p>
+            </div>
+          ) : (
+            <div className="divide-y divide-cream-dark">
+              {waLogs.map(m => {
+                const direction = dataStr(m.data, 'direction') === 'inbound' ? 'inbound' : 'outbound';
+                const from = dataStr(m.data, 'from');
+                const to = dataStr(m.data, 'to');
+                const otherParty = m.recipient ?? (direction === 'inbound' ? from : to) ?? '';
+                const ts = new Date(m.createdAt).toLocaleString();
+                const label = direction === 'inbound' ? `From ${otherParty}` : `To ${otherParty}`;
+                return (
+                  <button
+                    key={m.id}
+                    type="button"
+                    onClick={() => setWaTo(String(otherParty).replace(/^whatsapp:/, ''))}
+                    className="w-full text-left px-4 py-3 hover:bg-cream-light/50 transition-colors"
+                  >
+                    <div className="flex items-center justify-between gap-4">
+                      <div className="min-w-0">
+                        <p className="text-xs font-semibold text-primary-dark truncate">{label}</p>
+                        <p className="text-xs text-primary-warm truncate mt-0.5">{m.body}</p>
+                      </div>
+                      <div className="text-right flex-shrink-0">
+                        <p className="text-[11px] text-primary-warm">{ts}</p>
+                        <p className="text-[11px] text-primary-warm mt-0.5">{m.status}</p>
+                      </div>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        <div className="space-y-3">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <input
+              className="col-span-1 text-sm border border-cream-dark rounded-lg px-3 py-2 bg-cream-light text-primary-dark placeholder:text-primary-warm/50 focus:outline-none focus:border-primary/50"
+              placeholder="To (e.g. +234...)"
+              value={waTo}
+              onChange={e => setWaTo(e.target.value)}
+            />
+            <div className="sm:col-span-2 flex gap-2">
+              <input
+                className="flex-1 text-sm border border-cream-dark rounded-lg px-3 py-2 bg-cream-light text-primary-dark placeholder:text-primary-warm/50 focus:outline-none focus:border-primary/50"
+                placeholder="Message"
+                value={waBody}
+                onChange={e => setWaBody(e.target.value)}
+              />
+              <button
+                onClick={sendWhatsApp}
+                disabled={waSending || !waTo.trim() || !waBody.trim()}
+                className="px-4 py-2 bg-primary text-cream-light text-sm rounded-lg hover:bg-primary-dark transition-colors disabled:opacity-50 whitespace-nowrap"
+              >
+                {waSending ? 'Sending…' : 'Send'}
+              </button>
+            </div>
+          </div>
+          {waError && <p className="text-xs text-danger">{waError}</p>}
+          <p className="text-xs text-primary-warm">Tip: click any message row to autofill the recipient for a reply.</p>
+        </div>
+      </Section>
 
       {/* Admin profile — always shown */}
       <Section title="Admin profile">

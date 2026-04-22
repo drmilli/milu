@@ -61,6 +61,7 @@ async function sendViaTwilioWhatsApp(to: string, message: string) {
       errorCode: (msg as any).errorCode,
       errorMessage: (msg as any).errorMessage,
     }, 'WhatsApp sent (Twilio)');
+    return { sid: msg.sid, status: msg.status, to: toNormalized, from: fromNormalized };
   } catch (err) {
     const e = err as any;
     logger.error({

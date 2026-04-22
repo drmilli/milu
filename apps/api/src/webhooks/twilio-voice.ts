@@ -1,6 +1,6 @@
 import type { Request, Response } from 'express';
-import { eq } from 'drizzle-orm';
-import { db, phoneNumbers, agentConfigs, businesses, calls } from '../db';
+import { eq, sql } from 'drizzle-orm';
+import { db, phoneNumbers, agentConfigs, businesses, calls, notifications } from '../db';
 import { logger } from '../config/logger';
 
 function twiml(body: string) {
@@ -153,6 +153,24 @@ export async function handleTwilioMessageStatus(req: Request, res: Response) {
     errorCode: errorCode ?? null,
     errorMessage: errorMessage ?? null,
   }, 'Twilio message status');
+
+  if (!messageSid) return;
+  const normalized = messageStatus.toLowerCase();
+  const status = (normalized === 'delivered' || normalized === 'sent' || normalized === 'read')
+    ? 'SENT'
+    : (normalized === 'failed' || normalized === 'undelivered')
+      ? 'FAILED'
+      : null;
+
+  if (status) {
+    try {
+      await db.update(notifications)
+        .set({ status })
+        .where(sql`${notifications.data}->>'twilioSid' = ${messageSid}`);
+    } catch (err) {
+      logger.error({ err, messageSid, status }, 'Failed to update WhatsApp notification status');
+    }
+  }
 }
 
 export async function handleTwilioIncomingMessage(req: Request, res: Response) {
@@ -172,6 +190,26 @@ export async function handleTwilioIncomingMessage(req: Request, res: Response) {
     textPreview: text ? `${text.slice(0, 140)}${text.length > 140 ? '…' : ''}` : '',
     numMedia: numMedia ?? null,
   }, 'Twilio incoming message');
+
+  try {
+    await db.insert(notifications).values({
+      channel: 'WHATSAPP',
+      status: 'SENT',
+      title: 'Incoming WhatsApp',
+      body: text,
+      recipient: from,
+      data: {
+        direction: 'inbound',
+        twilioSid: messageSid,
+        status: messageStatus || 'inbound',
+        from,
+        to,
+        numMedia: numMedia ?? null,
+      },
+    });
+  } catch (err) {
+    logger.error({ err, messageSid }, 'Failed to persist incoming WhatsApp message');
+  }
 
   return res.sendStatus(200);
 }
