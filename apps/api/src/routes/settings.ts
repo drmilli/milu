@@ -5,7 +5,6 @@ import { db, businessSettings, phoneVerifications } from '../db';
 import { authMiddleware } from '../middleware/auth';
 import { audit } from '../services/audit';
 import { sendWhatsAppText } from '../services/whatsapp';
-import { sendchampSendOtp, sendchampVerifyOtp } from '../services/sendchamp';
 import { logger } from '../config/logger';
 import { env } from '../config/env';
 
@@ -155,26 +154,6 @@ settingsRouter.post('/:businessId/whatsapp/send-otp', async (req, res, next) => 
   try {
     const { phone } = z.object({ phone: z.string().min(7) }).parse(req.body);
 
-    // Use Sendchamp native OTP if configured (handles generate + send + verify)
-    if (env.SENDCHAMP_API_KEY) {
-      const reference = await sendchampSendOtp(phone, 'whatsapp');
-      // Store reference so verify route can use it
-      await db.delete(phoneVerifications).where(and(
-        eq(phoneVerifications.businessId, req.params.businessId),
-        eq(phoneVerifications.phone, phone),
-        eq(phoneVerifications.used, false),
-      ));
-      await db.insert(phoneVerifications).values({
-        businessId: req.params.businessId,
-        phone,
-        code: reference, // store Sendchamp reference as code field
-        expiresAt: new Date(Date.now() + 10 * 60 * 1000),
-      });
-      logger.info({ phone }, 'OTP sent via Sendchamp');
-      return res.json({ message: 'OTP sent to WhatsApp number', phone });
-    }
-
-    // Fallback: generate code manually and send via WhatsApp
     await db.delete(phoneVerifications).where(and(
       eq(phoneVerifications.businessId, req.params.businessId),
       eq(phoneVerifications.phone, phone),
@@ -247,11 +226,7 @@ settingsRouter.post('/:businessId/whatsapp/verify', async (req, res, next) => {
     if (!record) return res.status(400).json({ error: 'Invalid code' });
     if (record.expiresAt < new Date()) return res.status(400).json({ error: 'Code expired' });
 
-    // If Sendchamp was used, the code field holds the reference — verify via API
-    if (env.SENDCHAMP_API_KEY && record.code.length > 6) {
-      const valid = await sendchampVerifyOtp(record.code, code);
-      if (!valid) return res.status(400).json({ error: 'Invalid code' });
-    } else if (record.code !== code) {
+    if (record.code !== code) {
       return res.status(400).json({ error: 'Invalid code' });
     }
 

@@ -1,9 +1,35 @@
 import { env } from '../config/env';
 import { logger } from '../config/logger';
-import { sendInfobipWhatsApp } from './infobip';
-import { sendchampWhatsApp } from './sendchamp';
+import twilio from 'twilio';
 
 const API_URL = 'https://graph.facebook.com/v21.0';
+
+function getTwilioClient() {
+  if (!env.TWILIO_ACCOUNT_SID || !env.TWILIO_AUTH_TOKEN) return null;
+  return twilio(env.TWILIO_ACCOUNT_SID, env.TWILIO_AUTH_TOKEN);
+}
+
+async function sendViaTwilioWhatsApp(to: string, message: string) {
+  const client = getTwilioClient();
+  const fromRaw = env.TWILIO_WHATSAPP_FROM ?? env.TWILIO_PHONE_NUMBER;
+
+  if (!client || !fromRaw) {
+    if (env.NODE_ENV === 'production') {
+      throw new Error('Twilio WhatsApp is not configured');
+    }
+    logger.info({ to, message }, '[DEV] WhatsApp (Twilio not configured)');
+    return;
+  }
+
+  const normalize = (v: string) => (v.startsWith('whatsapp:') ? v : `whatsapp:${v}`);
+  const msg = await client.messages.create({
+    body: message,
+    from: normalize(fromRaw),
+    to: normalize(to),
+  });
+
+  logger.info({ to, sid: msg.sid, status: msg.status }, 'WhatsApp message sent via Twilio');
+}
 
 async function sendViaMeta(to: string, body: Record<string, unknown>) {
   if (!env.WHATSAPP_TOKEN || !env.WHATSAPP_PHONE_ID) {
@@ -29,25 +55,7 @@ async function sendViaMeta(to: string, body: Record<string, unknown>) {
 }
 
 export async function sendWhatsAppText(to: string, message: string) {
-  // Priority: Sendchamp → Infobip → Meta
-  if (env.SENDCHAMP_API_KEY && env.SENDCHAMP_WHATSAPP_SENDER) {
-    try {
-      await sendchampWhatsApp(to, message);
-      return;
-    } catch (err) {
-      logger.warn({ err, to }, 'Sendchamp WhatsApp failed, trying Infobip');
-    }
-  }
-  if (env.INFOBIP_API_KEY && env.INFOBIP_WHATSAPP_SENDER) {
-    try {
-      await sendInfobipWhatsApp(to, message);
-      logger.info({ to }, 'WhatsApp message sent via Infobip');
-      return;
-    } catch (err) {
-      logger.warn({ err, to }, 'Infobip WhatsApp failed, falling back to Meta');
-    }
-  }
-  return sendViaMeta(to, { type: 'text', text: { body: message } });
+  return sendViaTwilioWhatsApp(to, message);
 }
 
 export async function sendWhatsAppTemplate(to: string, templateName: string, languageCode = 'en', components: unknown[] = []) {

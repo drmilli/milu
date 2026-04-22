@@ -8,6 +8,7 @@ const envSchema = z.object({
   TWILIO_ACCOUNT_SID: z.string().optional(),
   TWILIO_AUTH_TOKEN: z.string().optional(),
   TWILIO_PHONE_NUMBER: z.string().optional(),
+  TWILIO_WHATSAPP_FROM: z.string().optional(),
   DEEPGRAM_API_KEY: z.string().min(1).optional(),
   ANTHROPIC_API_KEY: z.string().min(1).optional(),
   OPENAI_API_KEY: z.string().min(1).optional(),
