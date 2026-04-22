@@ -3,9 +3,11 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "predev": "npm run -w @milu/agent-core build",
     "dev": "tsx watch src/index.ts",
-    "build": "tsc",
-    "prestart": "npm run -w @milu/agent-core build && npm run build",
+    "prebuild": "npm run -w @milu/agent-core build",
+    "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsc",
+    "prestart": "npm run build",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
     "db:generate": "drizzle-kit generate",
