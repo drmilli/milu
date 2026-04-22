@@ -4,6 +4,7 @@ import { eq, desc, ilike, and, or, sql, gte, inArray, lt } from 'drizzle-orm';
 import bcrypt from 'bcryptjs';
 import twilio from 'twilio';
 import { db, businesses, users, calls, escalations, phoneNumbers, agentConfigs, notifications } from '../db';
+import { logger } from '../config/logger';
 import { adminGuard } from '../middleware/admin-guard';
 import { signAdminToken, verifyAdminToken } from '../utils/jwt';
 import { authLimiter } from '../middleware/rate-limit';
@@ -14,6 +15,21 @@ import { sendEscalationAlert, sendOrderConfirmation, sendAppointmentReminder, se
 function getTwilioClient() {
   if (!env.TWILIO_ACCOUNT_SID || !env.TWILIO_AUTH_TOKEN) return null;
   return twilio(env.TWILIO_ACCOUNT_SID, env.TWILIO_AUTH_TOKEN);
+}
+
+async function notifyNumberAssigned(businessId: string, businessName: string, miluNumber: string) {
+  try {
+    const members = await db.select({ email: users.email, role: users.role }).from(users).where(eq(users.businessId, businessId));
+    const emails = Array.from(new Set(members.map(m => m.email).filter(Boolean)));
+    if (!emails.length) {
+      logger.warn({ businessId, miluNumber }, 'No business users found to email number assignment');
+      return;
+    }
+    await Promise.all(emails.map((email) => sendPhoneNumberAssignedEmail(email, businessName, miluNumber)));
+    logger.info({ businessId, miluNumber, emails: emails.length }, 'Phone number assignment email sent');
+  } catch (err) {
+    logger.error({ err, businessId, miluNumber }, 'Failed to send phone number assignment email');
+  }
 }
 
 // ─── Admin JWT middleware (uses ADMIN_JWT_SECRET) ─────────────────────────────
@@ -907,9 +923,7 @@ adminRouter.post('/businesses/:id/phone-numbers/twilio/buy', async (req, res, ne
       }).returning();
 
     const [biz] = await db.select({ name: businesses.name }).from(businesses).where(eq(businesses.id, req.params.id)).limit(1);
-    const owners = await db.select({ email: users.email }).from(users)
-      .where(and(eq(users.businessId, req.params.id), eq(users.role, 'OWNER')));
-    await Promise.all(owners.filter(o => !!o.email).map(o => sendPhoneNumberAssignedEmail(o.email!, biz?.name ?? 'your business', row.number)));
+    void notifyNumberAssigned(req.params.id, biz?.name ?? 'your business', row.number);
 
     return res.status(existing ? 200 : 201).json({ ...row, twilioSid: incoming.sid });
   } catch (err) { next(err); }
@@ -972,9 +986,7 @@ adminRouter.post('/businesses/:id/phone-numbers/twilio/assign', async (req, res,
       }).returning();
 
     const [biz] = await db.select({ name: businesses.name }).from(businesses).where(eq(businesses.id, req.params.id)).limit(1);
-    const owners = await db.select({ email: users.email }).from(users)
-      .where(and(eq(users.businessId, req.params.id), eq(users.role, 'OWNER')));
-    await Promise.all(owners.filter(o => !!o.email).map(o => sendPhoneNumberAssignedEmail(o.email!, biz?.name ?? 'your business', row.number)));
+    void notifyNumberAssigned(req.params.id, biz?.name ?? 'your business', row.number);
 
     return res.status(existing ? 200 : 201).json({ ...row, twilioSid: sid });
   } catch (err) { next(err); }
@@ -1020,9 +1032,7 @@ adminRouter.post('/businesses/:id/phone-numbers', async (req, res, next) => {
       }).returning();
 
     const [biz] = await db.select({ name: businesses.name }).from(businesses).where(eq(businesses.id, req.params.id)).limit(1);
-    const owners = await db.select({ email: users.email }).from(users)
-      .where(and(eq(users.businessId, req.params.id), eq(users.role, 'OWNER')));
-    await Promise.all(owners.filter(o => !!o.email).map(o => sendPhoneNumberAssignedEmail(o.email!, biz?.name ?? 'your business', row.number)));
+    void notifyNumberAssigned(req.params.id, biz?.name ?? 'your business', row.number);
 
     return res.status(existing ? 200 : 201).json(row);
   } catch (err) { next(err); }
