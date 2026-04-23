@@ -4,6 +4,13 @@ import { logger } from '../config/logger';
 
 // ─── Transport ────────────────────────────────────────────────────────────────
 
+function parseFrom(value: string) {
+  const trimmed = value.trim();
+  const m = trimmed.match(/^(.*?)\s*<([^>]+)>$/);
+  if (m) return { name: m[1].trim() || 'Milu', email: m[2].trim() };
+  return { name: 'Milu', email: trimmed };
+}
+
 function createTransport() {
   if (env.GMAIL_USER && env.GMAIL_APP_PASSWORD) {
     return nodemailer.createTransport({
@@ -23,6 +30,35 @@ function createTransport() {
 const transport = createTransport();
 
 async function send(to: string, subject: string, html: string) {
+  const from = parseFrom(env.EMAIL_FROM);
+
+  if (env.SENDCHAMP_API_KEY) {
+    const senderEmail = env.SENDCHAMP_SENDER_EMAIL ?? from.email;
+    const senderName = env.SENDCHAMP_SENDER_NAME ?? from.name;
+
+    const res = await fetch('https://api.bunce.so/v1/messaging/transactional/send/email', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Authorization': env.SENDCHAMP_API_KEY,
+      },
+      body: JSON.stringify({
+        sender_email: senderEmail,
+        sender_name: senderName,
+        email: to,
+        message_type: 'transactional',
+        subject,
+        html,
+      }),
+    });
+
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      throw new Error(`Sendchamp email failed (${res.status}): ${body}`);
+    }
+    return;
+  }
+
   if (!transport) {
     logger.info({ to, subject }, '[DEV] Email (no SMTP configured)');
     return;

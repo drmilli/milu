@@ -34,6 +34,8 @@ const envSchema = z.object({
   SENDCHAMP_API_KEY: z.string().optional(),
   SENDCHAMP_WHATSAPP_SENDER: z.string().optional(), // WhatsApp-enabled number e.g. 2348120678278
   SENDCHAMP_SENDER_ID: z.string().optional(),       // SMS sender ID
+  SENDCHAMP_SENDER_EMAIL: z.string().email().optional(),
+  SENDCHAMP_SENDER_NAME: z.string().optional(),
   // Auth
   JWT_SECRET: z.string().min(16),
   ADMIN_JWT_SECRET: z.string().min(16),
