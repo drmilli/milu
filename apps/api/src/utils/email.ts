@@ -7,8 +7,14 @@ import { logger } from '../config/logger';
 function createTransport() {
   if (env.GMAIL_USER && env.GMAIL_APP_PASSWORD) {
     return nodemailer.createTransport({
-      service: 'gmail',
+      host: 'smtp.gmail.com',
+      port: 587,
+      secure: false,
+      requireTLS: true,
       auth: { user: env.GMAIL_USER, pass: env.GMAIL_APP_PASSWORD },
+      connectionTimeout: 10000,
+      greetingTimeout: 10000,
+      socketTimeout: 20000,
     });
   }
   return null;
