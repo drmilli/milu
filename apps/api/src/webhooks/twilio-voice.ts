@@ -126,6 +126,26 @@ export async function handleTwilioVoiceEnd(req: Request, res: Response) {
   return res.send(twiml('<Hangup/>'));
 }
 
+export async function handleTwilioVoiceStatus(req: Request, res: Response) {
+  res.sendStatus(200);
+  const body = req.body as Record<string, unknown>;
+  const callSid = (body.CallSid as string | undefined) ?? '';
+  const callStatus = (body.CallStatus as string | undefined) ?? '';
+  const to = (body.To as string | undefined) ?? '';
+  const from = (body.From as string | undefined) ?? '';
+  const direction = (body.Direction as string | undefined) ?? '';
+  const duration = body.CallDuration as string | number | undefined;
+
+  logger.info({
+    callSid,
+    callStatus,
+    to: to ? maskPhone(to) : undefined,
+    from: from ? maskPhone(from) : undefined,
+    direction,
+    duration: duration ?? null,
+  }, 'Twilio voice status');
+}
+
 function maskPhone(value: string) {
   const cleaned = value.replace(/^whatsapp:/, '');
   const last4 = cleaned.slice(-4);

@@ -896,6 +896,8 @@ adminRouter.post('/businesses/:id/phone-numbers/twilio/buy', async (req, res, ne
       friendlyName: label ?? 'Milu Number',
       voiceUrl: `${apiUrl}/webhooks/twilio/voice`,
       voiceMethod: 'POST',
+      statusCallback: `${apiUrl}/webhooks/twilio/voice/status`,
+      statusCallbackMethod: 'POST',
     });
 
     const [existing] = await db.select({
@@ -958,6 +960,8 @@ adminRouter.post('/businesses/:id/phone-numbers/twilio/assign', async (req, res,
     void client.incomingPhoneNumbers(phoneNumberSid).update({
       voiceUrl: `${apiUrl}/webhooks/twilio/voice`,
       voiceMethod: 'POST',
+      statusCallback: `${apiUrl}/webhooks/twilio/voice/status`,
+      statusCallbackMethod: 'POST',
       friendlyName: friendlyName ?? undefined,
     });
 
