@@ -27,6 +27,9 @@ const envSchema = z.object({
   WHATSAPP_TOKEN: z.string().optional(),
   WHATSAPP_PHONE_ID: z.string().optional(),
   WHATSAPP_WEBHOOK_VERIFY_TOKEN: z.string().optional(),
+  // Africa's Talking
+  AT_API_KEY: z.string().optional(),
+  AT_USERNAME: z.string().optional(),
   // Infobip
   INFOBIP_API_KEY: z.string().optional(),
   INFOBIP_BASE_URL: z.string().optional(),

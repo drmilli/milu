@@ -1,5 +1,5 @@
 import type { Request, Response } from 'express';
-import { eq, sql } from 'drizzle-orm';
+import { and, desc, eq, sql } from 'drizzle-orm';
 import { db, phoneNumbers, agentConfigs, businesses, calls, notifications } from '../db';
 import { logger } from '../config/logger';
 
@@ -60,12 +60,11 @@ export async function handleTwilioVoiceWebhook(req: Request, res: Response) {
     const langMap: Record<string, string> = { en: 'en-US', yo: 'en-US', ig: 'en-US', ha: 'en-US', pcm: 'en-US' };
     const language = langMap[agentRow?.language ?? 'en'] ?? 'en-US';
 
-    // Log call to DB
-    await db.insert(calls).values({
+    const [callRow] = await db.insert(calls).values({
       businessId,
       callerNumber: fromNumber,
       status: 'ACTIVE',
-    });
+    }).returning({ id: calls.id });
 
     logger.info({ businessId, fromNumber, toNumber, callSid }, 'Inbound Twilio call answered');
 
@@ -77,8 +76,8 @@ export async function handleTwilioVoiceWebhook(req: Request, res: Response) {
     let xml = `<Say voice="alice" language="${language}">${greeting}</Say>`;
 
     if (enableRecording) {
-      // Record the call and transcribe it; Twilio calls /webhooks/twilio/recording when done
-      xml += `<Record maxLength="${maxDuration}" transcribe="true" transcribeCallback="/webhooks/twilio/transcription" action="/webhooks/twilio/voice/end" playBeep="false"/>`;
+      const callId = encodeURIComponent(callRow?.id ?? '');
+      xml += `<Record maxLength="${maxDuration}" transcribe="true" transcribeCallback="/webhooks/twilio/transcription?callId=${callId}" action="/webhooks/twilio/voice/end?callId=${callId}" playBeep="false"/>`;
     } else {
       xml += `<Pause length="${maxDuration}"/>`;
     }
@@ -97,6 +96,7 @@ export async function handleTwilioVoiceEnd(req: Request, res: Response) {
   const toNumber = (req.body.To as string) || '';
   const callDuration = parseInt(req.body.CallDuration ?? '0', 10);
   const recordingUrl = req.body.RecordingUrl as string | undefined;
+  const callId = typeof req.query.callId === 'string' && req.query.callId ? req.query.callId : null;
 
   try {
     const [phoneRow] = await db
@@ -106,16 +106,19 @@ export async function handleTwilioVoiceEnd(req: Request, res: Response) {
       .limit(1);
 
     if (phoneRow) {
-      await db
-        .update(calls)
-        .set({
-          status: 'COMPLETED',
-          resolution: 'AI',
-          duration: callDuration,
-          recordingUrl: recordingUrl ?? null,
-          endedAt: new Date(),
-        })
-        .where(eq(calls.callerNumber, fromNumber));
+      const idToUpdate = callId ?? await findLatestActiveCallId(phoneRow.businessId, fromNumber);
+      if (idToUpdate) {
+        await db
+          .update(calls)
+          .set({
+            status: 'COMPLETED',
+            resolution: 'AI',
+            duration: callDuration,
+            recordingUrl: recordingUrl ?? null,
+            endedAt: new Date(),
+          })
+          .where(eq(calls.id, idToUpdate));
+      }
     }
 
     logger.info({ fromNumber, toNumber, callDuration, recordingUrl }, 'Twilio call ended');
@@ -152,6 +155,18 @@ function maskPhone(value: string) {
   const prefix = cleaned.slice(0, Math.max(0, cleaned.length - 4));
   const maskedPrefix = prefix.replace(/\d/g, '*');
   return `${maskedPrefix}${last4}`;
+}
+
+async function findLatestActiveCallId(businessId: string, callerNumber: string): Promise<string | null> {
+  const [row] = await db.select({ id: calls.id }).from(calls)
+    .where(and(
+      eq(calls.businessId, businessId),
+      eq(calls.callerNumber, callerNumber),
+      eq(calls.status, 'ACTIVE'),
+    ))
+    .orderBy(desc(calls.startedAt))
+    .limit(1);
+  return row?.id ?? null;
 }
 
 export async function handleTwilioMessageStatus(req: Request, res: Response) {

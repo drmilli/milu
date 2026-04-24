@@ -1,7 +1,8 @@
 import type { Request, Response } from 'express';
-import { eq } from 'drizzle-orm';
+import { and, desc, eq } from 'drizzle-orm';
 import { db, phoneNumbers, agentConfigs, businesses, calls, knowledgeBases } from '../db';
 import { logger } from '../config/logger';
+import { env } from '../config/env';
 
 function xml(body: string) {
   return `<?xml version="1.0" encoding="UTF-8"?><Response>${body}</Response>`;
@@ -62,12 +63,11 @@ export async function handleAtVoiceWebhook(req: Request, res: Response) {
     const afterHoursMessage = agentRow?.afterHoursMessage
       ?? 'We are currently closed. Please call back during business hours. Goodbye.';
 
-    // Log call to DB
-    await db.insert(calls).values({
+    const [callRow] = await db.insert(calls).values({
       businessId,
       callerNumber: callerNumber ?? '',
       status: 'ACTIVE',
-    });
+    }).returning({ id: calls.id });
 
     logger.info({ businessId, callerNumber, destinationNumber, sessionId }, 'AT call answered');
 
@@ -100,8 +100,8 @@ export async function handleAtVoiceWebhook(req: Request, res: Response) {
       return res.send(xml(`<Say>${greeting}</Say><Hangup/>`));
     }
 
-    // Say greeting then record the call
-    const callbackUrl = `https://api.miluai.app/webhooks/at/voice/record`;
+    const apiUrl = env.API_URL.replace(/\/$/, '');
+    const callbackUrl = `${apiUrl}/webhooks/at/voice/record?callId=${encodeURIComponent(callRow?.id ?? '')}`;
     return res.send(xml(
       `<Say>${greeting}</Say>` +
       `<Record finishOnKey="#" maxLength="${maxDuration}" trimSilence="true" playBeep="false" callbackUrl="${callbackUrl}"/>`
@@ -118,17 +118,37 @@ export async function handleAtRecordingWebhook(req: Request, res: Response) {
   res.status(200).send('OK');
 
   const { sessionId, callerNumber, durationInSeconds, recordingUrl } = req.body as Record<string, string>;
+  const callId = typeof req.query.callId === 'string' && req.query.callId ? req.query.callId : null;
 
   try {
-    await db.update(calls)
-      .set({
-        status: 'COMPLETED',
-        resolution: 'AI',
-        duration: parseInt(durationInSeconds ?? '0', 10),
-        recordingUrl: recordingUrl ?? null,
-        endedAt: new Date(),
-      })
-      .where(eq(calls.callerNumber, callerNumber));
+    const duration = parseInt(durationInSeconds ?? '0', 10);
+
+    if (callId) {
+      await db.update(calls)
+        .set({
+          status: 'COMPLETED',
+          resolution: 'AI',
+          duration,
+          recordingUrl: recordingUrl ?? null,
+          endedAt: new Date(),
+        })
+        .where(eq(calls.id, callId));
+    } else {
+      const destinationNumber = (req.body as any)?.destinationNumber as string | undefined;
+      const businessId = await resolveBusinessIdByNumber(destinationNumber);
+      const latestCallId = businessId ? await findLatestActiveCallId(businessId, callerNumber) : null;
+      if (latestCallId) {
+        await db.update(calls)
+          .set({
+            status: 'COMPLETED',
+            resolution: 'AI',
+            duration,
+            recordingUrl: recordingUrl ?? null,
+            endedAt: new Date(),
+          })
+          .where(eq(calls.id, latestCallId));
+      }
+    }
 
     logger.info({ sessionId, callerNumber, durationInSeconds, recordingUrl }, 'AT call recording saved');
   } catch (err) {
@@ -137,13 +157,51 @@ export async function handleAtRecordingWebhook(req: Request, res: Response) {
 }
 
 async function handleAtCallEnd(body: Record<string, string>) {
-  const { callerNumber, durationInSeconds } = body;
+  const { callerNumber, durationInSeconds, destinationNumber } = body;
   try {
-    await db.update(calls)
-      .set({ status: 'COMPLETED', duration: parseInt(durationInSeconds ?? '0', 10), endedAt: new Date() })
-      .where(eq(calls.callerNumber, callerNumber));
+    const businessId = await resolveBusinessIdByNumber(destinationNumber);
+    const latestCallId = businessId ? await findLatestActiveCallId(businessId, callerNumber) : null;
+    if (latestCallId) {
+      await db.update(calls)
+        .set({ status: 'COMPLETED', duration: parseInt(durationInSeconds ?? '0', 10), endedAt: new Date() })
+        .where(eq(calls.id, latestCallId));
+    }
     logger.info({ callerNumber, durationInSeconds }, 'AT call ended');
   } catch (err) {
     logger.error({ err }, 'Error updating AT call on end');
   }
+}
+
+async function resolveBusinessIdByNumber(destinationNumber?: string): Promise<string | null> {
+  const normalizedDest = destinationNumber?.trim();
+  if (!normalizedDest) return null;
+
+  let phoneRow = (await db
+    .select({ businessId: phoneNumbers.businessId })
+    .from(phoneNumbers)
+    .where(eq(phoneNumbers.number, normalizedDest))
+    .limit(1))[0];
+
+  if (!phoneRow) {
+    const alt = normalizedDest.startsWith('+') ? normalizedDest.slice(1) : `+${normalizedDest}`;
+    phoneRow = (await db
+      .select({ businessId: phoneNumbers.businessId })
+      .from(phoneNumbers)
+      .where(eq(phoneNumbers.number, alt))
+      .limit(1))[0];
+  }
+
+  return phoneRow?.businessId ?? null;
+}
+
+async function findLatestActiveCallId(businessId: string, callerNumber: string): Promise<string | null> {
+  const [row] = await db.select({ id: calls.id }).from(calls)
+    .where(and(
+      eq(calls.businessId, businessId),
+      eq(calls.callerNumber, callerNumber ?? ''),
+      eq(calls.status, 'ACTIVE'),
+    ))
+    .orderBy(desc(calls.startedAt))
+    .limit(1);
+  return row?.id ?? null;
 }

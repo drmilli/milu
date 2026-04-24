@@ -1000,6 +1000,46 @@ adminRouter.post('/businesses/:id/phone-numbers/twilio/assign', async (req, res,
   } catch (err) { next(err); }
 });
 
+adminRouter.post('/businesses/:id/phone-numbers/at/attach', async (req, res, next) => {
+  try {
+    const body = z.object({
+      number: z.string().min(7),
+      label: z.string().optional(),
+      providerNumberId: z.string().optional(),
+      isVirtual: z.boolean().default(true),
+    }).parse(req.body);
+
+    const [existing] = await db.select({ id: phoneNumbers.id, provider: phoneNumbers.provider }).from(phoneNumbers)
+      .where(eq(phoneNumbers.number, body.number))
+      .limit(1);
+    if (existing?.provider && existing.provider !== 'at') return res.status(409).json({ error: 'Number already exists with a different provider' });
+
+    const [row] = existing
+      ? await db.update(phoneNumbers).set({
+        businessId: req.params.id,
+        verified: true,
+        label: body.label ?? null,
+        isVirtual: body.isVirtual,
+        provider: 'at',
+        providerNumberId: body.providerNumberId ?? null,
+      }).where(eq(phoneNumbers.id, existing.id)).returning()
+      : await db.insert(phoneNumbers).values({
+        number: body.number,
+        businessId: req.params.id,
+        verified: true,
+        label: body.label ?? null,
+        isVirtual: body.isVirtual,
+        provider: 'at',
+        providerNumberId: body.providerNumberId ?? null,
+      }).returning();
+
+    const [biz] = await db.select({ name: businesses.name }).from(businesses).where(eq(businesses.id, req.params.id)).limit(1);
+    void notifyNumberAssigned(req.params.id, biz?.name ?? 'your business', row.number);
+
+    return res.status(existing ? 200 : 201).json(row);
+  } catch (err) { next(err); }
+});
+
 adminRouter.get('/businesses/:id/phone-numbers', async (req, res, next) => {
   try {
     const rows = await db.select().from(phoneNumbers)
@@ -1014,7 +1054,7 @@ adminRouter.post('/businesses/:id/phone-numbers', async (req, res, next) => {
     const body = z.object({
       number: z.string().min(7),
       label: z.string().optional(),
-      provider: z.enum(['twilio']).default('twilio'),
+      provider: z.enum(['twilio', 'at']).default('twilio'),
       providerNumberId: z.string().optional(),
       isVirtual: z.boolean().default(true),
     }).parse(req.body);
@@ -1022,7 +1062,7 @@ adminRouter.post('/businesses/:id/phone-numbers', async (req, res, next) => {
     const [existing] = await db.select({ id: phoneNumbers.id, provider: phoneNumbers.provider }).from(phoneNumbers)
       .where(eq(phoneNumbers.number, body.number))
       .limit(1);
-    if (existing && existing.provider && existing.provider !== 'twilio') return res.status(409).json({ error: 'Number already exists with a different provider' });
+    if (existing && existing.provider && existing.provider !== body.provider) return res.status(409).json({ error: 'Number already exists with a different provider' });
 
     const [row] = existing
       ? await db.update(phoneNumbers).set({
@@ -1030,7 +1070,7 @@ adminRouter.post('/businesses/:id/phone-numbers', async (req, res, next) => {
         verified: true,
         label: body.label ?? null,
         isVirtual: body.isVirtual,
-        provider: 'twilio',
+        provider: body.provider,
         providerNumberId: body.providerNumberId ?? null,
       }).where(eq(phoneNumbers.id, existing.id)).returning()
       : await db.insert(phoneNumbers).values({
