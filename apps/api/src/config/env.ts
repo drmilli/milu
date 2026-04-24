@@ -18,6 +18,7 @@ const envSchema = z.object({
   GMAIL_USER: z.string().email().optional(),
   GMAIL_APP_PASSWORD: z.string().optional(),
   EMAIL_FROM: z.string().default('Milu <noreply@miluai.app>'),
+  EMAIL_PROVIDER: z.enum(['auto', 'gmail', 'sendchamp']).default('auto'),
   // Whop
   WHOP_API_KEY: z.string().optional(),
   WHOP_WEBHOOK_SECRET: z.string().optional(),

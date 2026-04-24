@@ -78,6 +78,14 @@ export async function sendNotification(opts: SendOptions): Promise<void> {
 
       case 'EMAIL':
         if (!recipient) throw new Error('recipient required for EMAIL');
+        if (env.EMAIL_PROVIDER === 'gmail') {
+          if (!transport) {
+            logger.info({ to: recipient, title }, '[DEV] Email notification');
+          } else {
+            await transport.sendMail({ from: env.EMAIL_FROM, to: recipient, subject: title, text: body });
+          }
+          break;
+        }
         if (env.SENDCHAMP_EMAIL_API_KEY || env.SENDCHAMP_API_KEY) {
           const from = parseFrom(env.EMAIL_FROM);
           const senderEmail = env.SENDCHAMP_SENDER_EMAIL ?? from.email;
@@ -141,6 +149,8 @@ export async function sendNotification(opts: SendOptions): Promise<void> {
               throw new Error(`Sendchamp email failed (${res?.code ?? 'unknown'}): ${res?.message ?? 'Unknown error'}`);
             }
           }
+        } else if (env.EMAIL_PROVIDER === 'sendchamp') {
+          throw new Error('EMAIL_PROVIDER=sendchamp but no Sendchamp email configuration is available');
         } else if (!transport) {
           logger.info({ to: recipient, title }, '[DEV] Email notification');
         } else {

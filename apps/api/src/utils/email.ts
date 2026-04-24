@@ -41,6 +41,15 @@ async function send(to: string, subject: string, html: string) {
   const senderEmail = env.SENDCHAMP_SENDER_EMAIL ?? from.email;
   const senderName = env.SENDCHAMP_SENDER_NAME ?? from.name;
 
+  if (env.EMAIL_PROVIDER === 'gmail') {
+    if (!transport) {
+      logger.info({ to, subject }, '[DEV] Email (no SMTP configured)');
+      return;
+    }
+    await transport.sendMail({ from: env.EMAIL_FROM, to, subject, html });
+    return;
+  }
+
   if (env.SENDCHAMP_EMAIL_API_KEY && !isBunceKey(env.SENDCHAMP_EMAIL_API_KEY) && !warnedInvalidBunceEmailKey) {
     warnedInvalidBunceEmailKey = true;
     logger.warn('Invalid SENDCHAMP_EMAIL_API_KEY format; expected sk_live_... or sk_test_...');
@@ -101,6 +110,10 @@ async function send(to: string, subject: string, html: string) {
       throw new Error(`Sendchamp email failed (${res?.code ?? 'unknown'}): ${res?.message ?? 'Unknown error'}`);
     }
     return;
+  }
+
+  if (env.EMAIL_PROVIDER === 'sendchamp') {
+    throw new Error('EMAIL_PROVIDER=sendchamp but no Sendchamp email configuration is available');
   }
 
   if (!transport) {
