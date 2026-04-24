@@ -29,14 +29,34 @@ function createTransport() {
 
 const transport = createTransport();
 
+function isBunceKey(value?: string) {
+  return typeof value === 'string' && /^sk_(live|test)_/i.test(value);
+}
+
+let warnedInvalidBunceEmailKey = false;
+
 async function send(to: string, subject: string, html: string) {
   const from = parseFrom(env.EMAIL_FROM);
 
   const senderEmail = env.SENDCHAMP_SENDER_EMAIL ?? from.email;
   const senderName = env.SENDCHAMP_SENDER_NAME ?? from.name;
 
-  const bunceKey = env.SENDCHAMP_EMAIL_API_KEY
-    ?? (env.SENDCHAMP_API_KEY?.startsWith('sk_') ? env.SENDCHAMP_API_KEY : undefined);
+  if (env.SENDCHAMP_EMAIL_API_KEY && !isBunceKey(env.SENDCHAMP_EMAIL_API_KEY) && !warnedInvalidBunceEmailKey) {
+    warnedInvalidBunceEmailKey = true;
+    logger.warn('Invalid SENDCHAMP_EMAIL_API_KEY format; expected sk_live_... or sk_test_...');
+  }
+
+  const bunceKeyFrom = isBunceKey(env.SENDCHAMP_EMAIL_API_KEY)
+    ? 'SENDCHAMP_EMAIL_API_KEY'
+    : isBunceKey(env.SENDCHAMP_API_KEY)
+      ? 'SENDCHAMP_API_KEY'
+      : undefined;
+
+  const bunceKey = bunceKeyFrom === 'SENDCHAMP_EMAIL_API_KEY'
+    ? env.SENDCHAMP_EMAIL_API_KEY
+    : bunceKeyFrom === 'SENDCHAMP_API_KEY'
+      ? env.SENDCHAMP_API_KEY
+      : undefined;
 
   if (bunceKey) {
     const res = await fetch('https://api.bunce.so/v1/messaging/transactional/send/email', {
@@ -57,7 +77,7 @@ async function send(to: string, subject: string, html: string) {
 
     if (!res.ok) {
       const body = await res.text().catch(() => '');
-      throw new Error(`Bunce email failed (${res.status}): ${body}`);
+      throw new Error(`Bunce email failed (${res.status}) [${bunceKeyFrom ?? 'unknown-key'}]: ${body}`);
     }
     return;
   }

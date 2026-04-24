@@ -42,6 +42,12 @@ function createTransport() {
 }
 const transport = createTransport();
 
+function isBunceKey(value?: string) {
+  return typeof value === 'string' && /^sk_(live|test)_/i.test(value);
+}
+
+let warnedInvalidBunceEmailKey = false;
+
 function escapeHtml(input: string) {
   return input
     .replaceAll('&', '&amp;')
@@ -54,7 +60,6 @@ function escapeHtml(input: string) {
 export async function sendNotification(opts: SendOptions): Promise<void> {
   const { businessId, userId, title, body, channel, recipient, data = {} } = opts;
 
-  // Persist to DB for all channels
   const [notif] = await db.insert(notifications).values({
     businessId,
     userId,
@@ -69,7 +74,6 @@ export async function sendNotification(opts: SendOptions): Promise<void> {
   try {
     switch (channel) {
       case 'IN_APP':
-        // Delivered via WebSocket push or polling — already persisted
         break;
 
       case 'EMAIL':
@@ -80,8 +84,22 @@ export async function sendNotification(opts: SendOptions): Promise<void> {
           const senderName = env.SENDCHAMP_SENDER_NAME ?? from.name;
           const html = body.split('\n').map(line => `<p style="margin:0 0 12px;font-size:14px;color:#111;">${escapeHtml(line)}</p>`).join('');
 
-          const bunceKey = env.SENDCHAMP_EMAIL_API_KEY
-            ?? (env.SENDCHAMP_API_KEY?.startsWith('sk_') ? env.SENDCHAMP_API_KEY : undefined);
+          if (env.SENDCHAMP_EMAIL_API_KEY && !isBunceKey(env.SENDCHAMP_EMAIL_API_KEY) && !warnedInvalidBunceEmailKey) {
+            warnedInvalidBunceEmailKey = true;
+            logger.warn('Invalid SENDCHAMP_EMAIL_API_KEY format; expected sk_live_... or sk_test_...');
+          }
+
+          const bunceKeyFrom = isBunceKey(env.SENDCHAMP_EMAIL_API_KEY)
+            ? 'SENDCHAMP_EMAIL_API_KEY'
+            : isBunceKey(env.SENDCHAMP_API_KEY)
+              ? 'SENDCHAMP_API_KEY'
+              : undefined;
+
+          const bunceKey = bunceKeyFrom === 'SENDCHAMP_EMAIL_API_KEY'
+            ? env.SENDCHAMP_EMAIL_API_KEY
+            : bunceKeyFrom === 'SENDCHAMP_API_KEY'
+              ? env.SENDCHAMP_API_KEY
+              : undefined;
 
           if (bunceKey) {
             const res = await fetch('https://api.bunce.so/v1/messaging/transactional/send/email', {
@@ -102,7 +120,7 @@ export async function sendNotification(opts: SendOptions): Promise<void> {
 
             if (!res.ok) {
               const responseText = await res.text().catch(() => '');
-              throw new Error(`Bunce email failed (${res.status}): ${responseText}`);
+              throw new Error(`Bunce email failed (${res.status}) [${bunceKeyFrom ?? 'unknown-key'}]: ${responseText}`);
             }
           } else {
             if (!env.SENDCHAMP_API_KEY) throw new Error('SENDCHAMP_API_KEY not set');
