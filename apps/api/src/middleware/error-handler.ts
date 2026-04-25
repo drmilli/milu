@@ -25,5 +25,11 @@ export function errorHandler(err: Error, req: Request, res: Response, _next: Nex
     body: req.body,
   }, 'Unhandled error');
 
-  res.status(500).json({ error: 'Internal server error' });
+  const role = (req as any).user?.role;
+  const isAdminRequest = req.url.startsWith('/api/v1/admin');
+  const canExposeMessage = isAdminRequest && role === 'ADMIN';
+  res.status(500).json({
+    error: 'Internal server error',
+    ...(canExposeMessage ? { message: err.message } : {}),
+  });
 }
