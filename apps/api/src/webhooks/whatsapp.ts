@@ -1,6 +1,8 @@
 import type { Request, Response } from 'express';
 import { logger } from '../config/logger';
 import { env } from '../config/env';
+import { db, notifications } from '../db';
+import { eq, sql } from 'drizzle-orm';
 
 // GET — Meta webhook verification handshake
 export function verifyWhatsAppWebhook(req: Request, res: Response) {
@@ -34,13 +36,51 @@ export async function handleWhatsAppWebhook(req: Request, res: Response) {
 
         // Incoming messages
         for (const message of value.messages ?? []) {
+          const fromRaw = String(message.from ?? '').trim();
+          const from = fromRaw ? `whatsapp:+${fromRaw.replace(/^\+/, '')}` : '';
+          const text = message.type === 'text'
+            ? String(message.text?.body ?? '')
+            : message.type === 'reaction'
+              ? `:${String(message.reaction?.emoji ?? '')}`
+              : message.type === 'image'
+                ? '[image]'
+                : message.type === 'audio'
+                  ? '[audio]'
+                  : message.type === 'video'
+                    ? '[video]'
+                    : message.type === 'document'
+                      ? '[document]'
+                      : message.type === 'location'
+                        ? '[location]'
+                        : `[${String(message.type ?? 'message')}]`;
+
           logger.info({
-            from: message.from,
+            from,
             type: message.type,
-            text: message.text?.body,
+            text,
             messageId: message.id,
           }, 'Incoming WhatsApp message');
-          // TODO: route to AI agent conversation handler
+
+          try {
+            await db.insert(notifications).values({
+              channel: 'WHATSAPP',
+              status: 'SENT',
+              title: 'Incoming WhatsApp',
+              body: text,
+              recipient: from || null,
+              data: {
+                direction: 'inbound',
+                provider: 'meta',
+                waMessageId: message.id ?? null,
+                from: from || null,
+                toPhoneNumberId: value?.metadata?.phone_number_id ?? null,
+                toDisplayNumber: value?.metadata?.display_phone_number ?? null,
+                type: message.type ?? null,
+              },
+            });
+          } catch (err) {
+            logger.error({ err, messageId: message.id }, 'Failed to persist incoming WhatsApp message (Meta)');
+          }
         }
 
         // Status updates (sent, delivered, read, failed)
@@ -50,6 +90,32 @@ export async function handleWhatsAppWebhook(req: Request, res: Response) {
             status: status.status,
             messageId: status.id,
           }, 'WhatsApp message status update');
+
+          const normalized = String(status.status ?? '').toLowerCase();
+          const nextStatus = (normalized === 'delivered' || normalized === 'sent' || normalized === 'read')
+            ? 'SENT'
+            : (normalized === 'failed' || normalized === 'undelivered')
+              ? 'FAILED'
+              : null;
+
+          if (status.id) {
+            try {
+              const meta = {
+                waStatus: status.status ?? null,
+                provider: 'meta',
+                recipientId: status.recipient_id ?? null,
+                timestamp: status.timestamp ?? null,
+              };
+              await db.update(notifications)
+                .set({
+                  ...(nextStatus ? { status: nextStatus } : {}),
+                  data: sql`${notifications.data} || ${JSON.stringify(meta)}::jsonb`,
+                } as any)
+                .where(sql`${notifications.data}->>'waMessageId' = ${String(status.id)}`);
+            } catch (err) {
+              logger.error({ err, messageId: status.id }, 'Failed to update WhatsApp notification status (Meta)');
+            }
+          }
         }
       }
     }
