@@ -4,7 +4,7 @@ import { eq, and, lt } from 'drizzle-orm';
 import { db, businessSettings, phoneVerifications } from '../db';
 import { authMiddleware } from '../middleware/auth';
 import { audit } from '../services/audit';
-import { sendWhatsAppText } from '../services/whatsapp';
+import { sendWhatsAppOtp } from '../services/whatsapp';
 import { logger } from '../config/logger';
 import { env } from '../config/env';
 
@@ -175,7 +175,7 @@ settingsRouter.post('/:businessId/whatsapp/send-otp', async (req, res, next) => 
     });
     let sent = true;
     try {
-      await sendWhatsAppText(phone, `Your Milu verification code is *${code}*. It expires in 10 minutes.`);
+      await sendWhatsAppOtp(phone, code);
     } catch (waErr) {
       sent = false;
       logger.error({ err: waErr, phone }, 'Failed to send WhatsApp OTP');

@@ -1,6 +1,6 @@
 import { eq, sql } from 'drizzle-orm';
 import { db, notifications, users, businessSettings } from '../db';
-import { sendWhatsAppText } from './whatsapp';
+import { sendWhatsAppNotification } from './whatsapp';
 import { sendCustomSms } from './sms';
 import { logger } from '../config/logger';
 import nodemailer from 'nodemailer';
@@ -251,7 +251,7 @@ export async function sendNotification(opts: SendOptions): Promise<void> {
       case 'WHATSAPP':
         if (!recipient) throw new Error('recipient required for WHATSAPP');
         {
-          const msg = await sendWhatsAppText(recipient, `*${title}*\n\n${body}`);
+          const msg = await sendWhatsAppNotification(recipient, title, body);
           if (msg?.sid) {
             const meta = { direction: 'outbound', twilioSid: msg.sid, to: msg.to, from: msg.from, status: msg.status };
             await db.update(notifications).set({

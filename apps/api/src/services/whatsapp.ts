@@ -79,6 +79,71 @@ async function sendViaTwilioWhatsApp(to: string, message: string) {
   }
 }
 
+async function sendViaTwilioWhatsAppTemplate(to: string, contentSid: string, contentVariables: Record<string, string>) {
+  const client = getTwilioClient();
+  const fromRaw = env.TWILIO_WHATSAPP_FROM ?? env.TWILIO_PHONE_NUMBER;
+
+  if (!client || !fromRaw) {
+    if (env.NODE_ENV === 'production') {
+      logger.error({
+        twilioAccountSid: !!env.TWILIO_ACCOUNT_SID,
+        twilioAuthToken: !!env.TWILIO_AUTH_TOKEN,
+        twilioWhatsAppFrom: !!env.TWILIO_WHATSAPP_FROM,
+        twilioPhoneNumber: !!env.TWILIO_PHONE_NUMBER,
+        contentSid: !!contentSid,
+      }, 'Twilio WhatsApp template is not configured');
+      throw new Error('Twilio WhatsApp template is not configured');
+    }
+    logger.info({ to, contentSid, contentVariables }, '[DEV] WhatsApp template (Twilio not configured)');
+    return;
+  }
+
+  const normalize = (v: string) => (v.startsWith('whatsapp:') ? v : `whatsapp:${v}`);
+  const toNormalized = normalize(to);
+  const fromNormalized = normalize(fromRaw);
+  const statusCallbackUrl = `${env.API_URL.replace(/\/$/, '')}/webhooks/twilio/message-status`;
+
+  logger.info({
+    to: maskPhone(toNormalized),
+    from: maskPhone(fromNormalized),
+    contentSid,
+    statusCallbackUrl,
+  }, 'WhatsApp template send attempt (Twilio)');
+
+  try {
+    const msg = await client.messages.create({
+      from: fromNormalized,
+      to: toNormalized,
+      statusCallback: statusCallbackUrl,
+      contentSid,
+      contentVariables: JSON.stringify(contentVariables),
+    } as any);
+    logger.info({
+      to: maskPhone(toNormalized),
+      sid: msg.sid,
+      status: msg.status,
+      errorCode: (msg as any).errorCode,
+      errorMessage: (msg as any).errorMessage,
+    }, 'WhatsApp template sent (Twilio)');
+    return { sid: msg.sid, status: msg.status, to: toNormalized, from: fromNormalized };
+  } catch (err) {
+    const e = err as any;
+    logger.error({
+      err: e,
+      to: maskPhone(toNormalized),
+      from: maskPhone(fromNormalized),
+      twilio: {
+        code: e?.code,
+        status: e?.status,
+        moreInfo: e?.moreInfo,
+        details: e?.details,
+      },
+      contentSid,
+    }, 'WhatsApp template send failed (Twilio)');
+    throw err;
+  }
+}
+
 async function sendViaMeta(to: string, body: Record<string, unknown>) {
   if (!env.WHATSAPP_TOKEN || !env.WHATSAPP_PHONE_ID) {
     logger.info({ to, body }, '[DEV] WhatsApp message (no credentials)');
@@ -106,6 +171,20 @@ export async function sendWhatsAppText(to: string, message: string) {
   return sendViaTwilioWhatsApp(to, message);
 }
 
+export async function sendWhatsAppOtp(to: string, code: string) {
+  if (env.TWILIO_WHATSAPP_OTP_CONTENT_SID) {
+    return sendViaTwilioWhatsAppTemplate(to, env.TWILIO_WHATSAPP_OTP_CONTENT_SID, { '1': code, '2': '10' });
+  }
+  return sendWhatsAppText(to, `Your Milu verification code is *${code}*. It expires in 10 minutes.`);
+}
+
+export async function sendWhatsAppNotification(to: string, title: string, body: string) {
+  if (env.TWILIO_WHATSAPP_NOTIFICATION_CONTENT_SID) {
+    return sendViaTwilioWhatsAppTemplate(to, env.TWILIO_WHATSAPP_NOTIFICATION_CONTENT_SID, { '1': title, '2': body });
+  }
+  return sendWhatsAppText(to, `*${title}*\n\n${body}`);
+}
+
 export async function sendWhatsAppTemplate(to: string, templateName: string, languageCode = 'en', components: unknown[] = []) {
   return sendViaMeta(to, {
     type: 'template',
@@ -115,6 +194,13 @@ export async function sendWhatsAppTemplate(to: string, templateName: string, lan
 
 export async function sendOrderConfirmation(to: string, orderNumber: string, items: { name: string; qty: number }[], businessName: string) {
   const itemList = items.map((i) => `  • ${i.name} ×${i.qty}`).join('\n');
+  if (env.TWILIO_WHATSAPP_ORDER_CONFIRM_CONTENT_SID) {
+    return sendViaTwilioWhatsAppTemplate(to, env.TWILIO_WHATSAPP_ORDER_CONFIRM_CONTENT_SID, {
+      '1': businessName,
+      '2': orderNumber,
+      '3': itemList || '—',
+    });
+  }
   return sendWhatsAppText(to,
     `✅ *Order Confirmed!*\n\n` +
     `Hi! Your order has been received by *${businessName}*.\n\n` +
@@ -131,6 +217,13 @@ export async function sendOrderStatusUpdate(to: string, orderNumber: string, sta
     CANCELLED: '❌ Your order has been cancelled. Contact us if this was a mistake.',
   };
   const msg = statusMessages[status] ?? `Your order status has been updated to: ${status}`;
+  if (env.TWILIO_WHATSAPP_ORDER_STATUS_CONTENT_SID) {
+    return sendViaTwilioWhatsAppTemplate(to, env.TWILIO_WHATSAPP_ORDER_STATUS_CONTENT_SID, {
+      '1': orderNumber,
+      '2': msg,
+      '3': businessName,
+    });
+  }
   return sendWhatsAppText(to,
     `📦 *Order Update — #${orderNumber}*\n\n` +
     `${msg}\n\n` +
@@ -139,6 +232,13 @@ export async function sendOrderStatusUpdate(to: string, orderNumber: string, sta
 }
 
 export async function sendAppointmentReminder(to: string, service: string, dateTime: string, businessName: string) {
+  if (env.TWILIO_WHATSAPP_APPOINTMENT_REMINDER_CONTENT_SID) {
+    return sendViaTwilioWhatsAppTemplate(to, env.TWILIO_WHATSAPP_APPOINTMENT_REMINDER_CONTENT_SID, {
+      '1': businessName,
+      '2': service,
+      '3': dateTime,
+    });
+  }
   return sendWhatsAppText(to,
     `📅 *Appointment Reminder*\n\n` +
     `You have an upcoming appointment with *${businessName}*.\n\n` +
@@ -150,6 +250,13 @@ export async function sendAppointmentReminder(to: string, service: string, dateT
 }
 
 export async function sendAppointmentConfirmation(to: string, service: string, dateTime: string, businessName: string) {
+  if (env.TWILIO_WHATSAPP_APPOINTMENT_CONFIRM_CONTENT_SID) {
+    return sendViaTwilioWhatsAppTemplate(to, env.TWILIO_WHATSAPP_APPOINTMENT_CONFIRM_CONTENT_SID, {
+      '1': businessName,
+      '2': service,
+      '3': dateTime,
+    });
+  }
   return sendWhatsAppText(to,
     `✅ *Appointment Confirmed!*\n\n` +
     `Your appointment with *${businessName}* is confirmed.\n\n` +
@@ -160,6 +267,12 @@ export async function sendAppointmentConfirmation(to: string, service: string, d
 }
 
 export async function sendEscalationAlert(to: string, callerNumber: string, summary: string) {
+  if (env.TWILIO_WHATSAPP_ESCALATION_ALERT_CONTENT_SID) {
+    return sendViaTwilioWhatsAppTemplate(to, env.TWILIO_WHATSAPP_ESCALATION_ALERT_CONTENT_SID, {
+      '1': callerNumber,
+      '2': summary,
+    });
+  }
   return sendWhatsAppText(to,
     `🔔 *Action Required — Call Escalation*\n\n` +
     `Your AI agent has escalated a call that needs your personal attention.\n\n` +
@@ -171,6 +284,12 @@ export async function sendEscalationAlert(to: string, callerNumber: string, summ
 }
 
 export async function sendCallbackRequest(to: string, callerNumber: string, businessName: string) {
+  if (env.TWILIO_WHATSAPP_CALLBACK_REQUEST_CONTENT_SID) {
+    return sendViaTwilioWhatsAppTemplate(to, env.TWILIO_WHATSAPP_CALLBACK_REQUEST_CONTENT_SID, {
+      '1': businessName,
+      '2': callerNumber,
+    });
+  }
   return sendWhatsAppText(to,
     `📞 *Callback Request*\n\n` +
     `A customer has requested a callback from *${businessName}*.\n\n` +
@@ -181,6 +300,12 @@ export async function sendCallbackRequest(to: string, callerNumber: string, busi
 }
 
 export async function sendMissedCallAlert(to: string, callerNumber: string, businessName: string) {
+  if (env.TWILIO_WHATSAPP_MISSED_CALL_CONTENT_SID) {
+    return sendViaTwilioWhatsAppTemplate(to, env.TWILIO_WHATSAPP_MISSED_CALL_CONTENT_SID, {
+      '1': businessName,
+      '2': callerNumber,
+    });
+  }
   return sendWhatsAppText(to,
     `📵 *Missed Call Alert*\n\n` +
     `Your AI agent missed a call on *${businessName}*.\n\n` +
@@ -199,6 +324,16 @@ export async function sendWeeklySummary(to: string, businessName: string, stats:
   const resolutionRate = stats.totalCalls > 0
     ? ((stats.resolved / stats.totalCalls) * 100).toFixed(1)
     : '0';
+  if (env.TWILIO_WHATSAPP_WEEKLY_SUMMARY_CONTENT_SID) {
+    return sendViaTwilioWhatsAppTemplate(to, env.TWILIO_WHATSAPP_WEEKLY_SUMMARY_CONTENT_SID, {
+      '1': businessName,
+      '2': String(stats.totalCalls),
+      '3': String(stats.resolved),
+      '4': resolutionRate,
+      '5': String(stats.escalated),
+      '6': String(stats.avgDuration),
+    });
+  }
   return sendWhatsAppText(to,
     `📊 *Weekly Summary — ${businessName}*\n\n` +
     `Here's how your AI agent performed this week:\n\n` +
