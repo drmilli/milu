@@ -41,7 +41,10 @@ async function send(to: string, subject: string, html: string) {
   const senderEmail = env.SENDCHAMP_SENDER_EMAIL ?? from.email;
   const senderName = env.SENDCHAMP_SENDER_NAME ?? from.name;
 
-  if (env.EMAIL_PROVIDER === 'gmail') {
+  const smtpAvailable = !!transport;
+  const shouldUseSmtp = env.EMAIL_PROVIDER === 'gmail' || (env.EMAIL_PROVIDER === 'auto' && smtpAvailable);
+
+  if (shouldUseSmtp) {
     if (!transport) {
       logger.info({ to, subject }, '[DEV] Email (no SMTP configured)');
       return;
@@ -49,6 +52,8 @@ async function send(to: string, subject: string, html: string) {
     await transport.sendMail({ from: env.EMAIL_FROM, to, subject, html });
     return;
   }
+
+  const shouldUseSendchamp = env.EMAIL_PROVIDER === 'sendchamp' || (env.EMAIL_PROVIDER === 'auto' && !smtpAvailable);
 
   if (env.SENDCHAMP_EMAIL_API_KEY && !isBunceKey(env.SENDCHAMP_EMAIL_API_KEY) && !warnedInvalidBunceEmailKey) {
     warnedInvalidBunceEmailKey = true;
@@ -91,12 +96,17 @@ async function send(to: string, subject: string, html: string) {
     return;
   }
 
-  if (env.SENDCHAMP_API_KEY) {
+  if (shouldUseSendchamp && env.SENDCHAMP_API_KEY) {
     const mod: any = await import('sendchamp-sdk');
-    const Sendchamp = mod.default ?? mod.Sendchamp ?? mod;
+    const Sendchamp = mod?.default ?? mod?.Sendchamp ?? mod;
 
     const mode = env.SENDCHAMP_API_KEY.includes('live') ? 'live' : 'test';
-    const client = new Sendchamp({ publicKey: env.SENDCHAMP_API_KEY, mode });
+    const client = typeof Sendchamp === 'function'
+      ? (Sendchamp.prototype && Object.keys(Sendchamp.prototype).length > 0
+        ? new Sendchamp({ publicKey: env.SENDCHAMP_API_KEY, mode })
+        : Sendchamp({ publicKey: env.SENDCHAMP_API_KEY, mode }))
+      : null;
+    if (!client?.EMAIL?.send) throw new Error('Sendchamp SDK init failed');
     const email = client.EMAIL;
 
     const res = await email.send({

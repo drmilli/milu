@@ -78,15 +78,21 @@ export async function sendNotification(opts: SendOptions): Promise<void> {
 
       case 'EMAIL':
         if (!recipient) throw new Error('recipient required for EMAIL');
-        if (env.EMAIL_PROVIDER === 'gmail') {
-          if (!transport) {
-            logger.info({ to: recipient, title }, '[DEV] Email notification');
-          } else {
-            await transport.sendMail({ from: env.EMAIL_FROM, to: recipient, subject: title, text: body });
+        {
+          const smtpAvailable = !!transport;
+          const shouldUseSmtp = env.EMAIL_PROVIDER === 'gmail' || (env.EMAIL_PROVIDER === 'auto' && smtpAvailable);
+          const shouldUseSendchamp = env.EMAIL_PROVIDER === 'sendchamp' || (env.EMAIL_PROVIDER === 'auto' && !smtpAvailable);
+
+          if (shouldUseSmtp) {
+            if (!transport) {
+              logger.info({ to: recipient, title }, '[DEV] Email notification');
+            } else {
+              await transport.sendMail({ from: env.EMAIL_FROM, to: recipient, subject: title, text: body });
+            }
+            break;
           }
-          break;
-        }
-        if (env.SENDCHAMP_EMAIL_API_KEY || env.SENDCHAMP_API_KEY) {
+
+          if (shouldUseSendchamp && (env.SENDCHAMP_EMAIL_API_KEY || env.SENDCHAMP_API_KEY)) {
           const from = parseFrom(env.EMAIL_FROM);
           const senderEmail = env.SENDCHAMP_SENDER_EMAIL ?? from.email;
           const senderName = env.SENDCHAMP_SENDER_NAME ?? from.name;
@@ -133,9 +139,14 @@ export async function sendNotification(opts: SendOptions): Promise<void> {
           } else {
             if (!env.SENDCHAMP_API_KEY) throw new Error('SENDCHAMP_API_KEY not set');
             const mod: any = await import('sendchamp-sdk');
-            const Sendchamp = mod.default ?? mod.Sendchamp ?? mod;
+            const Sendchamp = mod?.default ?? mod?.Sendchamp ?? mod;
             const mode = env.SENDCHAMP_API_KEY.includes('live') ? 'live' : 'test';
-            const client = new Sendchamp({ publicKey: env.SENDCHAMP_API_KEY, mode });
+            const client = typeof Sendchamp === 'function'
+              ? (Sendchamp.prototype && Object.keys(Sendchamp.prototype).length > 0
+                ? new Sendchamp({ publicKey: env.SENDCHAMP_API_KEY, mode })
+                : Sendchamp({ publicKey: env.SENDCHAMP_API_KEY, mode }))
+              : null;
+            if (!client?.EMAIL?.send) throw new Error('Sendchamp SDK init failed');
             const email = client.EMAIL;
 
             const res = await email.send({
@@ -149,14 +160,20 @@ export async function sendNotification(opts: SendOptions): Promise<void> {
               throw new Error(`Sendchamp email failed (${res?.code ?? 'unknown'}): ${res?.message ?? 'Unknown error'}`);
             }
           }
-        } else if (env.EMAIL_PROVIDER === 'sendchamp') {
-          throw new Error('EMAIL_PROVIDER=sendchamp but no Sendchamp email configuration is available');
-        } else if (!transport) {
-          logger.info({ to: recipient, title }, '[DEV] Email notification');
-        } else {
-          await transport.sendMail({ from: env.EMAIL_FROM, to: recipient, subject: title, text: body });
+            break;
+          }
+
+          if (env.EMAIL_PROVIDER === 'sendchamp') {
+            throw new Error('EMAIL_PROVIDER=sendchamp but no Sendchamp email configuration is available');
+          }
+
+          if (!transport) {
+            logger.info({ to: recipient, title }, '[DEV] Email notification');
+          } else {
+            await transport.sendMail({ from: env.EMAIL_FROM, to: recipient, subject: title, text: body });
+          }
+          break;
         }
-        break;
 
       case 'WHATSAPP':
         if (!recipient) throw new Error('recipient required for WHATSAPP');
