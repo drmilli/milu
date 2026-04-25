@@ -49,8 +49,15 @@ async function send(to: string, subject: string, html: string) {
       logger.info({ to, subject }, '[DEV] Email (no SMTP configured)');
       return;
     }
-    await transport.sendMail({ from: env.EMAIL_FROM, to, subject, html });
-    return;
+    try {
+      await transport.sendMail({ from: env.EMAIL_FROM, to, subject, html });
+      return;
+    } catch (err) {
+      const e = err as any;
+      const code = typeof e?.code === 'string' ? e.code : '';
+      const shouldFallback = env.EMAIL_PROVIDER === 'auto' && (code === 'ETIMEDOUT' || code === 'ECONNREFUSED' || code === 'EHOSTUNREACH' || code === 'ENETUNREACH');
+      if (!shouldFallback) throw err;
+    }
   }
 
   const shouldUseSendchamp = env.EMAIL_PROVIDER === 'sendchamp' || (env.EMAIL_PROVIDER === 'auto' && !smtpAvailable);
@@ -96,7 +103,8 @@ async function send(to: string, subject: string, html: string) {
     return;
   }
 
-  if (shouldUseSendchamp && env.SENDCHAMP_API_KEY) {
+  const sendchampAllowed = shouldUseSendchamp || env.EMAIL_PROVIDER === 'auto';
+  if (sendchampAllowed && env.SENDCHAMP_API_KEY) {
     const mod: any = await import('sendchamp-sdk');
     const Sendchamp = mod?.default ?? mod?.Sendchamp ?? mod;
 

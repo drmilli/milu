@@ -87,7 +87,14 @@ export async function sendNotification(opts: SendOptions): Promise<void> {
             if (!transport) {
               logger.info({ to: recipient, title }, '[DEV] Email notification');
             } else {
-              await transport.sendMail({ from: env.EMAIL_FROM, to: recipient, subject: title, text: body });
+              try {
+                await transport.sendMail({ from: env.EMAIL_FROM, to: recipient, subject: title, text: body });
+              } catch (err) {
+                const e = err as any;
+                const code = typeof e?.code === 'string' ? e.code : '';
+                const shouldFallback = env.EMAIL_PROVIDER === 'auto' && (code === 'ETIMEDOUT' || code === 'ECONNREFUSED' || code === 'EHOSTUNREACH' || code === 'ENETUNREACH');
+                if (!shouldFallback) throw err;
+              }
             }
             break;
           }
