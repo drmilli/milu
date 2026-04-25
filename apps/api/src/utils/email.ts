@@ -12,7 +12,28 @@ function parseFrom(value: string) {
 }
 
 function createTransport() {
-  if (env.GMAIL_USER && env.GMAIL_APP_PASSWORD) {
+  const brevoConfigured = !!(env.BREVO_SMTP_USER && env.BREVO_SMTP_PASSWORD);
+  const gmailConfigured = !!(env.GMAIL_USER && env.GMAIL_APP_PASSWORD);
+
+  const wantBrevo = env.EMAIL_PROVIDER === 'brevo' || (env.EMAIL_PROVIDER === 'auto' && brevoConfigured);
+  const wantGmail = env.EMAIL_PROVIDER === 'gmail' || (env.EMAIL_PROVIDER === 'auto' && !brevoConfigured && gmailConfigured);
+
+  if (wantBrevo && brevoConfigured) {
+    const host = env.BREVO_SMTP_HOST ?? 'smtp-relay.brevo.com';
+    const port = env.BREVO_SMTP_PORT ?? 587;
+    const secure = port === 465;
+    return nodemailer.createTransport({
+      host,
+      port,
+      secure,
+      requireTLS: !secure,
+      auth: { user: env.BREVO_SMTP_USER, pass: env.BREVO_SMTP_PASSWORD },
+      connectionTimeout: 10000,
+      greetingTimeout: 10000,
+      socketTimeout: 20000,
+    });
+  }
+  if (wantGmail && gmailConfigured) {
     return nodemailer.createTransport({
       host: 'smtp.gmail.com',
       port: 587,
@@ -42,7 +63,7 @@ async function send(to: string, subject: string, html: string) {
   const senderName = env.SENDCHAMP_SENDER_NAME ?? from.name;
 
   const smtpAvailable = !!transport;
-  const shouldUseSmtp = env.EMAIL_PROVIDER === 'gmail' || (env.EMAIL_PROVIDER === 'auto' && smtpAvailable);
+  const shouldUseSmtp = env.EMAIL_PROVIDER === 'gmail' || env.EMAIL_PROVIDER === 'brevo' || (env.EMAIL_PROVIDER === 'auto' && smtpAvailable);
   let smtpFailedWithNetworkError = false;
 
   if (shouldUseSmtp) {
