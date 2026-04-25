@@ -43,6 +43,7 @@ async function send(to: string, subject: string, html: string) {
 
   const smtpAvailable = !!transport;
   const shouldUseSmtp = env.EMAIL_PROVIDER === 'gmail' || (env.EMAIL_PROVIDER === 'auto' && smtpAvailable);
+  let smtpFailedWithNetworkError = false;
 
   if (shouldUseSmtp) {
     if (!transport) {
@@ -57,12 +58,14 @@ async function send(to: string, subject: string, html: string) {
       const code = typeof e?.code === 'string' ? e.code : '';
       const shouldFallback = env.EMAIL_PROVIDER === 'auto' && (code === 'ETIMEDOUT' || code === 'ECONNREFUSED' || code === 'EHOSTUNREACH' || code === 'ENETUNREACH');
       if (!shouldFallback) throw err;
+      smtpFailedWithNetworkError = true;
     }
   }
 
   const shouldUseSendchamp = env.EMAIL_PROVIDER === 'sendchamp' || (env.EMAIL_PROVIDER === 'auto' && !smtpAvailable);
 
-  if (env.SENDCHAMP_EMAIL_API_KEY && !isBunceKey(env.SENDCHAMP_EMAIL_API_KEY) && !warnedInvalidBunceEmailKey) {
+  const shouldConsiderBunce = env.EMAIL_PROVIDER === 'sendchamp' || (env.EMAIL_PROVIDER === 'auto' && (smtpFailedWithNetworkError || !smtpAvailable));
+  if (shouldConsiderBunce && env.SENDCHAMP_EMAIL_API_KEY && !isBunceKey(env.SENDCHAMP_EMAIL_API_KEY) && !warnedInvalidBunceEmailKey) {
     warnedInvalidBunceEmailKey = true;
     logger.warn('Invalid SENDCHAMP_EMAIL_API_KEY format; expected sk_live_... or sk_test_...');
   }
@@ -103,8 +106,7 @@ async function send(to: string, subject: string, html: string) {
     return;
   }
 
-  const sendchampAllowed = shouldUseSendchamp || env.EMAIL_PROVIDER === 'auto';
-  if (sendchampAllowed && env.SENDCHAMP_API_KEY) {
+  if (env.EMAIL_PROVIDER === 'sendchamp' && env.SENDCHAMP_API_KEY) {
     const mod: any = await import('sendchamp-sdk');
     const Sendchamp = mod?.default ?? mod?.Sendchamp ?? mod;
 
@@ -132,6 +134,10 @@ async function send(to: string, subject: string, html: string) {
 
   if (env.EMAIL_PROVIDER === 'sendchamp') {
     throw new Error('EMAIL_PROVIDER=sendchamp but no Sendchamp email configuration is available');
+  }
+
+  if (env.EMAIL_PROVIDER === 'auto' && smtpFailedWithNetworkError) {
+    throw new Error('SMTP failed (likely blocked by hosting provider) and no HTTP email provider is configured');
   }
 
   if (!transport) {

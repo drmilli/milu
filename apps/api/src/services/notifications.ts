@@ -82,6 +82,7 @@ export async function sendNotification(opts: SendOptions): Promise<void> {
           const smtpAvailable = !!transport;
           const shouldUseSmtp = env.EMAIL_PROVIDER === 'gmail' || (env.EMAIL_PROVIDER === 'auto' && smtpAvailable);
           const shouldUseSendchamp = env.EMAIL_PROVIDER === 'sendchamp' || (env.EMAIL_PROVIDER === 'auto' && !smtpAvailable);
+          let smtpFailedWithNetworkError = false;
 
           if (shouldUseSmtp) {
             if (!transport) {
@@ -94,79 +95,83 @@ export async function sendNotification(opts: SendOptions): Promise<void> {
                 const code = typeof e?.code === 'string' ? e.code : '';
                 const shouldFallback = env.EMAIL_PROVIDER === 'auto' && (code === 'ETIMEDOUT' || code === 'ECONNREFUSED' || code === 'EHOSTUNREACH' || code === 'ENETUNREACH');
                 if (!shouldFallback) throw err;
+                smtpFailedWithNetworkError = true;
               }
             }
-            break;
+            if (!smtpFailedWithNetworkError) break;
           }
 
-          if (shouldUseSendchamp && (env.SENDCHAMP_EMAIL_API_KEY || env.SENDCHAMP_API_KEY)) {
-          const from = parseFrom(env.EMAIL_FROM);
-          const senderEmail = env.SENDCHAMP_SENDER_EMAIL ?? from.email;
-          const senderName = env.SENDCHAMP_SENDER_NAME ?? from.name;
-          const html = body.split('\n').map(line => `<p style="margin:0 0 12px;font-size:14px;color:#111;">${escapeHtml(line)}</p>`).join('');
+          if ((env.EMAIL_PROVIDER === 'sendchamp' || (env.EMAIL_PROVIDER === 'auto' && (smtpFailedWithNetworkError || !smtpAvailable))) && (env.SENDCHAMP_EMAIL_API_KEY || env.SENDCHAMP_API_KEY)) {
+            const from = parseFrom(env.EMAIL_FROM);
+            const senderEmail = env.SENDCHAMP_SENDER_EMAIL ?? from.email;
+            const senderName = env.SENDCHAMP_SENDER_NAME ?? from.name;
+            const html = body.split('\n').map(line => `<p style="margin:0 0 12px;font-size:14px;color:#111;">${escapeHtml(line)}</p>`).join('');
 
-          if (env.SENDCHAMP_EMAIL_API_KEY && !isBunceKey(env.SENDCHAMP_EMAIL_API_KEY) && !warnedInvalidBunceEmailKey) {
-            warnedInvalidBunceEmailKey = true;
-            logger.warn('Invalid SENDCHAMP_EMAIL_API_KEY format; expected sk_live_... or sk_test_...');
-          }
+            if (env.SENDCHAMP_EMAIL_API_KEY && !isBunceKey(env.SENDCHAMP_EMAIL_API_KEY) && !warnedInvalidBunceEmailKey) {
+              warnedInvalidBunceEmailKey = true;
+              logger.warn('Invalid SENDCHAMP_EMAIL_API_KEY format; expected sk_live_... or sk_test_...');
+            }
 
-          const bunceKeyFrom = isBunceKey(env.SENDCHAMP_EMAIL_API_KEY)
-            ? 'SENDCHAMP_EMAIL_API_KEY'
-            : isBunceKey(env.SENDCHAMP_API_KEY)
-              ? 'SENDCHAMP_API_KEY'
-              : undefined;
+            const bunceKeyFrom = isBunceKey(env.SENDCHAMP_EMAIL_API_KEY)
+              ? 'SENDCHAMP_EMAIL_API_KEY'
+              : isBunceKey(env.SENDCHAMP_API_KEY)
+                ? 'SENDCHAMP_API_KEY'
+                : undefined;
 
-          const bunceKey = bunceKeyFrom === 'SENDCHAMP_EMAIL_API_KEY'
-            ? env.SENDCHAMP_EMAIL_API_KEY
-            : bunceKeyFrom === 'SENDCHAMP_API_KEY'
-              ? env.SENDCHAMP_API_KEY
-              : undefined;
+            const bunceKey = bunceKeyFrom === 'SENDCHAMP_EMAIL_API_KEY'
+              ? env.SENDCHAMP_EMAIL_API_KEY
+              : bunceKeyFrom === 'SENDCHAMP_API_KEY'
+                ? env.SENDCHAMP_API_KEY
+                : undefined;
 
-          if (bunceKey) {
-            const res = await fetch('https://api.bunce.so/v1/messaging/transactional/send/email', {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'X-Authorization': bunceKey,
-              },
-              body: JSON.stringify({
-                sender_email: senderEmail,
-                sender_name: senderName,
-                email: recipient,
-                message_type: 'transactional',
+            if (bunceKey) {
+              const res = await fetch('https://api.bunce.so/v1/messaging/transactional/send/email', {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'X-Authorization': bunceKey,
+                },
+                body: JSON.stringify({
+                  sender_email: senderEmail,
+                  sender_name: senderName,
+                  email: recipient,
+                  message_type: 'transactional',
+                  subject: title,
+                  html,
+                }),
+              });
+
+              if (!res.ok) {
+                const responseText = await res.text().catch(() => '');
+                throw new Error(`Bunce email failed (${res.status}) [${bunceKeyFrom ?? 'unknown-key'}]: ${responseText}`);
+              }
+              break;
+            }
+
+            if (env.EMAIL_PROVIDER === 'sendchamp' && env.SENDCHAMP_API_KEY) {
+              const mod: any = await import('sendchamp-sdk');
+              const Sendchamp = mod?.default ?? mod?.Sendchamp ?? mod;
+              const mode = env.SENDCHAMP_API_KEY.includes('live') ? 'live' : 'test';
+              const client = typeof Sendchamp === 'function'
+                ? (Sendchamp.prototype && Object.keys(Sendchamp.prototype).length > 0
+                  ? new Sendchamp({ publicKey: env.SENDCHAMP_API_KEY, mode })
+                  : Sendchamp({ publicKey: env.SENDCHAMP_API_KEY, mode }))
+                : null;
+              if (!client?.EMAIL?.send) throw new Error('Sendchamp SDK init failed');
+              const email = client.EMAIL;
+
+              const res = await email.send({
                 subject: title,
-                html,
-              }),
-            });
+                to: [{ email: recipient, name: recipient }],
+                from: { email: senderEmail, name: senderName },
+                message_body: { type: 'html', value: html },
+              });
 
-            if (!res.ok) {
-              const responseText = await res.text().catch(() => '');
-              throw new Error(`Bunce email failed (${res.status}) [${bunceKeyFrom ?? 'unknown-key'}]: ${responseText}`);
+              if (res?.status !== 'success') {
+                throw new Error(`Sendchamp email failed (${res?.code ?? 'unknown'}): ${res?.message ?? 'Unknown error'}`);
+              }
+              break;
             }
-          } else {
-            if (!env.SENDCHAMP_API_KEY) throw new Error('SENDCHAMP_API_KEY not set');
-            const mod: any = await import('sendchamp-sdk');
-            const Sendchamp = mod?.default ?? mod?.Sendchamp ?? mod;
-            const mode = env.SENDCHAMP_API_KEY.includes('live') ? 'live' : 'test';
-            const client = typeof Sendchamp === 'function'
-              ? (Sendchamp.prototype && Object.keys(Sendchamp.prototype).length > 0
-                ? new Sendchamp({ publicKey: env.SENDCHAMP_API_KEY, mode })
-                : Sendchamp({ publicKey: env.SENDCHAMP_API_KEY, mode }))
-              : null;
-            if (!client?.EMAIL?.send) throw new Error('Sendchamp SDK init failed');
-            const email = client.EMAIL;
-
-            const res = await email.send({
-              subject: title,
-              to: [{ email: recipient, name: recipient }],
-              from: { email: senderEmail, name: senderName },
-              message_body: { type: 'html', value: html },
-            });
-
-            if (res?.status !== 'success') {
-              throw new Error(`Sendchamp email failed (${res?.code ?? 'unknown'}): ${res?.message ?? 'Unknown error'}`);
-            }
-          }
             break;
           }
 
