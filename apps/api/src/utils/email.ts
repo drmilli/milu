@@ -58,17 +58,47 @@ let warnedInvalidBunceEmailKey = false;
 
 async function send(to: string, subject: string, html: string) {
   const from = parseFrom(env.EMAIL_FROM);
+  const brevoApiKey = env.BREVO_API_KEY;
+  const sendchampSenderEmail = env.SENDCHAMP_SENDER_EMAIL ?? from.email;
+  const sendchampSenderName = env.SENDCHAMP_SENDER_NAME ?? from.name;
 
-  const senderEmail = env.SENDCHAMP_SENDER_EMAIL ?? from.email;
-  const senderName = env.SENDCHAMP_SENDER_NAME ?? from.name;
+  const sendBrevoApi = async () => {
+    if (!brevoApiKey) throw new Error('BREVO_API_KEY not set');
+    const res = await fetch('https://api.brevo.com/v3/smtp/email', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'api-key': brevoApiKey,
+      },
+      body: JSON.stringify({
+        sender: { name: from.name, email: from.email },
+        to: [{ email: to, name: to }],
+        subject,
+        htmlContent: html,
+      }),
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      throw new Error(`Brevo API email failed (${res.status}): ${body}`);
+    }
+  };
 
   const smtpAvailable = !!transport;
   const shouldUseSmtp = env.EMAIL_PROVIDER === 'gmail' || env.EMAIL_PROVIDER === 'brevo' || (env.EMAIL_PROVIDER === 'auto' && smtpAvailable);
   let smtpFailedWithNetworkError = false;
 
+  if (env.EMAIL_PROVIDER === 'auto' && brevoApiKey) {
+    await sendBrevoApi();
+    return;
+  }
+
   if (shouldUseSmtp) {
     if (!transport) {
       logger.info({ to, subject }, '[DEV] Email (no SMTP configured)');
+      if (env.EMAIL_PROVIDER === 'brevo' && brevoApiKey) {
+        await sendBrevoApi();
+        return;
+      }
       return;
     }
     try {
@@ -77,10 +107,15 @@ async function send(to: string, subject: string, html: string) {
     } catch (err) {
       const e = err as any;
       const code = typeof e?.code === 'string' ? e.code : '';
-      const shouldFallback = env.EMAIL_PROVIDER === 'auto' && (code === 'ETIMEDOUT' || code === 'ECONNREFUSED' || code === 'EHOSTUNREACH' || code === 'ENETUNREACH');
+      const shouldFallback = (env.EMAIL_PROVIDER === 'auto' || env.EMAIL_PROVIDER === 'brevo') && (code === 'ETIMEDOUT' || code === 'ECONNREFUSED' || code === 'EHOSTUNREACH' || code === 'ENETUNREACH');
       if (!shouldFallback) throw err;
       smtpFailedWithNetworkError = true;
     }
+  }
+
+  if (env.EMAIL_PROVIDER === 'brevo' && brevoApiKey && (smtpFailedWithNetworkError || !smtpAvailable)) {
+    await sendBrevoApi();
+    return;
   }
 
   const shouldUseSendchamp = env.EMAIL_PROVIDER === 'sendchamp' || (env.EMAIL_PROVIDER === 'auto' && !smtpAvailable);
@@ -111,8 +146,8 @@ async function send(to: string, subject: string, html: string) {
         'X-Authorization': bunceKey,
       },
       body: JSON.stringify({
-        sender_email: senderEmail,
-        sender_name: senderName,
+        sender_email: sendchampSenderEmail,
+        sender_name: sendchampSenderName,
         email: to,
         message_type: 'transactional',
         subject,
@@ -143,7 +178,7 @@ async function send(to: string, subject: string, html: string) {
     const res = await email.send({
       subject,
       to: [{ email: to, name: to }],
-      from: { email: senderEmail, name: senderName },
+      from: { email: sendchampSenderEmail, name: sendchampSenderName },
       message_body: { type: 'html', value: html },
     });
 

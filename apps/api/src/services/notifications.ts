@@ -105,16 +105,51 @@ export async function sendNotification(opts: SendOptions): Promise<void> {
           const shouldUseSendchamp = env.EMAIL_PROVIDER === 'sendchamp' || (env.EMAIL_PROVIDER === 'auto' && !smtpAvailable);
           let smtpFailedWithNetworkError = false;
 
+          const from = parseFrom(env.EMAIL_FROM);
+          const brevoApiKey = env.BREVO_API_KEY;
+          const html = body.split('\n').map(line => `<p style="margin:0 0 12px;font-size:14px;color:#111;">${escapeHtml(line)}</p>`).join('');
+
+          const sendBrevoApi = async () => {
+            if (!brevoApiKey) throw new Error('BREVO_API_KEY not set');
+            const res = await fetch('https://api.brevo.com/v3/smtp/email', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'api-key': brevoApiKey,
+              },
+              body: JSON.stringify({
+                sender: { name: from.name, email: from.email },
+                to: [{ email: recipient, name: recipient }],
+                subject: title,
+                htmlContent: html,
+                textContent: body,
+              }),
+            });
+            if (!res.ok) {
+              const responseText = await res.text().catch(() => '');
+              throw new Error(`Brevo API email failed (${res.status}): ${responseText}`);
+            }
+          };
+
+          if (env.EMAIL_PROVIDER === 'auto' && brevoApiKey) {
+            await sendBrevoApi();
+            break;
+          }
+
           if (shouldUseSmtp) {
             if (!transport) {
               logger.info({ to: recipient, title }, '[DEV] Email notification');
+              if (env.EMAIL_PROVIDER === 'brevo' && brevoApiKey) {
+                await sendBrevoApi();
+                break;
+              }
             } else {
               try {
                 await transport.sendMail({ from: env.EMAIL_FROM, to: recipient, subject: title, text: body });
               } catch (err) {
                 const e = err as any;
                 const code = typeof e?.code === 'string' ? e.code : '';
-                const shouldFallback = env.EMAIL_PROVIDER === 'auto' && (code === 'ETIMEDOUT' || code === 'ECONNREFUSED' || code === 'EHOSTUNREACH' || code === 'ENETUNREACH');
+                const shouldFallback = (env.EMAIL_PROVIDER === 'auto' || env.EMAIL_PROVIDER === 'brevo') && (code === 'ETIMEDOUT' || code === 'ECONNREFUSED' || code === 'EHOSTUNREACH' || code === 'ENETUNREACH');
                 if (!shouldFallback) throw err;
                 smtpFailedWithNetworkError = true;
               }
@@ -122,11 +157,14 @@ export async function sendNotification(opts: SendOptions): Promise<void> {
             if (!smtpFailedWithNetworkError) break;
           }
 
+          if (env.EMAIL_PROVIDER === 'brevo' && brevoApiKey && (smtpFailedWithNetworkError || !smtpAvailable)) {
+            await sendBrevoApi();
+            break;
+          }
+
           if ((env.EMAIL_PROVIDER === 'sendchamp' || (env.EMAIL_PROVIDER === 'auto' && (smtpFailedWithNetworkError || !smtpAvailable))) && (env.SENDCHAMP_EMAIL_API_KEY || env.SENDCHAMP_API_KEY)) {
-            const from = parseFrom(env.EMAIL_FROM);
             const senderEmail = env.SENDCHAMP_SENDER_EMAIL ?? from.email;
             const senderName = env.SENDCHAMP_SENDER_NAME ?? from.name;
-            const html = body.split('\n').map(line => `<p style="margin:0 0 12px;font-size:14px;color:#111;">${escapeHtml(line)}</p>`).join('');
 
             if (env.SENDCHAMP_EMAIL_API_KEY && !isBunceKey(env.SENDCHAMP_EMAIL_API_KEY) && !warnedInvalidBunceEmailKey) {
               warnedInvalidBunceEmailKey = true;
