@@ -61,6 +61,8 @@ async function send(to: string, subject: string, html: string) {
   const brevoApiKey = env.BREVO_API_KEY;
   const sendchampSenderEmail = env.SENDCHAMP_SENDER_EMAIL ?? from.email;
   const sendchampSenderName = env.SENDCHAMP_SENDER_NAME ?? from.name;
+  const brevoSenderEmail = env.BREVO_SENDER_EMAIL ?? from.email;
+  const brevoSenderName = env.BREVO_SENDER_NAME ?? from.name;
 
   const sendBrevoApi = async () => {
     if (!brevoApiKey) throw new Error('BREVO_API_KEY not set');
@@ -71,7 +73,7 @@ async function send(to: string, subject: string, html: string) {
         'api-key': brevoApiKey,
       },
       body: JSON.stringify({
-        sender: { name: from.name, email: from.email },
+        sender: { name: brevoSenderName, email: brevoSenderEmail },
         to: [{ email: to, name: to }],
         subject,
         htmlContent: html,

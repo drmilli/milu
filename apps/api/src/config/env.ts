@@ -20,6 +20,8 @@ const envSchema = z.object({
   EMAIL_FROM: z.string().default('Milu <noreply@miluai.app>'),
   EMAIL_PROVIDER: z.enum(['auto', 'gmail', 'brevo', 'sendchamp']).default('auto'),
   BREVO_API_KEY: z.string().optional(),
+  BREVO_SENDER_EMAIL: z.string().email().optional(),
+  BREVO_SENDER_NAME: z.string().optional(),
   BREVO_SMTP_HOST: z.string().optional(),
   BREVO_SMTP_PORT: z.coerce.number().optional(),
   BREVO_SMTP_USER: z.string().optional(),

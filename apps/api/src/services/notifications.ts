@@ -108,6 +108,8 @@ export async function sendNotification(opts: SendOptions): Promise<void> {
           const from = parseFrom(env.EMAIL_FROM);
           const brevoApiKey = env.BREVO_API_KEY;
           const html = body.split('\n').map(line => `<p style="margin:0 0 12px;font-size:14px;color:#111;">${escapeHtml(line)}</p>`).join('');
+          const brevoSenderEmail = env.BREVO_SENDER_EMAIL ?? from.email;
+          const brevoSenderName = env.BREVO_SENDER_NAME ?? from.name;
 
           const sendBrevoApi = async () => {
             if (!brevoApiKey) throw new Error('BREVO_API_KEY not set');
@@ -118,7 +120,7 @@ export async function sendNotification(opts: SendOptions): Promise<void> {
                 'api-key': brevoApiKey,
               },
               body: JSON.stringify({
-                sender: { name: from.name, email: from.email },
+                sender: { name: brevoSenderName, email: brevoSenderEmail },
                 to: [{ email: recipient, name: recipient }],
                 subject: title,
                 htmlContent: html,
