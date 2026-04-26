@@ -269,20 +269,7 @@ After your spoken reply, on a new line write exactly one of: [CONTINUE] [ESCALAT
   const msgs = messages.map(m => ({ role: m.role, content: m.content }));
   let raw = '';
 
-  if (env.ANTHROPIC_API_KEY) {
-    try {
-      const res = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: { 'x-api-key': env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-        body: JSON.stringify({ model: 'claude-3-5-haiku-20241022', max_tokens: 512, system: systemPrompt, messages: msgs }),
-      });
-      if (!res.ok) { const b = await res.text(); throw new Error(`Claude ${res.status}: ${b}`); }
-      const data = await res.json() as { content: Array<{ text: string }> };
-      raw = data.content[0]?.text ?? '';
-    } catch (err) { logger.warn({ err }, 'Claude voiceChat failed, trying OpenAI'); }
-  }
-
-  if (!raw && env.OPENAI_API_KEY) {
+  if (env.OPENAI_API_KEY) {
     try {
       const res = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
@@ -295,7 +282,20 @@ After your spoken reply, on a new line write exactly one of: [CONTINUE] [ESCALAT
       if (!res.ok) { const b = await res.text(); throw new Error(`OpenAI ${res.status}: ${b}`); }
       const data = await res.json() as { choices: Array<{ message: { content: string } }> };
       raw = data.choices[0]?.message?.content ?? '';
-    } catch (err) { logger.error({ err }, 'OpenAI voiceChat failed'); }
+    } catch (err) { logger.warn({ err }, 'OpenAI voiceChat failed, trying Claude'); }
+  }
+
+  if (!raw && env.ANTHROPIC_API_KEY) {
+    try {
+      const res = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: { 'x-api-key': env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+        body: JSON.stringify({ model: 'claude-3-5-haiku-20241022', max_tokens: 512, system: systemPrompt, messages: msgs }),
+      });
+      if (!res.ok) { const b = await res.text(); throw new Error(`Claude ${res.status}: ${b}`); }
+      const data = await res.json() as { content: Array<{ text: string }> };
+      raw = data.content[0]?.text ?? '';
+    } catch (err) { logger.error({ err }, 'Claude voiceChat failed'); }
   }
 
   if (!raw) {
