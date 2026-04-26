@@ -100,6 +100,7 @@ export default function BusinessDetailPage() {
   const [phoneLoading, setPhoneLoading] = useState(false);
   const [newNumber, setNewNumber] = useState('');
   const [newLabel, setNewLabel] = useState('');
+  const [newProvider, setNewProvider] = useState<'twilio' | 'at'>('twilio');
   const [addingPhone, setAddingPhone] = useState(false);
   const [twilioNums, setTwilioNums] = useState<TwilioIncomingNumber[]>([]);
   const [twilioLoading, setTwilioLoading] = useState(false);
@@ -147,10 +148,12 @@ export default function BusinessDetailPage() {
       await adminPost(`/admin/businesses/${id}/phone-numbers`, {
         number: newNumber.trim(),
         label: newLabel.trim() || undefined,
+        provider: newProvider,
         isVirtual: true,
       }, token);
       setNewNumber('');
       setNewLabel('');
+      setNewProvider('twilio');
       loadPhoneNums();
     } catch {
       setPhoneError('Failed to assign number. Check that the number is valid and not assigned to another business.');
@@ -408,7 +411,7 @@ export default function BusinessDetailPage() {
           {/* Assign number form */}
           <div className="bg-white rounded-2xl border border-cream-dark p-5 space-y-4">
             <h3 className="text-sm font-semibold text-primary-dark">Assign virtual call line</h3>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
               <input
                 type="text"
                 placeholder="Number e.g. +2349000001234"
@@ -423,6 +426,14 @@ export default function BusinessDetailPage() {
                 onChange={e => setNewLabel(e.target.value)}
                 className="text-sm border border-cream-dark rounded-lg px-3 py-2 bg-cream-light text-primary-dark placeholder:text-primary-warm/50 focus:outline-none focus:border-primary/50"
               />
+              <select
+                value={newProvider}
+                onChange={e => setNewProvider(e.target.value as 'twilio' | 'at')}
+                className="text-sm border border-cream-dark rounded-lg px-3 py-2 bg-cream-light text-primary-dark focus:outline-none focus:border-primary/50"
+              >
+                <option value="twilio">Twilio</option>
+                <option value="at">Africa&apos;s Talking</option>
+              </select>
               <div className="flex gap-2">
                 <button
                   onClick={handleAddPhone}
@@ -434,7 +445,7 @@ export default function BusinessDetailPage() {
               </div>
             </div>
             <p className="text-xs text-primary-warm">
-              Enter a Twilio number to assign to this business. It will immediately appear in the business&apos;s AI Call Line tab.
+              Add a number from Twilio or Africa&apos;s Talking. Africa&apos;s Talking inbound calls are handled at /webhooks/at/voice.
             </p>
             {phoneError && <p className="text-xs text-danger">{phoneError}</p>}
           </div>
