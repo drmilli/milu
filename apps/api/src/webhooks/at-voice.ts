@@ -1,11 +1,22 @@
 import type { Request, Response } from 'express';
 import { and, desc, eq } from 'drizzle-orm';
-import { db, phoneNumbers, agentConfigs, businesses, calls, knowledgeBases } from '../db';
+import { db, phoneNumbers, agentConfigs, businesses, businessSettings, calls, escalations, knowledgeBases, knowledgeDocuments, transcripts } from '../db';
 import { logger } from '../config/logger';
 import { env } from '../config/env';
+import { voiceChat, type ChatMessage } from '../services/document-extract';
+import { transcribeRecordingSnippet } from '../services/transcription';
+import { notifyBusinessOwners } from '../services/notifications';
+import { sendEscalationAlert } from '../services/whatsapp';
 
 function xml(body: string) {
   return `<?xml version="1.0" encoding="UTF-8"?><Response>${body}</Response>`;
+}
+
+function recordTurn(callId: string, seconds: number) {
+  const apiUrl = env.API_URL.replace(/\/$/, '');
+  const callbackUrl = `${apiUrl}/webhooks/at/voice/record?callId=${encodeURIComponent(callId)}`;
+  const maxLength = Math.max(3, Math.min(30, seconds));
+  return `<Record finishOnKey="#" maxLength="${maxLength}" trimSilence="true" playBeep="false" callbackUrl="${callbackUrl}"/>`;
 }
 
 // POST /webhooks/at/voice — Africa's Talking inbound call handler
@@ -59,6 +70,7 @@ export async function handleAtVoiceWebhook(req: Request, res: Response) {
       ?? `Hello, thank you for calling ${bizRow?.name ?? 'us'}. How can I help you today?`;
     const enableRecording = agentRow?.enableRecording ?? true;
     const maxDuration = agentRow?.maxCallDuration ?? 600;
+    const turnSeconds = Math.min(15, maxDuration);
     const businessHoursOnly = agentRow?.businessHoursOnly ?? false;
     const afterHoursMessage = agentRow?.afterHoursMessage
       ?? 'We are currently closed. Please call back during business hours. Goodbye.';
@@ -100,11 +112,10 @@ export async function handleAtVoiceWebhook(req: Request, res: Response) {
       return res.send(xml(`<Say>${greeting}</Say><Hangup/>`));
     }
 
-    const apiUrl = env.API_URL.replace(/\/$/, '');
-    const callbackUrl = `${apiUrl}/webhooks/at/voice/record?callId=${encodeURIComponent(callRow?.id ?? '')}`;
+    const callDbId = callRow?.id ?? '';
     return res.send(xml(
       `<Say>${greeting}</Say>` +
-      `<Record finishOnKey="#" maxLength="${maxDuration}" trimSilence="true" playBeep="false" callbackUrl="${callbackUrl}"/>`
+      recordTurn(callDbId, turnSeconds)
     ));
 
   } catch (err) {
@@ -113,46 +124,125 @@ export async function handleAtVoiceWebhook(req: Request, res: Response) {
   }
 }
 
-// POST /webhooks/at/voice/record — called by AT when recording is done
+// POST /webhooks/at/voice/record — called by AT when a recording turn is done
 export async function handleAtRecordingWebhook(req: Request, res: Response) {
-  res.status(200).send('OK');
+  res.set('Content-Type', 'text/xml');
 
-  const { sessionId, callerNumber, durationInSeconds, recordingUrl } = req.body as Record<string, string>;
-  const callId = typeof req.query.callId === 'string' && req.query.callId ? req.query.callId : null;
+  const { callerNumber, recordingUrl } = req.body as Record<string, string>;
+  const callDbId = typeof req.query.callId === 'string' && req.query.callId ? req.query.callId : null;
+
+  if (!callDbId) {
+    return res.send(xml('<Hangup/>'));
+  }
+
+  const retry = xml(
+    `<Say>Sorry, I didn't catch that. Please say that again.</Say>` +
+    recordTurn(callDbId, 15),
+  );
 
   try {
-    const duration = parseInt(durationInSeconds ?? '0', 10);
-
-    if (callId) {
-      await db.update(calls)
-        .set({
-          status: 'COMPLETED',
-          resolution: 'AI',
-          duration,
-          recordingUrl: recordingUrl ?? null,
-          endedAt: new Date(),
-        })
-        .where(eq(calls.id, callId));
-    } else {
-      const destinationNumber = (req.body as any)?.destinationNumber as string | undefined;
-      const businessId = await resolveBusinessIdByNumber(destinationNumber);
-      const latestCallId = businessId ? await findLatestActiveCallId(businessId, callerNumber) : null;
-      if (latestCallId) {
-        await db.update(calls)
-          .set({
-            status: 'COMPLETED',
-            resolution: 'AI',
-            duration,
-            recordingUrl: recordingUrl ?? null,
-            endedAt: new Date(),
-          })
-          .where(eq(calls.id, latestCallId));
-      }
+    if (!recordingUrl) {
+      return res.send(retry);
     }
 
-    logger.info({ sessionId, callerNumber, durationInSeconds, recordingUrl }, 'AT call recording saved');
+    const callerText = await transcribeRecordingSnippet(recordingUrl);
+    logger.info({ callDbId, callerText: callerText.slice(0, 200) }, 'AT voice input');
+
+    if (!callerText) {
+      return res.send(retry);
+    }
+
+    const [callRow] = await db.select().from(calls).where(eq(calls.id, callDbId)).limit(1);
+    if (!callRow) {
+      logger.warn({ callDbId }, 'AT voice input: call not found');
+      return res.send(xml('<Hangup/>'));
+    }
+
+    const [history, [agentRow], [bizRow], [kbRow], kbDocs] = await Promise.all([
+      db.select({ speaker: transcripts.speaker, text: transcripts.text })
+        .from(transcripts)
+        .where(eq(transcripts.callId, callDbId))
+        .orderBy(transcripts.createdAt),
+      db.select().from(agentConfigs).where(eq(agentConfigs.businessId, callRow.businessId)).limit(1),
+      db.select({ name: businesses.name }).from(businesses).where(eq(businesses.id, callRow.businessId)).limit(1),
+      db.select({
+        faqs: knowledgeBases.faqs,
+        websiteSummary: knowledgeBases.websiteSummary,
+        escalationNumber: knowledgeBases.escalationNumber,
+      }).from(knowledgeBases).where(eq(knowledgeBases.businessId, callRow.businessId)).limit(1),
+      db.select({ summary: knowledgeDocuments.summary })
+        .from(knowledgeDocuments)
+        .where(eq(knowledgeDocuments.businessId, callRow.businessId))
+        .limit(5),
+    ]);
+
+    await db.insert(transcripts).values({ callId: callDbId, speaker: 'caller', text: callerText });
+
+    const messages: ChatMessage[] = [
+      ...history.map(t => ({
+        role: (t.speaker === 'agent' ? 'assistant' : 'user') as 'user' | 'assistant',
+        content: t.text,
+      })),
+      { role: 'user' as const, content: callerText },
+    ];
+
+    const { reply, action } = await voiceChat(messages, {
+      businessName: bizRow?.name ?? 'this business',
+      faqs: (kbRow?.faqs as { question: string; answer: string }[]) ?? [],
+      websiteSummary: kbRow?.websiteSummary,
+      docSummaries: kbDocs.map(d => d.summary ?? '').filter(Boolean),
+      agentTone: agentRow?.tone,
+      escalationNumber: kbRow?.escalationNumber,
+    });
+
+    await db.insert(transcripts).values({ callId: callDbId, speaker: 'agent', text: reply });
+
+    if (action === 'escalate') {
+      const reason = 'Agent escalation';
+      const summary = callerText.slice(0, 600);
+
+      const [existingEsc] = await db.select({ id: escalations.id }).from(escalations)
+        .where(eq(escalations.callId, callDbId))
+        .limit(1);
+      if (!existingEsc) {
+        await db.insert(escalations).values({
+          businessId: callRow.businessId,
+          callId: callDbId,
+          reason,
+          summary,
+        });
+      }
+
+      const [settings] = await db.select({ whatsappNumber: businessSettings.whatsappNumber, whatsappVerified: businessSettings.whatsappVerified })
+        .from(businessSettings).where(eq(businessSettings.businessId, callRow.businessId)).limit(1);
+      if (settings?.whatsappVerified && settings.whatsappNumber) {
+        await sendEscalationAlert(settings.whatsappNumber, callerNumber ?? callRow.callerNumber ?? '', summary).catch(() => null);
+      }
+
+      await notifyBusinessOwners(callRow.businessId, 'Call Escalated', `Caller ${callerNumber ?? callRow.callerNumber ?? ''} needs your attention. ${summary}`);
+
+      await db.update(calls)
+        .set({ status: 'COMPLETED', resolution: 'HUMAN', endedAt: new Date() })
+        .where(eq(calls.id, callDbId));
+
+      return res.send(xml(`<Say>${reply}</Say><Hangup/>`));
+    }
+
+    if (action === 'end') {
+      await db.update(calls)
+        .set({ status: 'COMPLETED', resolution: 'AI', endedAt: new Date() })
+        .where(eq(calls.id, callDbId));
+      return res.send(xml(`<Say>${reply}</Say><Hangup/>`));
+    }
+
+    return res.send(xml(
+      `<Say>${reply}</Say>` +
+      recordTurn(callDbId, 15),
+    ));
+
   } catch (err) {
-    logger.error({ err }, 'Error saving AT call recording');
+    logger.error({ err, callDbId }, 'Error in AT voice input handler');
+    return res.send(xml('<Say>I am sorry, I encountered an error. Please try again.</Say><Hangup/>'));
   }
 }
 

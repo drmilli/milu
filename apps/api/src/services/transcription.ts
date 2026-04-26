@@ -3,6 +3,43 @@ import { logger } from '../config/logger';
 import { eq } from 'drizzle-orm';
 import { db, calls, transcripts } from '../db';
 
+export async function transcribeRecordingSnippet(recordingUrl: string): Promise<string> {
+  if (!env.DEEPGRAM_API_KEY) return '';
+  if (!recordingUrl) return '';
+
+  try {
+    const res = await fetch('https://api.deepgram.com/v1/listen?model=nova-2&smart_format=true&language=en', {
+      method: 'POST',
+      headers: {
+        Authorization: `Token ${env.DEEPGRAM_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ url: recordingUrl }),
+    });
+
+    if (!res.ok) {
+      const err = await res.text();
+      throw new Error(`Deepgram error ${res.status}: ${err}`);
+    }
+
+    const data = await res.json() as {
+      results?: {
+        channels?: Array<{
+          alternatives?: Array<{
+            transcript?: string;
+          }>;
+        }>;
+      };
+    };
+
+    const text = data.results?.channels?.[0]?.alternatives?.[0]?.transcript ?? '';
+    return text.trim();
+  } catch (err) {
+    logger.error({ err, recordingUrl }, 'Snippet transcription failed');
+    return '';
+  }
+}
+
 export async function transcribeCallRecording(callId: string, recordingUrl: string): Promise<void> {
   if (!env.DEEPGRAM_API_KEY) {
     logger.warn({ callId }, 'Deepgram key not set — skipping transcription');
