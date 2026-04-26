@@ -24,7 +24,7 @@ function escapeXml(value: string) {
 function recordTurn(callId: string, seconds: number, baseUrl: string) {
   const callbackUrl = `${baseUrl.replace(/\/$/, '')}/webhooks/at/voice?callId=${encodeURIComponent(callId)}`;
   const maxLength = Math.max(3, Math.min(30, seconds));
-  return `<Record maxLength="${maxLength}" trimSilence="true" playBeep="true" callbackUrl="${callbackUrl}"/>`;
+  return `<Record maxLength="${maxLength}" trimSilence="true" playBeep="true" callbackUrl="${callbackUrl}"></Record>`;
 }
 
 async function handleAtVoiceTurn(
@@ -48,7 +48,7 @@ async function handleAtVoiceTurn(
   const [callRow] = await db.select().from(calls).where(eq(calls.id, callDbId)).limit(1);
   if (!callRow) {
     logger.warn({ callDbId }, 'AT voice input: call not found');
-    return xml('<Hangup/>');
+    return xml('<Hangup></Hangup>');
   }
 
   const [history, [agentRow], [bizRow], [kbRow], kbDocs] = await Promise.all([
@@ -118,14 +118,14 @@ async function handleAtVoiceTurn(
       .set({ status: 'COMPLETED', resolution: 'HUMAN', endedAt: new Date() })
       .where(eq(calls.id, callDbId));
 
-    return xml(`<Say>${escapeXml(reply)}</Say><Hangup/>`);
+    return xml(`<Say>${escapeXml(reply)}</Say><Hangup></Hangup>`);
   }
 
   if (action === 'end') {
     await db.update(calls)
       .set({ status: 'COMPLETED', resolution: 'AI', endedAt: new Date() })
       .where(eq(calls.id, callDbId));
-    return xml(`<Say>${escapeXml(reply)}</Say><Hangup/>`);
+    return xml(`<Say>${escapeXml(reply)}</Say><Hangup></Hangup>`);
   }
 
   return xml(
@@ -140,7 +140,13 @@ export async function handleAtVoiceWebhook(req: Request, res: Response) {
 
   const { sessionId, callerNumber, destinationNumber, isActive, recordingUrl } = req.body as Record<string, string>;
 
-  logger.info({ sessionId, callerNumber, destinationNumber, isActive }, 'Inbound AT voice call');
+  logger.info({
+    sessionId,
+    callerNumber,
+    destinationNumber,
+    isActive,
+    bodyKeys: Object.keys((req.body ?? {}) as Record<string, unknown>),
+  }, 'Inbound AT voice call');
 
   // AT sends isActive=0 on call end
   if (isActive === '0') {
@@ -170,14 +176,14 @@ export async function handleAtVoiceWebhook(req: Request, res: Response) {
 
       if (!callDbId) {
         logger.warn({ callerNumber, destinationNumber }, 'AT voice turn: call not found');
-        return res.send(xml('<Hangup/>'));
+        return res.send(xml('<Hangup></Hangup>'));
       }
 
       const responseXml = await handleAtVoiceTurn(callDbId, callerNumber, recordingUrl, baseUrl);
       return res.send(responseXml);
     } catch (err) {
       logger.error({ err, callDbIdFromQuery }, 'Error handling AT voice turn');
-      return res.send(xml(`<Say>${escapeXml('I am sorry, I encountered an error. Please try again.')}</Say><Hangup/>`));
+      return res.send(xml(`<Say>${escapeXml('I am sorry, I encountered an error. Please try again.')}</Say><Hangup></Hangup>`));
     }
   }
 
@@ -203,7 +209,7 @@ export async function handleAtVoiceWebhook(req: Request, res: Response) {
 
     if (!phoneRow) {
       logger.warn({ destinationNumber, callerNumber }, 'AT call to unregistered number');
-      return res.send(xml(`<Say>${escapeXml('This number is not configured. Goodbye.')}</Say><Hangup/>`));
+      return res.send(xml(`<Say>${escapeXml('This number is not configured. Goodbye.')}</Say><Hangup></Hangup>`));
     }
 
     const { businessId } = phoneRow;
@@ -239,7 +245,7 @@ export async function handleAtVoiceWebhook(req: Request, res: Response) {
       
       const todayHours = hours[currentDay];
       if (!todayHours || todayHours.toLowerCase() === 'closed') {
-        return res.send(xml(`<Say>${escapeXml(afterHoursMessage)}</Say><Hangup/>`));
+        return res.send(xml(`<Say>${escapeXml(afterHoursMessage)}</Say><Hangup></Hangup>`));
       }
 
       const [start, end] = todayHours.split('-');
@@ -251,24 +257,26 @@ export async function handleAtVoiceWebhook(req: Request, res: Response) {
         const endTime = endH * 60 + endM;
 
         if (currentTime < startTime || currentTime > endTime) {
-          return res.send(xml(`<Say>${escapeXml(afterHoursMessage)}</Say><Hangup/>`));
+          return res.send(xml(`<Say>${escapeXml(afterHoursMessage)}</Say><Hangup></Hangup>`));
         }
       }
     }
 
     if (!enableRecording) {
-      return res.send(xml(`<Say>${escapeXml(greeting)}</Say><Hangup/>`));
+      return res.send(xml(`<Say>${escapeXml(greeting)}</Say><Hangup></Hangup>`));
     }
 
     const callDbId = callRow?.id ?? '';
-    return res.send(xml(
+    const responseXml = xml(
       `<Say>${escapeXml(greeting)}</Say>` +
       recordTurn(callDbId, turnSeconds, baseUrl)
-    ));
+    );
+    logger.info({ callDbId, xml: responseXml.slice(0, 400) }, 'AT voice response');
+    return res.send(responseXml);
 
   } catch (err) {
     logger.error({ err, callerNumber, destinationNumber }, 'Error handling AT voice webhook');
-    return res.send(xml(`<Say>${escapeXml('Sorry, we are experiencing technical difficulties. Please try again later.')}</Say><Hangup/>`));
+    return res.send(xml(`<Say>${escapeXml('Sorry, we are experiencing technical difficulties. Please try again later.')}</Say><Hangup></Hangup>`));
   }
 }
 
@@ -280,7 +288,7 @@ export async function handleAtRecordingWebhook(req: Request, res: Response) {
   const callDbId = typeof req.query.callId === 'string' && req.query.callId ? req.query.callId : null;
 
   if (!callDbId) {
-    return res.send(xml('<Hangup/>'));
+    return res.send(xml('<Hangup></Hangup>'));
   }
 
   logger.info({
