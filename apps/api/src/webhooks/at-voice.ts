@@ -24,7 +24,7 @@ function escapeXml(value: string) {
 function recordTurn(callId: string, seconds: number, baseUrl: string) {
   const callbackUrl = `${baseUrl.replace(/\/$/, '')}/webhooks/at/voice?callId=${encodeURIComponent(callId)}`;
   const maxLength = Math.max(3, Math.min(30, seconds));
-  return `<Record maxLength="${maxLength}" trimSilence="true" playBeep="true" callbackUrl="${callbackUrl}"></Record>`;
+  return `<Record maxLength="${maxLength}" finishOnKey="#" trimSilence="true" playBeep="true" callbackUrl="${callbackUrl}"></Record>`;
 }
 
 async function handleAtVoiceTurn(
@@ -34,8 +34,8 @@ async function handleAtVoiceTurn(
   baseUrl: string,
 ) {
   const retry = xml(
-    `<Say>${escapeXml("Sorry, I didn't catch that. Please say that again.")}</Say>` +
-    recordTurn(callDbId, 20, baseUrl),
+    `<Say>${escapeXml("Sorry, I didn't catch that. Please speak after the beep, then press hash when done.")}</Say>` +
+    recordTurn(callDbId, 6, baseUrl),
   );
 
   if (!recordingUrl) return retry;
@@ -148,18 +148,15 @@ export async function handleAtVoiceWebhook(req: Request, res: Response) {
     bodyKeys: Object.keys((req.body ?? {}) as Record<string, unknown>),
   }, 'Inbound AT voice call');
 
-  // AT sends isActive=0 on call end
-  if (isActive === '0') {
-    await handleAtCallEnd(req.body);
-    return res.send(xml(''));
-  }
-
   const proto = (req.headers['x-forwarded-proto'] as string | undefined)?.split(',')[0]?.trim() || 'https';
   const host = req.get('host');
   const baseUrl = host ? `${proto}://${host}` : env.API_URL.replace(/\/$/, '');
 
   const callDbIdFromQuery = typeof req.query.callId === 'string' && req.query.callId ? req.query.callId : null;
 
+  // Process recording FIRST — AT sometimes sends recordingUrl together with isActive=0
+  // (when caller hangs up at the same time the recording ends). We still want to transcribe
+  // and reply so the caller hears the AI response if the line is still open.
   if (recordingUrl) {
     logger.info({
       callDbIdFromQuery,
@@ -180,11 +177,21 @@ export async function handleAtVoiceWebhook(req: Request, res: Response) {
       }
 
       const responseXml = await handleAtVoiceTurn(callDbId, callerNumber, recordingUrl, baseUrl);
+      // If the call ended while we were processing, AT will ignore further XML but we still
+      // want the DB updated — handleAtVoiceTurn handles that for escalate/end actions.
+      if (isActive === '0') await handleAtCallEnd(req.body);
       return res.send(responseXml);
     } catch (err) {
       logger.error({ err, callDbIdFromQuery }, 'Error handling AT voice turn');
+      if (isActive === '0') await handleAtCallEnd(req.body);
       return res.send(xml(`<Say>${escapeXml('I am sorry, I encountered an error. Please try again.')}</Say><Hangup></Hangup>`));
     }
+  }
+
+  // No recordingUrl — pure call-end or call-start notification
+  if (isActive === '0') {
+    await handleAtCallEnd(req.body);
+    return res.send(xml(''));
   }
 
   try {
@@ -224,7 +231,7 @@ export async function handleAtVoiceWebhook(req: Request, res: Response) {
       ?? `Hello, thank you for calling ${bizRow?.name ?? 'us'}. How can I help you today?`;
     const enableRecording = agentRow?.enableRecording ?? true;
     const maxDuration = agentRow?.maxCallDuration ?? 600;
-    const turnSeconds = Math.min(20, maxDuration);
+    const turnSeconds = Math.min(6, maxDuration);
     const businessHoursOnly = agentRow?.businessHoursOnly ?? false;
     const afterHoursMessage = agentRow?.afterHoursMessage
       ?? 'We are currently closed. Please call back during business hours. Goodbye.';
