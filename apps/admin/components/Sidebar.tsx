@@ -52,7 +52,7 @@ const nav = [
   },
   {
     label: 'Messages',
-    href: '/admin/settings#whatsapp-inbox',
+    href: '/admin/whatsapp',
     icon: (
       <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}>
         <path strokeLinecap="round" strokeLinejoin="round" d="M20.25 12c0 4.97-4.03 9-9 9-1.4 0-2.73-.32-3.92-.9L3 21l.9-3.33A8.96 8.96 0 013.75 12c0-4.97 4.03-9 9-9s9 4.03 9 9z" />

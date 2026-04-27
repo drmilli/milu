@@ -1,16 +1,34 @@
 import type { Request, Response } from 'express';
 import { and, desc, eq, sql } from 'drizzle-orm';
-import { db, phoneNumbers, agentConfigs, businesses, calls, notifications } from '../db';
+import { db, phoneNumbers, agentConfigs, businesses, calls, escalations, notifications, transcripts, knowledgeBases, knowledgeDocuments, businessSettings } from '../db';
 import { logger } from '../config/logger';
+import { env } from '../config/env';
+import { voiceChat, type ChatMessage } from '../services/document-extract';
+import { sendEscalationAlert } from '../services/whatsapp';
+import { notifyBusinessOwners } from '../services/notifications';
 
 function twiml(body: string) {
   return `<?xml version="1.0" encoding="UTF-8"?><Response>${body}</Response>`;
 }
 
-function isWithinBusinessHours(): boolean {
-  // TODO: wire to per-business operating hours from knowledge_base
-  // For now, always within hours
-  return true;
+function escapeXml(value: string) {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
+function getBaseUrl(req: Request): string {
+  const proto = (req.headers['x-forwarded-proto'] as string | undefined)?.split(',')[0]?.trim() ?? 'https';
+  const host = req.get('host');
+  return host ? `${proto}://${host}` : env.API_URL.replace(/\/$/, '');
+}
+
+function gatherTurn(callId: string, language: string, baseUrl: string, timeout = 5) {
+  const action = `${baseUrl}/webhooks/twilio/voice/gather?callId=${encodeURIComponent(callId)}`;
+  return `<Gather input="speech" action="${action}" method="POST" timeout="${timeout}" speechTimeout="auto" language="${language}"><Pause length="1"/></Gather>`;
 }
 
 export async function handleTwilioVoiceWebhook(req: Request, res: Response) {
@@ -20,10 +38,9 @@ export async function handleTwilioVoiceWebhook(req: Request, res: Response) {
   const fromNumber = (req.body.From as string) || '';
   const callSid = (req.body.CallSid as string) || '';
 
-  logger.info({ toNumber, fromNumber, callSid, body: req.body }, 'Inbound Twilio call received');
+  logger.info({ toNumber, fromNumber, callSid }, 'Inbound Twilio call received');
 
   try {
-    // Twilio sends To in E.164 (+17177440613); try both with and without + to match DB
     const [phoneRow] = await db
       .select({ businessId: phoneNumbers.businessId })
       .from(phoneNumbers)
@@ -31,7 +48,6 @@ export async function handleTwilioVoiceWebhook(req: Request, res: Response) {
       .limit(1)
       .then(async (rows) => {
         if (rows.length) return rows;
-        // Try without leading +
         return db.select({ businessId: phoneNumbers.businessId })
           .from(phoneNumbers)
           .where(eq(phoneNumbers.number, toNumber.replace(/^\+/, '')))
@@ -44,21 +60,22 @@ export async function handleTwilioVoiceWebhook(req: Request, res: Response) {
     }
 
     const { businessId } = phoneRow;
+    const baseUrl = getBaseUrl(req);
 
-    // Load agent config and business name in parallel
     const [[agentRow], [bizRow]] = await Promise.all([
       db.select().from(agentConfigs).where(eq(agentConfigs.businessId, businessId)).limit(1),
       db.select({ name: businesses.name }).from(businesses).where(eq(businesses.id, businessId)).limit(1),
     ]);
 
     const greeting = agentRow?.greeting ?? `Hello, thank you for calling ${bizRow?.name ?? 'us'}. How can I help you today?`;
-    const enableRecording = agentRow?.enableRecording ?? true;
-    const maxDuration = agentRow?.maxCallDuration ?? 600;
     const businessHoursOnly = agentRow?.businessHoursOnly ?? false;
     const afterHoursMessage = agentRow?.afterHoursMessage ?? 'We are currently closed. Please call back during business hours. Goodbye.';
-    // Map internal language codes to Twilio-compatible BCP-47 codes for Alice voice
     const langMap: Record<string, string> = { en: 'en-US', yo: 'en-US', ig: 'en-US', ha: 'en-US', pcm: 'en-US' };
     const language = langMap[agentRow?.language ?? 'en'] ?? 'en-US';
+
+    if (businessHoursOnly && false /* TODO: wire to per-business operating hours */) {
+      return res.send(twiml(`<Say voice="alice" language="${language}">${escapeXml(afterHoursMessage)}</Say><Hangup/>`));
+    }
 
     const [callRow] = await db.insert(calls).values({
       businessId,
@@ -66,27 +83,110 @@ export async function handleTwilioVoiceWebhook(req: Request, res: Response) {
       status: 'ACTIVE',
     }).returning({ id: calls.id });
 
-    logger.info({ businessId, fromNumber, toNumber, callSid }, 'Inbound Twilio call answered');
+    const callId = callRow?.id ?? '';
+    logger.info({ businessId, fromNumber, toNumber, callSid, callId }, 'Inbound Twilio call answered');
 
-    if (businessHoursOnly && !isWithinBusinessHours()) {
-      return res.send(twiml(`<Say voice="alice" language="${language}">${afterHoursMessage}</Say><Hangup/>`));
-    }
-
-    // Build TwiML response
-    let xml = `<Say voice="alice" language="${language}">${greeting}</Say>`;
-
-    if (enableRecording) {
-      const callId = encodeURIComponent(callRow?.id ?? '');
-      xml += `<Record maxLength="${maxDuration}" transcribe="true" transcribeCallback="/webhooks/twilio/transcription?callId=${callId}" action="/webhooks/twilio/voice/end?callId=${callId}" playBeep="false"/>`;
-    } else {
-      xml += `<Pause length="${maxDuration}"/>`;
-    }
-
-    return res.send(twiml(xml));
+    const xml = twiml(
+      `<Say voice="alice" language="${language}">${escapeXml(greeting)}</Say>` +
+      gatherTurn(callId, language, baseUrl),
+    );
+    return res.send(xml);
   } catch (err) {
     logger.error({ err, toNumber, fromNumber }, 'Error handling Twilio voice webhook');
     return res.send(twiml('<Say voice="alice">Sorry, we are experiencing technical difficulties. Please try again later.</Say><Hangup/>'));
   }
+}
+
+export async function handleTwilioVoiceGather(req: Request, res: Response) {
+  res.set('Content-Type', 'text/xml');
+
+  const callId = typeof req.query.callId === 'string' ? req.query.callId : '';
+  const speechResult = (req.body.SpeechResult as string | undefined) ?? '';
+  const language = 'en-US';
+  const baseUrl = getBaseUrl(req);
+
+  logger.info({ callId, speechResult: speechResult.slice(0, 200) }, 'Twilio voice gather input');
+
+  const retry = twiml(
+    `<Say voice="alice" language="${language}">${escapeXml("Sorry, I didn't catch that. Could you please repeat?")}</Say>` +
+    gatherTurn(callId, language, baseUrl),
+  );
+
+  if (!callId || !speechResult.trim()) return res.send(retry);
+
+  try {
+    const [callRow] = await db.select().from(calls).where(eq(calls.id, callId)).limit(1);
+    if (!callRow) {
+      logger.warn({ callId }, 'Twilio gather: call not found');
+      return res.send(twiml('<Say voice="alice">Something went wrong. Goodbye.</Say><Hangup/>'));
+    }
+
+    const [history, [agentRow], [bizRow], [kbRow], kbDocs] = await Promise.all([
+      db.select({ speaker: transcripts.speaker, text: transcripts.text })
+        .from(transcripts)
+        .where(eq(transcripts.callId, callId))
+        .orderBy(transcripts.createdAt),
+      db.select().from(agentConfigs).where(eq(agentConfigs.businessId, callRow.businessId)).limit(1),
+      db.select({ name: businesses.name }).from(businesses).where(eq(businesses.id, callRow.businessId)).limit(1),
+      db.select({ faqs: knowledgeBases.faqs, websiteSummary: knowledgeBases.websiteSummary, escalationNumber: knowledgeBases.escalationNumber })
+        .from(knowledgeBases).where(eq(knowledgeBases.businessId, callRow.businessId)).limit(1),
+      db.select({ summary: knowledgeDocuments.summary })
+        .from(knowledgeDocuments).where(eq(knowledgeDocuments.businessId, callRow.businessId)).limit(5),
+    ]);
+
+    await db.insert(transcripts).values({ callId, speaker: 'caller', text: speechResult });
+
+    const messages: ChatMessage[] = [
+      ...history.map(t => ({
+        role: (t.speaker === 'agent' ? 'assistant' : 'user') as 'user' | 'assistant',
+        content: t.text,
+      })),
+      { role: 'user' as const, content: speechResult },
+    ];
+
+    const { reply, action } = await voiceChat(messages, {
+      businessName: bizRow?.name ?? 'this business',
+      faqs: (kbRow?.faqs as { question: string; answer: string }[]) ?? [],
+      websiteSummary: kbRow?.websiteSummary,
+      docSummaries: kbDocs.map(d => d.summary ?? '').filter(Boolean),
+      agentTone: agentRow?.tone,
+      escalationNumber: kbRow?.escalationNumber,
+    });
+
+    await db.insert(transcripts).values({ callId, speaker: 'agent', text: reply });
+
+    if (action === 'escalate') {
+      await handleEscalation(callId, callRow.businessId, callRow.callerNumber ?? '', speechResult);
+      await db.update(calls).set({ status: 'COMPLETED', resolution: 'HUMAN', endedAt: new Date() }).where(eq(calls.id, callId));
+      return res.send(twiml(`<Say voice="alice" language="${language}">${escapeXml(reply)}</Say><Hangup/>`));
+    }
+
+    if (action === 'end') {
+      await db.update(calls).set({ status: 'COMPLETED', resolution: 'AI', endedAt: new Date() }).where(eq(calls.id, callId));
+      return res.send(twiml(`<Say voice="alice" language="${language}">${escapeXml(reply)}</Say><Hangup/>`));
+    }
+
+    return res.send(twiml(
+      `<Say voice="alice" language="${language}">${escapeXml(reply)}</Say>` +
+      gatherTurn(callId, language, baseUrl),
+    ));
+  } catch (err) {
+    logger.error({ err, callId }, 'Error handling Twilio voice gather');
+    return res.send(retry);
+  }
+}
+
+async function handleEscalation(callId: string, businessId: string, callerNumber: string, summary: string) {
+  const [existing] = await db.select({ id: escalations.id }).from(escalations).where(eq(escalations.callId, callId)).limit(1);
+  if (!existing) {
+    await db.insert(escalations).values({ businessId, callId, reason: 'Agent escalation', summary: summary.slice(0, 600) });
+  }
+  const [settings] = await db.select({ whatsappNumber: businessSettings.whatsappNumber, whatsappVerified: businessSettings.whatsappVerified })
+    .from(businessSettings).where(eq(businessSettings.businessId, businessId)).limit(1);
+  if (settings?.whatsappVerified && settings.whatsappNumber) {
+    await sendEscalationAlert(settings.whatsappNumber, callerNumber, summary).catch(() => null);
+  }
+  await notifyBusinessOwners(businessId, 'Call Escalated', `Caller ${callerNumber} needs your attention. ${summary}`);
 }
 
 export async function handleTwilioVoiceEnd(req: Request, res: Response) {
@@ -95,33 +195,15 @@ export async function handleTwilioVoiceEnd(req: Request, res: Response) {
   const fromNumber = (req.body.From as string) || '';
   const toNumber = (req.body.To as string) || '';
   const callDuration = parseInt(req.body.CallDuration ?? '0', 10);
-  const recordingUrl = req.body.RecordingUrl as string | undefined;
   const callId = typeof req.query.callId === 'string' && req.query.callId ? req.query.callId : null;
 
   try {
-    const [phoneRow] = await db
-      .select({ businessId: phoneNumbers.businessId })
-      .from(phoneNumbers)
-      .where(eq(phoneNumbers.number, toNumber))
-      .limit(1);
-
-    if (phoneRow) {
-      const idToUpdate = callId ?? await findLatestActiveCallId(phoneRow.businessId, fromNumber);
-      if (idToUpdate) {
-        await db
-          .update(calls)
-          .set({
-            status: 'COMPLETED',
-            resolution: 'AI',
-            duration: callDuration,
-            recordingUrl: recordingUrl ?? null,
-            endedAt: new Date(),
-          })
-          .where(eq(calls.id, idToUpdate));
-      }
+    const idToUpdate = callId ?? await findLatestActiveCallIdByNumber(toNumber, fromNumber);
+    if (idToUpdate) {
+      await db.update(calls).set({ status: 'COMPLETED', resolution: 'AI', duration: callDuration, endedAt: new Date() })
+        .where(and(eq(calls.id, idToUpdate), eq(calls.status, 'ACTIVE')));
     }
-
-    logger.info({ fromNumber, toNumber, callDuration, recordingUrl }, 'Twilio call ended');
+    logger.info({ fromNumber, toNumber, callDuration }, 'Twilio call ended');
   } catch (err) {
     logger.error({ err }, 'Error handling Twilio call end');
   }
@@ -132,122 +214,99 @@ export async function handleTwilioVoiceEnd(req: Request, res: Response) {
 export async function handleTwilioVoiceStatus(req: Request, res: Response) {
   res.sendStatus(200);
   const body = req.body as Record<string, unknown>;
-  const callSid = (body.CallSid as string | undefined) ?? '';
-  const callStatus = (body.CallStatus as string | undefined) ?? '';
-  const to = (body.To as string | undefined) ?? '';
-  const from = (body.From as string | undefined) ?? '';
-  const direction = (body.Direction as string | undefined) ?? '';
-  const duration = body.CallDuration as string | number | undefined;
-
   logger.info({
-    callSid,
-    callStatus,
-    to: to ? maskPhone(to) : undefined,
-    from: from ? maskPhone(from) : undefined,
-    direction,
-    duration: duration ?? null,
+    callSid: body.CallSid,
+    callStatus: body.CallStatus,
+    to: body.To ? maskPhone(body.To as string) : undefined,
+    from: body.From ? maskPhone(body.From as string) : undefined,
+    direction: body.Direction,
+    duration: body.CallDuration ?? null,
   }, 'Twilio voice status');
 }
 
 function maskPhone(value: string) {
   const cleaned = value.replace(/^whatsapp:/, '');
   const last4 = cleaned.slice(-4);
-  const prefix = cleaned.slice(0, Math.max(0, cleaned.length - 4));
-  const maskedPrefix = prefix.replace(/\d/g, '*');
+  const maskedPrefix = cleaned.slice(0, Math.max(0, cleaned.length - 4)).replace(/\d/g, '*');
   return `${maskedPrefix}${last4}`;
 }
 
-async function findLatestActiveCallId(businessId: string, callerNumber: string): Promise<string | null> {
+async function findLatestActiveCallIdByNumber(toNumber: string, fromNumber: string): Promise<string | null> {
+  const [phoneRow] = await db.select({ businessId: phoneNumbers.businessId })
+    .from(phoneNumbers).where(eq(phoneNumbers.number, toNumber)).limit(1);
+  if (!phoneRow) return null;
   const [row] = await db.select({ id: calls.id }).from(calls)
-    .where(and(
-      eq(calls.businessId, businessId),
-      eq(calls.callerNumber, callerNumber),
-      eq(calls.status, 'ACTIVE'),
-    ))
-    .orderBy(desc(calls.startedAt))
-    .limit(1);
+    .where(and(eq(calls.businessId, phoneRow.businessId), eq(calls.callerNumber, fromNumber), eq(calls.status, 'ACTIVE')))
+    .orderBy(desc(calls.startedAt)).limit(1);
   return row?.id ?? null;
 }
 
 export async function handleTwilioMessageStatus(req: Request, res: Response) {
   res.sendStatus(200);
-
   const body = req.body as Record<string, unknown>;
   const messageSid = (body.MessageSid as string | undefined) ?? (body.SmsSid as string | undefined) ?? '';
   const messageStatus = (body.MessageStatus as string | undefined) ?? (body.SmsStatus as string | undefined) ?? '';
-  const to = (body.To as string | undefined) ?? '';
-  const from = (body.From as string | undefined) ?? '';
   const errorCode = body.ErrorCode as string | number | undefined;
   const errorMessage = body.ErrorMessage as string | undefined;
 
   logger.info({
     sid: messageSid,
     status: messageStatus,
-    to: to ? maskPhone(to) : undefined,
-    from: from ? maskPhone(from) : undefined,
+    to: body.To ? maskPhone(body.To as string) : undefined,
+    from: body.From ? maskPhone(body.From as string) : undefined,
     errorCode: errorCode ?? null,
     errorMessage: errorMessage ?? null,
   }, 'Twilio message status');
 
   if (!messageSid) return;
   const normalized = messageStatus.toLowerCase();
-  const status = (normalized === 'delivered' || normalized === 'sent' || normalized === 'read')
-    ? 'SENT'
-    : (normalized === 'failed' || normalized === 'undelivered')
-      ? 'FAILED'
-      : null;
+  const status = (normalized === 'delivered' || normalized === 'sent' || normalized === 'read') ? 'SENT'
+    : (normalized === 'failed' || normalized === 'undelivered') ? 'FAILED' : null;
 
   try {
-    const meta = {
-      twilioStatus: messageStatus,
-      errorCode: errorCode ?? null,
-      errorMessage: errorMessage ?? null,
-      to,
-      from,
-    };
     await db.update(notifications)
       .set({
         ...(status ? { status } : {}),
-        data: sql`${notifications.data} || ${JSON.stringify(meta)}::jsonb`,
+        data: sql`${notifications.data} || ${JSON.stringify({ twilioStatus: messageStatus, errorCode: errorCode ?? null, errorMessage: errorMessage ?? null })}::jsonb`,
       } as any)
       .where(sql`${notifications.data}->>'twilioSid' = ${messageSid}`);
   } catch (err) {
-    logger.error({ err, messageSid, status }, 'Failed to update WhatsApp notification status');
+    logger.error({ err, messageSid }, 'Failed to update WhatsApp notification status');
   }
 }
 
 export async function handleTwilioIncomingMessage(req: Request, res: Response) {
   const body = req.body as Record<string, unknown>;
-  const messageSid = (body.MessageSid as string | undefined) ?? (body.SmsSid as string | undefined) ?? '';
-  const messageStatus = (body.MessageStatus as string | undefined) ?? (body.SmsStatus as string | undefined) ?? '';
+  const messageSid = (body.MessageSid as string | undefined) ?? '';
   const to = (body.To as string | undefined) ?? '';
   const from = (body.From as string | undefined) ?? '';
   const text = (body.Body as string | undefined) ?? '';
-  const numMedia = body.NumMedia as string | number | undefined;
 
   logger.info({
     sid: messageSid,
-    status: messageStatus || 'inbound',
     to: to ? maskPhone(to) : undefined,
     from: from ? maskPhone(from) : undefined,
     textPreview: text ? `${text.slice(0, 140)}${text.length > 140 ? '…' : ''}` : '',
-    numMedia: numMedia ?? null,
-  }, 'Twilio incoming message');
+  }, 'Twilio incoming WhatsApp message');
 
   try {
+    // Find which business this number belongs to
+    const numberRaw = to.replace(/^whatsapp:/, '');
+    const [phoneRow] = await db.select({ businessId: phoneNumbers.businessId })
+      .from(phoneNumbers).where(eq(phoneNumbers.number, numberRaw)).limit(1);
+
     await db.insert(notifications).values({
       channel: 'WHATSAPP',
       status: 'SENT',
       title: 'Incoming WhatsApp',
       body: text,
       recipient: from,
+      businessId: phoneRow?.businessId ?? null,
       data: {
         direction: 'inbound',
         twilioSid: messageSid,
-        status: messageStatus || 'inbound',
         from,
         to,
-        numMedia: numMedia ?? null,
       },
     });
   } catch (err) {
@@ -259,20 +318,11 @@ export async function handleTwilioIncomingMessage(req: Request, res: Response) {
 
 export async function handleTwilioIncomingMessageFallback(req: Request, res: Response) {
   const body = req.body as Record<string, unknown>;
-  const messageSid = (body.MessageSid as string | undefined) ?? (body.SmsSid as string | undefined) ?? '';
-  const to = (body.To as string | undefined) ?? '';
-  const from = (body.From as string | undefined) ?? '';
-  const errorCode = body.ErrorCode as string | number | undefined;
-  const errorMessage = body.ErrorMessage as string | undefined;
-
   logger.warn({
-    sid: messageSid,
-    to: to ? maskPhone(to) : undefined,
-    from: from ? maskPhone(from) : undefined,
-    errorCode: errorCode ?? null,
-    errorMessage: errorMessage ?? null,
-    body,
+    sid: body.MessageSid,
+    to: body.To ? maskPhone(body.To as string) : undefined,
+    from: body.From ? maskPhone(body.From as string) : undefined,
+    errorCode: body.ErrorCode ?? null,
   }, 'Twilio incoming message fallback');
-
   return res.sendStatus(200);
 }
