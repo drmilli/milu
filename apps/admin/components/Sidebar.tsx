@@ -2,7 +2,9 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { useState, useEffect } from 'react';
 import { useAdminAuth } from '../hooks/useAdminAuth';
+import { adminGet } from '../lib/api';
 
 const nav = [
   {
@@ -74,7 +76,19 @@ const nav = [
 
 export default function Sidebar() {
   const pathname = usePathname();
-  const { user, logout } = useAdminAuth(false);
+  const { user, logout, token } = useAdminAuth(false);
+  const [activeCalls, setActiveCalls] = useState(0);
+
+  useEffect(() => {
+    if (!token) return;
+    const poll = () =>
+      adminGet<{ activeCalls: number }>('/admin/stats', token)
+        .then(s => setActiveCalls(s?.activeCalls ?? 0))
+        .catch(() => null);
+    poll();
+    const id = setInterval(poll, 10_000);
+    return () => clearInterval(id);
+  }, [token]);
 
   const initials = user
     ? ((user.firstName?.[0] ?? '') + (user.lastName?.[0] ?? '')).toUpperCase() || user.email[0].toUpperCase()
@@ -116,6 +130,21 @@ export default function Sidebar() {
           );
         })}
       </nav>
+
+      {/* Live calls indicator */}
+      {activeCalls > 0 && (
+        <div className="mx-3 mb-3 px-3 py-2.5 rounded-xl bg-success/10 border border-success/20">
+          <div className="flex items-center gap-2">
+            <span className="relative flex h-2 w-2 flex-shrink-0">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-success opacity-75" />
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-success" />
+            </span>
+            <Link href="/admin/calls" className="text-xs font-medium text-success hover:underline">
+              {activeCalls} live call{activeCalls !== 1 ? 's' : ''} in progress
+            </Link>
+          </div>
+        </div>
+      )}
 
       {/* Footer */}
       <div className="px-4 py-4 border-t border-white/10">

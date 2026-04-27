@@ -90,12 +90,13 @@ export default function AdminDashboardPage() {
 
   useEffect(() => { if (ready) load(); }, [ready, load]);
 
-  // Auto-refresh every 10s when there are active calls
+  // Always poll — shorter interval when calls are live, longer when idle
   useEffect(() => {
-    if (!ready || !stats || stats.activeCalls === 0) return;
-    const id = setInterval(load, 10_000);
+    if (!ready) return;
+    const interval = stats?.activeCalls ? 8_000 : 15_000;
+    const id = setInterval(load, interval);
     return () => clearInterval(id);
-  }, [ready, stats, load]);
+  }, [ready, stats?.activeCalls, load]);
 
   const statCards = stats ? [
     { label: 'Total Businesses', value: stats.totalBusinesses.toLocaleString(), change: `+${stats.newBusinessesThisMonth} this month`, up: true as const, live: false },

@@ -150,6 +150,8 @@ export async function handleAtVoiceWebhook(req: Request, res: Response) {
     callerNumber,
     destinationNumber,
     isActive,
+    queryKeys: Object.keys(req.query),
+    queryCallId: req.query.callId,
     bodyKeys: Object.keys((req.body ?? {}) as Record<string, unknown>),
   }, 'Inbound AT voice call');
 
@@ -157,7 +159,11 @@ export async function handleAtVoiceWebhook(req: Request, res: Response) {
   const host = req.get('host');
   const baseUrl = host ? `${proto}://${host}` : env.API_URL.replace(/\/$/, '');
 
-  const callDbIdFromQuery = typeof req.query.callId === 'string' && req.query.callId ? req.query.callId : null;
+  // AT sometimes drops query params from callbackUrl — also check body as fallback
+  const body = req.body as Record<string, string>;
+  const callDbIdFromQuery =
+    (typeof req.query.callId === 'string' && req.query.callId ? req.query.callId : null) ||
+    (typeof body.callId === 'string' && body.callId ? body.callId : null);
 
   // ── Hold callback: caller is on the line waiting while we compute ──────────
   // AT fires this after the short silent hold recording ends.
@@ -213,29 +219,35 @@ export async function handleAtVoiceWebhook(req: Request, res: Response) {
         );
       });
 
-    // Handle call-end accounting if caller already hung up
+    // AT sometimes sends isActive=0 when maxLength is reached even if the caller is
+    // still on the line. Always respond with the hold pattern — if the call is truly
+    // over AT will ignore the XML; if the caller is still there they hear "One moment."
     if (isActive === '0') {
-      await handleAtCallEnd(req.body as Record<string, string>);
-      // Caller is gone — no point playing anything
-      return res.send(xml(''));
+      // Fire-and-forget call-end cleanup (the hold callback can override resolution if caller stays)
+      handleAtCallEnd(req.body as Record<string, string>).catch(() => null);
     }
 
-    // Caller is still on the line — immediately return a brief acknowledgement
-    // followed by a silent hold record. When AT fires the hold callback we deliver
-    // the real AI reply (which will be ready by then in almost all cases).
     const holdUrl = `${baseUrl.replace(/\/$/, '')}/webhooks/at/voice?callId=${encodeURIComponent(finalCallDbId)}&hold=1`;
     const holdXml = xml(
       `<Say>${escapeXml('One moment please.')}</Say>` +
       `<Record maxLength="8" playBeep="false" trimSilence="false" callbackUrl="${holdUrl}"></Record>`,
     );
-    logger.info({ callDbId: finalCallDbId }, 'AT voice: sent hold response, processing in background');
+    logger.info({ callDbId: finalCallDbId, isActive }, 'AT voice: sent hold response, processing in background');
     return res.send(holdXml);
   }
 
-  // No recordingUrl — pure call-end or call-start notification
+  // No recordingUrl — could be: silent recording turn (callId present) or pure call-end
   if (isActive === '0') {
     await handleAtCallEnd(req.body as Record<string, string>);
     return res.send(xml(''));
+  }
+
+  // Silent recording (caller didn't speak) — re-prompt instead of starting a new call
+  if (callDbIdFromQuery) {
+    return res.send(xml(
+      `<Say>${escapeXml("I didn't hear anything. Please speak after the beep, then press hash when done.")}</Say>` +
+      recordTurn(callDbIdFromQuery, 6, baseUrl),
+    ));
   }
 
   try {
