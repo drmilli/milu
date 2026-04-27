@@ -322,9 +322,10 @@ async function handleAtCallEnd(body: Record<string, string>) {
     const businessId = await resolveBusinessIdByNumber(destinationNumber);
     const latestCallId = businessId ? await findLatestActiveCallId(businessId, callerNumber) : null;
     if (latestCallId) {
+      // Only update if still ACTIVE — if handleAtVoiceTurn already set COMPLETED+resolution, skip
       await db.update(calls)
-        .set({ status: 'COMPLETED', duration: parseInt(durationInSeconds ?? '0', 10), endedAt: new Date() })
-        .where(eq(calls.id, latestCallId));
+        .set({ status: 'COMPLETED', resolution: 'ABANDONED', duration: parseInt(durationInSeconds ?? '0', 10), endedAt: new Date() })
+        .where(and(eq(calls.id, latestCallId), eq(calls.status, 'ACTIVE')));
     }
     logger.info({ callerNumber, durationInSeconds }, 'AT call ended');
   } catch (err) {
