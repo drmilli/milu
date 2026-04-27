@@ -35,7 +35,7 @@ async function handleAtVoiceTurn(
 ) {
   const retry = xml(
     `<Say>${escapeXml("Sorry, I didn't catch that. Please say that again.")}</Say>` +
-    recordTurn(callDbId, 6, baseUrl),
+    recordTurn(callDbId, 20, baseUrl),
   );
 
   if (!recordingUrl) return retry;
@@ -224,7 +224,7 @@ export async function handleAtVoiceWebhook(req: Request, res: Response) {
       ?? `Hello, thank you for calling ${bizRow?.name ?? 'us'}. How can I help you today?`;
     const enableRecording = agentRow?.enableRecording ?? true;
     const maxDuration = agentRow?.maxCallDuration ?? 600;
-    const turnSeconds = Math.min(6, maxDuration);
+    const turnSeconds = Math.min(20, maxDuration);
     const businessHoursOnly = agentRow?.businessHoursOnly ?? false;
     const afterHoursMessage = agentRow?.afterHoursMessage
       ?? 'We are currently closed. Please call back during business hours. Goodbye.';
