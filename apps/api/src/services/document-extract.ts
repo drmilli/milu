@@ -251,51 +251,43 @@ export async function voiceChat(
     escalationNumber?: string | null;
   },
 ): Promise<VoiceChatResult> {
-  const systemPrompt = `You are an AI phone agent for "${context.businessName}". You handle inbound customer calls.
-
-Knowledge base:
-${context.websiteSummary ? `About the business: ${context.websiteSummary.slice(0, 1000)}\n` : ''}${context.docSummaries.length ? `Additional info:\n${context.docSummaries.slice(0, 3).map((s, i) => `${i + 1}. ${s.slice(0, 500)}`).join('\n')}\n` : ''}${context.faqs.length ? `FAQs:\n${context.faqs.map(f => `Q: ${f.question}\nA: ${f.answer}`).join('\n\n')}` : 'No FAQs configured yet.'}
-
-Rules:
-- Speak naturally and concisely — you are talking on the phone, not texting
-- Keep responses under 3 sentences
-- Do NOT use bullet points, asterisks, or markdown
-- If you cannot answer, offer to escalate to a human${context.escalationNumber ? ' — say "Let me transfer you to a team member"' : ''}
-- When ending the call naturally, say "Goodbye" or "Have a great day"
-- If the caller asks to speak to a human or manager, escalate immediately
-
-After your spoken reply, on a new line write exactly one of: [CONTINUE] [ESCALATE] [END]`;
+  const systemPrompt = `You are a phone agent for "${context.businessName}". Be brief and natural — max 2 sentences per reply. No lists or markdown.${context.agentTone ? ` Tone: ${context.agentTone}.` : ''}
+${context.websiteSummary ? `Business: ${context.websiteSummary.slice(0, 400)}\n` : ''}${context.faqs.length ? `FAQs:\n${context.faqs.slice(0, 6).map(f => `Q: ${f.question} A: ${f.answer}`).join('\n')}\n` : ''}${context.docSummaries.length ? `Info: ${context.docSummaries.slice(0, 2).map(s => s.slice(0, 200)).join(' ')}\n` : ''}If you can't answer, say you'll transfer them to the team.${context.escalationNumber ? ' Escalation available.' : ''}
+End your reply with one of: [CONTINUE] [ESCALATE] [END]`;
 
   const msgs = messages.map(m => ({ role: m.role, content: m.content }));
   let raw = '';
 
-  if (env.OPENAI_API_KEY) {
+  // Claude Haiku first — fastest for short voice replies
+  if (env.ANTHROPIC_API_KEY) {
+    try {
+      const res = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: { 'x-api-key': env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+        body: JSON.stringify({ model: 'claude-haiku-4-5-20251001', max_tokens: 200, system: systemPrompt, messages: msgs }),
+        signal: AbortSignal.timeout(8000),
+      });
+      if (!res.ok) { const b = await res.text(); throw new Error(`Claude ${res.status}: ${b}`); }
+      const data = await res.json() as { content: Array<{ text: string }> };
+      raw = data.content[0]?.text ?? '';
+    } catch (err) { logger.warn({ err }, 'Claude voiceChat failed, trying OpenAI'); }
+  }
+
+  if (!raw && env.OPENAI_API_KEY) {
     try {
       const res = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${env.OPENAI_API_KEY}`, 'content-type': 'application/json' },
         body: JSON.stringify({
-          model: 'gpt-4o-mini', max_tokens: 512,
+          model: 'gpt-4o-mini', max_tokens: 200,
           messages: [{ role: 'system', content: systemPrompt }, ...msgs],
         }),
+        signal: AbortSignal.timeout(8000),
       });
       if (!res.ok) { const b = await res.text(); throw new Error(`OpenAI ${res.status}: ${b}`); }
       const data = await res.json() as { choices: Array<{ message: { content: string } }> };
       raw = data.choices[0]?.message?.content ?? '';
-    } catch (err) { logger.warn({ err }, 'OpenAI voiceChat failed, trying Claude'); }
-  }
-
-  if (!raw && env.ANTHROPIC_API_KEY) {
-    try {
-      const res = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: { 'x-api-key': env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-        body: JSON.stringify({ model: 'claude-3-5-haiku-20241022', max_tokens: 512, system: systemPrompt, messages: msgs }),
-      });
-      if (!res.ok) { const b = await res.text(); throw new Error(`Claude ${res.status}: ${b}`); }
-      const data = await res.json() as { content: Array<{ text: string }> };
-      raw = data.content[0]?.text ?? '';
-    } catch (err) { logger.error({ err }, 'Claude voiceChat failed'); }
+    } catch (err) { logger.error({ err }, 'OpenAI voiceChat failed'); }
   }
 
   if (!raw) {

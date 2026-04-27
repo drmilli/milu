@@ -177,11 +177,11 @@ export async function handleAtVoiceWebhook(req: Request, res: Response) {
       if (isActive === '0') await handleAtCallEnd(req.body as Record<string, string>);
       return res.send(cached);
     }
-    // Still computing — extend the hold by another 4 seconds (no beep, silent)
+    // Still computing — extend the hold by 2 seconds and check again
     logger.info({ callDbId }, 'AT hold callback: still computing, extending hold');
     const holdUrl = `${baseUrl.replace(/\/$/, '')}/webhooks/at/voice?callId=${encodeURIComponent(callDbId)}&hold=1`;
     if (isActive === '0') await handleAtCallEnd(req.body as Record<string, string>);
-    return res.send(xml(`<Record maxLength="4" playBeep="false" trimSilence="false" callbackUrl="${holdUrl}"></Record>`));
+    return res.send(xml(`<Record maxLength="2" playBeep="false" trimSilence="false" callbackUrl="${holdUrl}"></Record>`));
   }
 
   // ── Recording callback: caller has spoken, kick off background processing ──
@@ -228,9 +228,11 @@ export async function handleAtVoiceWebhook(req: Request, res: Response) {
     }
 
     const holdUrl = `${baseUrl.replace(/\/$/, '')}/webhooks/at/voice?callId=${encodeURIComponent(finalCallDbId)}&hold=1`;
+    // 2-second poll: as soon as the AI response is cached the next hold callback delivers it.
+    // "Please hold" keeps the caller engaged so they don't hang up during the brief wait.
     const holdXml = xml(
-      `<Say>${escapeXml('One moment please.')}</Say>` +
-      `<Record maxLength="8" playBeep="false" trimSilence="false" callbackUrl="${holdUrl}"></Record>`,
+      `<Say>${escapeXml('Please hold.')}</Say>` +
+      `<Record maxLength="2" playBeep="false" trimSilence="false" callbackUrl="${holdUrl}"></Record>`,
     );
     logger.info({ callDbId: finalCallDbId, isActive }, 'AT voice: sent hold response, processing in background');
     return res.send(holdXml);

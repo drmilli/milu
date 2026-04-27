@@ -24,14 +24,33 @@ export async function transcribeRecordingSnippet(recordingUrl: string): Promise<
 
   try {
     if (env.DEEPGRAM_API_KEY) {
-      const timeout = withTimeout(20000);
-      const res = await fetch('https://api.deepgram.com/v1/listen?model=nova-2&smart_format=true&language=en', {
+      // Download audio ourselves so we can retry quickly if AT's URL isn't ready yet
+      let audioBuffer: ArrayBuffer | null = null;
+      let contentType = 'audio/mp3';
+      for (let attempt = 0; attempt < 3; attempt++) {
+        if (attempt > 0) await new Promise(r => setTimeout(r, 800));
+        const t = withTimeout(8000);
+        try {
+          const r = await fetch(recordingUrl, { signal: t.signal });
+          t.done();
+          if (r.ok) {
+            contentType = r.headers.get('content-type') ?? contentType;
+            audioBuffer = await r.arrayBuffer();
+            break;
+          }
+        } catch { t.done(); }
+      }
+      if (!audioBuffer || audioBuffer.byteLength < 100) return '';
+
+      const ext = extFromContentType(contentType);
+      const form = new FormData();
+      form.append('audio', new Blob([audioBuffer], { type: contentType }), `audio.${ext}`);
+
+      const timeout = withTimeout(10000);
+      const res = await fetch('https://api.deepgram.com/v1/listen?model=nova-2&language=en&punctuate=true', {
         method: 'POST',
-        headers: {
-          Authorization: `Token ${env.DEEPGRAM_API_KEY}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ url: recordingUrl }),
+        headers: { Authorization: `Token ${env.DEEPGRAM_API_KEY}` },
+        body: form,
         signal: timeout.signal,
       });
       timeout.done();
