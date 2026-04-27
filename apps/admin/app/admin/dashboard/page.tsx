@@ -10,6 +10,7 @@ interface AdminStats {
   newBusinessesThisMonth: number;
   activeTrials: number;
   trialsExpiringSoon: number;
+  activeCalls: number;
   callsThisMonth: number;
   callsGrowthPct: number;
   mrr: number;
@@ -89,13 +90,20 @@ export default function AdminDashboardPage() {
 
   useEffect(() => { if (ready) load(); }, [ready, load]);
 
+  // Auto-refresh every 10s when there are active calls
+  useEffect(() => {
+    if (!ready || !stats || stats.activeCalls === 0) return;
+    const id = setInterval(load, 10_000);
+    return () => clearInterval(id);
+  }, [ready, stats, load]);
+
   const statCards = stats ? [
-    { label: 'Total Businesses', value: stats.totalBusinesses.toLocaleString(), change: `+${stats.newBusinessesThisMonth} this month`, up: true as const },
-    { label: 'Active Trials', value: stats.activeTrials.toString(), change: `${stats.trialsExpiringSoon} expiring soon`, up: null },
-    { label: 'Calls This Month', value: stats.callsThisMonth.toLocaleString(), change: `+${stats.callsGrowthPct.toFixed(1)}% vs last month`, up: true as const },
-    { label: 'MRR', value: fmtMrr(stats.mrr), change: `+${fmtMrr(stats.mrrGrowth)} vs last month`, up: true as const },
-    { label: 'AI Resolution Rate', value: `${stats.aiResolutionRate.toFixed(1)}%`, change: `+${stats.aiResolutionRateChange.toFixed(1)}% vs last month`, up: true as const },
-    { label: 'Escalations Today', value: stats.escalationsToday.toString(), change: `Across ${stats.escalationBusinessCount} businesses`, up: null },
+    { label: 'Total Businesses', value: stats.totalBusinesses.toLocaleString(), change: `+${stats.newBusinessesThisMonth} this month`, up: true as const, live: false },
+    { label: 'Active Trials', value: stats.activeTrials.toString(), change: `${stats.trialsExpiringSoon} expiring soon`, up: null, live: false },
+    { label: 'Live Calls', value: stats.activeCalls.toString(), change: stats.activeCalls > 0 ? 'In progress now' : 'No active calls', up: null, live: stats.activeCalls > 0 },
+    { label: 'Calls This Month', value: stats.callsThisMonth.toLocaleString(), change: `+${stats.callsGrowthPct.toFixed(1)}% vs last month`, up: true as const, live: false },
+    { label: 'AI Resolution Rate', value: `${stats.aiResolutionRate.toFixed(1)}%`, change: `+${stats.aiResolutionRateChange.toFixed(1)}% vs last month`, up: true as const, live: false },
+    { label: 'Escalations Today', value: stats.escalationsToday.toString(), change: `Across ${stats.escalationBusinessCount} businesses`, up: null, live: false },
   ] : null;
 
   return (
@@ -110,10 +118,13 @@ export default function AdminDashboardPage() {
         {loading ? (
           Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-24" />)
         ) : statCards?.map((s) => (
-          <div key={s.label} className="bg-white rounded-2xl border border-cream-dark p-5">
-            <p className="text-xs text-primary-warm mb-1">{s.label}</p>
+          <div key={s.label} className={`bg-white rounded-2xl border p-5 ${s.live ? 'border-success/40 ring-1 ring-success/20' : 'border-cream-dark'}`}>
+            <div className="flex items-center gap-2 mb-1">
+              {s.live && <span className="relative flex h-2 w-2"><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-success opacity-75" /><span className="relative inline-flex rounded-full h-2 w-2 bg-success" /></span>}
+              <p className="text-xs text-primary-warm">{s.label}</p>
+            </div>
             <p className="text-2xl font-bold text-primary-dark font-heading">{s.value}</p>
-            <p className={`text-xs mt-1 ${s.up === true ? 'text-success' : s.up === false ? 'text-danger' : 'text-primary-warm'}`}>
+            <p className={`text-xs mt-1 ${s.up === true ? 'text-success' : s.up === false ? 'text-danger' : s.live ? 'text-success' : 'text-primary-warm'}`}>
               {s.up === true ? '↑ ' : s.up == null ? '' : '↓ '}{s.change}
             </p>
           </div>

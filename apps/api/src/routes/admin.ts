@@ -108,7 +108,7 @@ adminRouter.get('/stats', async (_req, res, next) => {
       bizCount, activeBiz, newBizThisMonth,
       callCount, callsThisMonth, callsLastMonth,
       escalationCount, escalationsToday, escalationBizToday,
-      planCounts, resolvedCalls,
+      planCounts, resolvedCalls, activeCalls,
     ] = await Promise.all([
       db.select({ n: sql<number>`count(*)` }).from(businesses),
       db.select({ n: sql<number>`count(*)` }).from(businesses).where(eq(businesses.isActive, true)),
@@ -121,6 +121,7 @@ adminRouter.get('/stats', async (_req, res, next) => {
       db.select({ n: sql<number>`count(distinct ${escalations.businessId})` }).from(escalations).where(gte(escalations.createdAt, startOfToday)),
       db.select({ tier: businesses.subscriptionTier, count: sql<number>`count(*)` }).from(businesses).groupBy(businesses.subscriptionTier),
       db.select({ n: sql<number>`count(*)` }).from(calls).where(eq(calls.resolution, 'AI')),
+      db.select({ n: sql<number>`count(*)` }).from(calls).where(eq(calls.status, 'ACTIVE')),
     ]);
 
     const planMap: Record<string, number> = {};
@@ -139,6 +140,7 @@ adminRouter.get('/stats', async (_req, res, next) => {
       newBusinessesThisMonth: Number(newBizThisMonth[0].n),
       activeTrials: planMap['STARTER'] ?? 0,
       trialsExpiringSoon: 0,
+      activeCalls: Number(activeCalls[0].n),
       callsThisMonth: thisMonthCalls,
       callsGrowthPct: lastMonthCalls > 0 ? ((thisMonthCalls - lastMonthCalls) / lastMonthCalls) * 100 : 0,
       mrr,
@@ -470,6 +472,7 @@ adminRouter.get('/calls', async (req, res, next) => {
         callerNumber: calls.callerNumber,
         duration: calls.duration,
         resolution: calls.resolution,
+        status: calls.status,
         intent: calls.intent,
         startedAt: calls.startedAt,
         businessName: businesses.name,
@@ -486,6 +489,7 @@ adminRouter.get('/calls', async (req, res, next) => {
         business: c.businessName ?? '—',
         caller: c.callerNumber,
         durationSeconds: c.duration ?? 0,
+        status: c.status,
         resolution: c.resolution ?? 'ABANDONED',
         intent: c.intent,
         startedAt: c.startedAt.toISOString(),

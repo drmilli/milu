@@ -9,22 +9,30 @@ type Call = {
   business: string;
   caller: string;
   durationSeconds: number;
-  resolution: 'AI' | 'HUMAN' | 'ABANDONED';
+  status: 'ACTIVE' | 'COMPLETED' | 'FAILED';
+  resolution: 'AI' | 'HUMAN' | 'ABANDONED' | null;
   intent: string | null;
   startedAt: string;
 };
 
 const statusColors: Record<string, string> = {
-  AI: 'bg-success/10 text-success',
+  ACTIVE: 'bg-success/10 text-success',
+  AI: 'bg-primary/10 text-primary',
   HUMAN: 'bg-warning/10 text-warning',
   ABANDONED: 'bg-danger/10 text-danger',
 };
 
 const statusLabel: Record<string, string> = {
+  ACTIVE: 'Live',
   AI: 'Resolved',
   HUMAN: 'Escalated',
   ABANDONED: 'Missed',
 };
+
+function callDisplayStatus(c: Call): string {
+  if (c.status === 'ACTIVE') return 'ACTIVE';
+  return c.resolution ?? 'ABANDONED';
+}
 
 function fmtDuration(sec: number) {
   if (!sec) return '—';
@@ -68,6 +76,13 @@ export default function CallsPage() {
 
   useEffect(() => { if (ready) load(); }, [ready, load]);
 
+  const activeCalls = calls.filter(c => c.status === 'ACTIVE');
+  useEffect(() => {
+    if (activeCalls.length === 0) return;
+    const id = setInterval(load, 10_000);
+    return () => clearInterval(id);
+  }, [activeCalls.length, load]);
+
   const businesses = Array.from(new Set(calls.map(c => c.business))).sort();
 
   const filtered = calls.filter(c => {
@@ -78,9 +93,10 @@ export default function CallsPage() {
     return matchesSearch && matchesBiz;
   });
 
-  const resolved = filtered.filter(c => c.resolution === 'AI').length;
-  const escalated = filtered.filter(c => c.resolution === 'HUMAN').length;
-  const missed = filtered.filter(c => c.resolution === 'ABANDONED').length;
+  const live = filtered.filter(c => c.status === 'ACTIVE').length;
+  const resolved = filtered.filter(c => c.status !== 'ACTIVE' && c.resolution === 'AI').length;
+  const escalated = filtered.filter(c => c.status !== 'ACTIVE' && c.resolution === 'HUMAN').length;
+  const missed = filtered.filter(c => c.status !== 'ACTIVE' && (c.resolution === 'ABANDONED' || !c.resolution)).length;
 
   return (
     <div className="p-6 lg:p-8 space-y-6">
@@ -90,17 +106,21 @@ export default function CallsPage() {
       </div>
 
       {/* Summary strip */}
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-4 gap-4">
         {[
-          { label: 'Resolved', value: resolved, color: 'text-success' },
-          { label: 'Escalated', value: escalated, color: 'text-warning' },
-          { label: 'Missed', value: missed, color: 'text-danger' },
+          { label: 'Live', value: live, color: 'text-success', pulse: live > 0 },
+          { label: 'Resolved', value: resolved, color: 'text-primary', pulse: false },
+          { label: 'Escalated', value: escalated, color: 'text-warning', pulse: false },
+          { label: 'Missed', value: missed, color: 'text-danger', pulse: false },
         ].map(s => (
-          <div key={s.label} className="bg-white rounded-xl border border-cream-dark p-4 text-center">
+          <div key={s.label} className={`bg-white rounded-xl border p-4 text-center ${s.pulse ? 'border-success/40 ring-1 ring-success/20' : 'border-cream-dark'}`}>
             {loading ? (
               <div className="h-7 bg-cream rounded animate-pulse mx-auto w-8 mb-1" />
             ) : (
-              <p className={`text-xl font-bold ${s.color}`}>{s.value}</p>
+              <div className="flex items-center justify-center gap-1.5">
+                {s.pulse && <span className="relative flex h-2 w-2"><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-success opacity-75" /><span className="relative inline-flex rounded-full h-2 w-2 bg-success" /></span>}
+                <p className={`text-xl font-bold ${s.color}`}>{s.value}</p>
+              </div>
             )}
             <p className="text-xs text-primary-warm mt-0.5">{s.label}</p>
           </div>
@@ -131,6 +151,7 @@ export default function CallsPage() {
           className="px-3 py-2.5 rounded-xl border border-cream-dark bg-white text-sm text-primary-dark focus:outline-none cursor-pointer"
         >
           <option value="all">All statuses</option>
+          <option value="ACTIVE">Live</option>
           <option value="AI">Resolved</option>
           <option value="HUMAN">Escalated</option>
           <option value="ABANDONED">Missed</option>
@@ -153,20 +174,25 @@ export default function CallsPage() {
           <tbody className="divide-y divide-cream-dark">
             {loading ? (
               Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} />)
-            ) : filtered.map(c => (
-              <tr key={c.id} className="hover:bg-cream-light/40 transition-colors">
-                <td className="px-5 py-3.5 font-medium text-primary-dark">{c.business}</td>
-                <td className="px-4 py-3.5 text-primary-warm font-mono text-xs">{c.caller}</td>
-                <td className="px-4 py-3.5 text-primary-warm">{c.intent ?? '—'}</td>
-                <td className="px-4 py-3.5 text-primary-warm">{fmtDuration(c.durationSeconds)}</td>
-                <td className="px-4 py-3.5">
-                  <span className={`text-xs font-medium px-2.5 py-0.5 rounded-full ${statusColors[c.resolution]}`}>
-                    {statusLabel[c.resolution]}
-                  </span>
-                </td>
-                <td className="px-4 py-3.5 text-primary-warm">{fmtTime(c.startedAt)}</td>
-              </tr>
-            ))}
+            ) : filtered.map(c => {
+              const displayStatus = callDisplayStatus(c);
+              const isLive = c.status === 'ACTIVE';
+              return (
+                <tr key={c.id} className={`hover:bg-cream-light/40 transition-colors ${isLive ? 'bg-success/5' : ''}`}>
+                  <td className="px-5 py-3.5 font-medium text-primary-dark">{c.business}</td>
+                  <td className="px-4 py-3.5 text-primary-warm font-mono text-xs">{c.caller}</td>
+                  <td className="px-4 py-3.5 text-primary-warm">{c.intent ?? '—'}</td>
+                  <td className="px-4 py-3.5 text-primary-warm">{isLive ? <span className="text-success text-xs font-medium">ongoing</span> : fmtDuration(c.durationSeconds)}</td>
+                  <td className="px-4 py-3.5">
+                    <span className={`inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-0.5 rounded-full ${statusColors[displayStatus]}`}>
+                      {isLive && <span className="relative flex h-1.5 w-1.5"><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-success opacity-75" /><span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-success" /></span>}
+                      {statusLabel[displayStatus]}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3.5 text-primary-warm">{fmtTime(c.startedAt)}</td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
         {!loading && filtered.length === 0 && (
