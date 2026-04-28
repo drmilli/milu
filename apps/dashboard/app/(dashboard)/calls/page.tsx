@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { clsx } from 'clsx';
 import { useAuth } from '../../../hooks/useAuth';
 import { apiGet } from '../../../lib/api';
@@ -61,6 +62,8 @@ function Skeleton({ className }: { className: string }) {
 
 export default function CallsPage() {
   const { token, ready } = useAuth();
+  const searchParams = useSearchParams();
+  const highlightId = searchParams.get('call');
 
   const [calls, setCalls] = useState<Call[]>([]);
   const [total, setTotal] = useState(0);
@@ -89,6 +92,13 @@ export default function CallsPage() {
   }, [token, filter, search, page]);
 
   useEffect(() => { if (ready) loadCalls(); }, [ready, loadCalls]);
+
+  // Auto-select call when linked from live card (?call=<id>)
+  useEffect(() => {
+    if (!highlightId || calls.length === 0 || selected) return;
+    const match = calls.find(c => c.id === highlightId);
+    if (match) setSelected(match);
+  }, [highlightId, calls, selected]);
 
   useEffect(() => {
     if (!selected || !token) return;

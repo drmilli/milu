@@ -9,6 +9,8 @@ import { swaggerSpec } from './swagger';
 import { apiLimiter } from './middleware/rate-limit';
 import { errorHandler } from './middleware/error-handler';
 import { httpLogger } from './middleware/http-logger';
+import { and, eq, lt, sql as drizzleSql } from 'drizzle-orm';
+import { db, calls } from './db';
 import { authRouter } from './routes/auth';
 import { businessesRouter } from './routes/businesses';
 import { callsRouter } from './routes/calls';
@@ -116,7 +118,7 @@ app.use('/api/v1/api-keys', apiKeysRouter);
 
 app.use(errorHandler);
 
-server.listen(env.PORT, () => {
+server.listen(env.PORT, async () => {
   logger.info({
     port: env.PORT,
     env: env.NODE_ENV,
@@ -128,6 +130,21 @@ server.listen(env.PORT, () => {
     email: !!env.GMAIL_USER,
     whop: !!env.WHOP_API_KEY,
   }, 'Milu API started');
+
+  // Close any ACTIVE calls stuck open from before the isActive=0 fix
+  try {
+    const staleThreshold = new Date(Date.now() - 2 * 60 * 60 * 1000); // 2 hours ago
+    const result = await db.update(calls)
+      .set({
+        status: 'COMPLETED',
+        resolution: drizzleSql`COALESCE(${calls.resolution}, 'ABANDONED'::resolution_type)`,
+        endedAt: new Date(),
+      })
+      .where(and(eq(calls.status, 'ACTIVE'), lt(calls.startedAt, staleThreshold)));
+    logger.info({ result }, 'Cleaned up stale ACTIVE calls on startup');
+  } catch (err) {
+    logger.warn({ err }, 'Stale call cleanup failed (non-fatal)');
+  }
 });
 
 export default app;

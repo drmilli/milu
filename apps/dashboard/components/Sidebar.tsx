@@ -93,11 +93,14 @@ function LiveCallCard({ token }: { token: string }) {
     return () => clearInterval(id);
   }, [token]);
 
-  // Live elapsed timer
+  // Live elapsed timer — hide if call is stale (> 4 hours old, stuck ACTIVE in DB)
   useEffect(() => {
     if (!call) { setElapsed(0); return; }
     const started = new Date(call.startedAt).getTime();
-    const tick = () => setElapsed(Math.floor((Date.now() - started) / 1000));
+    const age = Date.now() - started;
+    // Stale: started over 4 hours ago (pre-fix stuck calls)
+    if (age > 4 * 60 * 60 * 1000) { setCall(null); return; }
+    const tick = () => setElapsed(Math.max(0, Math.floor((Date.now() - started) / 1000)));
     tick();
     const id = setInterval(tick, 1000);
     return () => clearInterval(id);
@@ -120,7 +123,7 @@ function LiveCallCard({ token }: { token: string }) {
       </div>
       <p className="text-xs text-cream/70 font-mono truncate">{call.callerNumber}</p>
       <Link
-        href="/calls"
+        href={`/calls?call=${call.id}`}
         className="mt-2 block text-center text-[11px] font-medium text-success/80 hover:text-success transition-colors"
       >
         View call →
