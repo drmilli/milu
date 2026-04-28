@@ -7,6 +7,7 @@ import { voiceChat, type ChatMessage } from '../services/document-extract';
 import { transcribeRecordingSnippet } from '../services/transcription';
 import { notifyBusinessOwners } from '../services/notifications';
 import { sendEscalationAlert } from '../services/whatsapp';
+import { redis } from '../utils/redis';
 
 function xml(body: string) {
   return `<?xml version="1.0" encoding="UTF-8"?><Response>${body}</Response>`;
@@ -40,6 +41,78 @@ function holdRecord(baseUrl: string) {
 const sessionCallMap = new Map<string, string>();
 // callDbId → precomputed XML response (set by background AI processing)
 const replyCache = new Map<string, string>();
+
+function pickFirstString(value: unknown): string | undefined {
+  if (typeof value === 'string') return value;
+  if (Array.isArray(value)) return typeof value[0] === 'string' ? value[0] : undefined;
+  return undefined;
+}
+
+function getAtPayload(req: Request): Record<string, string> {
+  const src: Record<string, unknown> = (
+    req.body && typeof req.body === 'object' && Object.keys(req.body as Record<string, unknown>).length > 0
+      ? (req.body as Record<string, unknown>)
+      : (req.query as Record<string, unknown>)
+  );
+
+  const out: Record<string, string> = {};
+  for (const key of ['sessionId', 'callerNumber', 'destinationNumber', 'isActive', 'recordingUrl', 'durationInSeconds']) {
+    const value = pickFirstString(src[key]);
+    if (value !== undefined) out[key] = value;
+  }
+  return out;
+}
+
+function sessionKey(sessionId: string) {
+  return `at:voice:session:${sessionId}`;
+}
+
+function replyKey(callDbId: string) {
+  return `at:voice:reply:${callDbId}`;
+}
+
+async function setSessionCall(sessionId: string, callDbId: string) {
+  sessionCallMap.set(sessionId, callDbId);
+  if (!redis) return;
+  await redis.set(sessionKey(sessionId), callDbId, 'EX', 60 * 60).catch(() => null);
+}
+
+async function getSessionCall(sessionId: string): Promise<string | null> {
+  const inMem = sessionCallMap.get(sessionId);
+  if (inMem) return inMem;
+  if (!redis) return null;
+  const val = await redis.get(sessionKey(sessionId)).catch(() => null);
+  if (val) sessionCallMap.set(sessionId, val);
+  return val ?? null;
+}
+
+async function deleteSessionCall(sessionId: string) {
+  sessionCallMap.delete(sessionId);
+  if (!redis) return;
+  await redis.del(sessionKey(sessionId)).catch(() => null);
+}
+
+async function setReply(callDbId: string, xmlResponse: string) {
+  replyCache.set(callDbId, xmlResponse);
+  if (!redis) return;
+  await redis.set(replyKey(callDbId), xmlResponse, 'EX', 5 * 60).catch(() => null);
+}
+
+async function popReply(callDbId: string): Promise<string | null> {
+  const inMem = replyCache.get(callDbId);
+  if (inMem) {
+    replyCache.delete(callDbId);
+    return inMem;
+  }
+
+  if (!redis) return null;
+
+  const key = replyKey(callDbId);
+  const res = await redis.multi().get(key).del(key).exec().catch(() => null);
+  const value = Array.isArray(res) ? (res[0]?.[1] as string | null | undefined) : null;
+  if (typeof value === 'string' && value) return value;
+  return null;
+}
 
 async function computeAtVoiceReply(
   callDbId: string,
@@ -147,7 +220,7 @@ async function computeAtVoiceReply(
 export async function handleAtVoiceWebhook(req: Request, res: Response) {
   res.set('Content-Type', 'text/xml');
 
-  const body = req.body as Record<string, string>;
+  const body = getAtPayload(req);
   const { sessionId, callerNumber, destinationNumber, isActive, recordingUrl } = body;
 
   const proto = (req.headers['x-forwarded-proto'] as string | undefined)?.split(',')[0]?.trim() || 'https';
@@ -167,7 +240,7 @@ export async function handleAtVoiceWebhook(req: Request, res: Response) {
   // ── Recording turn: caller spoke ─────────────────────────────────────────
   if (recordingUrl) {
     // Look up callDbId from our session map (reliable since AT strips query params)
-    const callDbId = sessionId ? sessionCallMap.get(sessionId) : null;
+    const callDbId = sessionId ? await getSessionCall(sessionId) : null;
 
     if (!callDbId) {
       logger.warn({ sessionId, callerNumber, destinationNumber }, 'AT recording: no session mapping found');
@@ -185,19 +258,19 @@ export async function handleAtVoiceWebhook(req: Request, res: Response) {
     // Start AI processing in background
     computeAtVoiceReply(callDbId, callerNumber, recordingUrl, baseUrl)
       .then(responseXml => {
-        replyCache.set(callDbId, responseXml);
+        void setReply(callDbId, responseXml);
         logger.info({ callDbId, callerHungUp }, 'AT reply cached');
         if (callerHungUp) {
           handleAtCallEnd(body).catch(() => null);
-          if (sessionId) sessionCallMap.delete(sessionId);
+          if (sessionId) void deleteSessionCall(sessionId);
         }
       })
       .catch(err => {
         logger.error({ err, callDbId }, 'Background AT voice processing error');
-        replyCache.set(callDbId, xml(`<Say>${escapeXml('I am sorry, I encountered an error. Please try again.')}</Say><Hangup></Hangup>`));
+        void setReply(callDbId, xml(`<Say>${escapeXml('I am sorry, I encountered an error. Please try again.')}</Say><Hangup></Hangup>`));
         if (callerHungUp) {
           handleAtCallEnd(body).catch(() => null);
-          if (sessionId) sessionCallMap.delete(sessionId);
+          if (sessionId) void deleteSessionCall(sessionId);
         }
       });
 
@@ -208,18 +281,20 @@ export async function handleAtVoiceWebhook(req: Request, res: Response) {
   // ── Call ended (no recording) ─────────────────────────────────────────────
   if (isActive === '0') {
     await handleAtCallEnd(body);
-    if (sessionId) sessionCallMap.delete(sessionId);
+    if (sessionId) await deleteSessionCall(sessionId);
     return res.send(xml(''));
   }
 
   // ── Silent turn: no audio recorded, caller still on line ─────────────────
   // Happens when maxLength elapses without voice (sessionId present in our map)
-  if (sessionId && sessionCallMap.has(sessionId)) {
-    const callDbId = sessionCallMap.get(sessionId)!;
-    return res.send(xml(
-      `<Say>${escapeXml("I'm still here. Please go ahead and speak after the beep.")}</Say>` +
-      recordTurn(15, baseUrl),
-    ));
+  if (sessionId) {
+    const callDbId = await getSessionCall(sessionId);
+    if (callDbId) {
+      return res.send(xml(
+        `<Say>${escapeXml("I'm still here. Please go ahead and speak after the beep.")}</Say>` +
+        recordTurn(15, baseUrl),
+      ));
+    }
   }
 
   // ── New inbound call ──────────────────────────────────────────────────────
@@ -270,7 +345,7 @@ export async function handleAtVoiceWebhook(req: Request, res: Response) {
     const callDbId = callRow?.id ?? '';
 
     // Store session → call mapping for all subsequent callbacks
-    if (sessionId && callDbId) sessionCallMap.set(sessionId, callDbId);
+    if (sessionId && callDbId) await setSessionCall(sessionId, callDbId);
 
     logger.info({ businessId, callerNumber, destinationNumber, sessionId, callDbId }, 'AT call answered');
 
@@ -312,27 +387,26 @@ export async function handleAtVoiceWebhook(req: Request, res: Response) {
 export async function handleAtHoldWebhook(req: Request, res: Response) {
   res.set('Content-Type', 'text/xml');
 
-  const body = req.body as Record<string, string>;
+  const body = getAtPayload(req);
   const { sessionId, isActive } = body;
 
   const proto = (req.headers['x-forwarded-proto'] as string | undefined)?.split(',')[0]?.trim() || 'https';
   const host = req.get('host');
   const baseUrl = host ? `${proto}://${host}` : env.API_URL.replace(/\/$/, '');
 
-  const callDbId = sessionId ? sessionCallMap.get(sessionId) : null;
+  const callDbId = sessionId ? await getSessionCall(sessionId) : null;
 
   if (!callDbId) {
     logger.warn({ sessionId }, 'AT hold callback: no session mapping');
     return res.send(xml('<Hangup></Hangup>'));
   }
 
-  const cached = replyCache.get(callDbId);
+  const cached = await popReply(callDbId);
   if (cached) {
-    replyCache.delete(callDbId);
     logger.info({ callDbId }, 'AT hold: serving cached reply');
     if (isActive === '0') {
       await handleAtCallEnd(body);
-      sessionCallMap.delete(sessionId!);
+      if (sessionId) await deleteSessionCall(sessionId);
     }
     return res.send(cached);
   }
@@ -341,7 +415,7 @@ export async function handleAtHoldWebhook(req: Request, res: Response) {
   logger.info({ callDbId }, 'AT hold: still computing, extending');
   if (isActive === '0') {
     await handleAtCallEnd(body);
-    sessionCallMap.delete(sessionId!);
+    if (sessionId) await deleteSessionCall(sessionId);
     return res.send(xml(''));
   }
 
