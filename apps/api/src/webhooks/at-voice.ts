@@ -276,7 +276,7 @@ export async function handleAtVoiceWebhook(req: Request, res: Response) {
       });
 
     // Immediately acknowledge and hold while AI processes
-    return res.send(xml(`<Say>${escapeXml('One moment please.')}</Say>` + holdRecord(baseUrl)));
+    return res.send(xml(`<Say>${escapeXml('Got it, one moment please.')}</Say>` + holdRecord(baseUrl)));
   }
 
   // ── Call ended (no recording) ─────────────────────────────────────────────
@@ -374,7 +374,7 @@ export async function handleAtVoiceWebhook(req: Request, res: Response) {
       return res.send(xml(`<Say>${escapeXml(greeting)}</Say><Hangup></Hangup>`));
     }
 
-    const script = `${greeting} Please speak after the beep.`;
+    const script = `${greeting} Please speak after the beep, and stay on the line while I find an answer for you.`;
     const responseXml = xml(`<Say>${escapeXml(script)}</Say>` + recordTurn(turnSeconds, baseUrl));
     logger.info({ callDbId, xml: responseXml.slice(0, 400) }, 'AT voice response');
     return res.send(responseXml);
