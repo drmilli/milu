@@ -21,15 +21,24 @@ function escapeXml(value: string) {
     .replace(/'/g, '&apos;');
 }
 
-function recordTurn(callId: string, seconds: number, baseUrl: string) {
-  const callbackUrl = `${baseUrl.replace(/\/$/, '')}/webhooks/at/voice?callId=${encodeURIComponent(callId)}`;
+// AT strips query params from callbackUrl — use path-only URLs.
+// Regular speech turn  → /webhooks/at/voice
+// Hold polling callback → /webhooks/at/voice/hold
+function recordTurn(seconds: number, baseUrl: string) {
+  const callbackUrl = `${baseUrl.replace(/\/$/, '')}/webhooks/at/voice`;
   const maxLength = Math.max(3, Math.min(30, seconds));
   return `<Record maxLength="${maxLength}" finishOnKey="#" trimSilence="true" playBeep="true" callbackUrl="${callbackUrl}"></Record>`;
 }
 
-// Holds precomputed AI reply XML keyed by callDbId.
-// Used by the two-phase response: we immediately return a "please hold" response
-// then deliver the real reply once processing completes.
+function holdRecord(baseUrl: string) {
+  const callbackUrl = `${baseUrl.replace(/\/$/, '')}/webhooks/at/voice/hold`;
+  return `<Record maxLength="2" playBeep="false" trimSilence="false" callbackUrl="${callbackUrl}"></Record>`;
+}
+
+// Module-level state — survives across requests within one process.
+// sessionId (from AT) → callDbId (our DB UUID)
+const sessionCallMap = new Map<string, string>();
+// callDbId → precomputed XML response (set by background AI processing)
 const replyCache = new Map<string, string>();
 
 async function computeAtVoiceReply(
@@ -40,7 +49,7 @@ async function computeAtVoiceReply(
 ): Promise<string> {
   const retry = xml(
     `<Say>${escapeXml("Sorry, I didn't catch that. Please speak after the beep, then press hash when done.")}</Say>` +
-    recordTurn(callDbId, 6, baseUrl),
+    recordTurn(6, baseUrl),
   );
 
   if (!recordingUrl) return retry;
@@ -100,15 +109,9 @@ async function computeAtVoiceReply(
     const summary = callerText.slice(0, 600);
 
     const [existingEsc] = await db.select({ id: escalations.id }).from(escalations)
-      .where(eq(escalations.callId, callDbId))
-      .limit(1);
+      .where(eq(escalations.callId, callDbId)).limit(1);
     if (!existingEsc) {
-      await db.insert(escalations).values({
-        businessId: callRow.businessId,
-        callId: callDbId,
-        reason,
-        summary,
-      });
+      await db.insert(escalations).values({ businessId: callRow.businessId, callId: callDbId, reason, summary });
     }
 
     const [settings] = await db.select({ whatsappNumber: businessSettings.whatsappNumber, whatsappVerified: businessSettings.whatsappVerified })
@@ -118,145 +121,93 @@ async function computeAtVoiceReply(
     }
 
     await notifyBusinessOwners(callRow.businessId, 'Call Escalated', `Caller ${callerNumber ?? callRow.callerNumber ?? ''} needs your attention. ${summary}`);
-
-    await db.update(calls)
-      .set({ status: 'COMPLETED', resolution: 'HUMAN', endedAt: new Date() })
-      .where(eq(calls.id, callDbId));
+    await db.update(calls).set({ status: 'COMPLETED', resolution: 'HUMAN', endedAt: new Date() }).where(eq(calls.id, callDbId));
 
     return xml(`<Say>${escapeXml(reply)}</Say><Hangup></Hangup>`);
   }
 
   if (action === 'end') {
-    await db.update(calls)
-      .set({ status: 'COMPLETED', resolution: 'AI', endedAt: new Date() })
-      .where(eq(calls.id, callDbId));
+    await db.update(calls).set({ status: 'COMPLETED', resolution: 'AI', endedAt: new Date() }).where(eq(calls.id, callDbId));
     return xml(`<Say>${escapeXml(reply)}</Say><Hangup></Hangup>`);
   }
 
-  return xml(
-    `<Say>${escapeXml(reply)}</Say>` +
-    recordTurn(callDbId, 6, baseUrl),
-  );
+  return xml(`<Say>${escapeXml(reply)}</Say>` + recordTurn(6, baseUrl));
 }
 
-// POST /webhooks/at/voice — Africa's Talking inbound call handler
+// POST /webhooks/at/voice — inbound call + recording turns
 export async function handleAtVoiceWebhook(req: Request, res: Response) {
   res.set('Content-Type', 'text/xml');
 
-  const { sessionId, callerNumber, destinationNumber, isActive, recordingUrl } = req.body as Record<string, string>;
+  const body = req.body as Record<string, string>;
+  const { sessionId, callerNumber, destinationNumber, isActive, recordingUrl } = body;
+
+  const proto = (req.headers['x-forwarded-proto'] as string | undefined)?.split(',')[0]?.trim() || 'https';
+  const host = req.get('host');
+  const baseUrl = host ? `${proto}://${host}` : env.API_URL.replace(/\/$/, '');
 
   logger.info({
     sessionId,
     callerNumber,
     destinationNumber,
     isActive,
+    hasRecordingUrl: Boolean(recordingUrl),
+    // AT strips query params — confirm by logging
     queryKeys: Object.keys(req.query),
-    queryCallId: req.query.callId,
-    bodyKeys: Object.keys((req.body ?? {}) as Record<string, unknown>),
-  }, 'Inbound AT voice call');
+  }, 'AT voice webhook');
 
-  const proto = (req.headers['x-forwarded-proto'] as string | undefined)?.split(',')[0]?.trim() || 'https';
-  const host = req.get('host');
-  const baseUrl = host ? `${proto}://${host}` : env.API_URL.replace(/\/$/, '');
-
-  // AT sometimes drops query params from callbackUrl — also check body as fallback
-  const body = req.body as Record<string, string>;
-  const callDbIdFromQuery =
-    (typeof req.query.callId === 'string' && req.query.callId ? req.query.callId : null) ||
-    (typeof body.callId === 'string' && body.callId ? body.callId : null);
-
-  // ── Hold callback: caller is on the line waiting while we compute ──────────
-  // AT fires this after the short silent hold recording ends.
-  const isHoldCallback = req.query.hold === '1';
-  if (isHoldCallback && callDbIdFromQuery) {
-    const callDbId = callDbIdFromQuery;
-    const cached = replyCache.get(callDbId);
-    if (cached) {
-      replyCache.delete(callDbId);
-      logger.info({ callDbId }, 'AT hold callback: serving cached reply');
-      if (isActive === '0') await handleAtCallEnd(req.body as Record<string, string>);
-      return res.send(cached);
-    }
-    // Still computing — extend the hold by 2 seconds and check again
-    logger.info({ callDbId }, 'AT hold callback: still computing, extending hold');
-    const holdUrl = `${baseUrl.replace(/\/$/, '')}/webhooks/at/voice?callId=${encodeURIComponent(callDbId)}&hold=1`;
-    if (isActive === '0') await handleAtCallEnd(req.body as Record<string, string>);
-    return res.send(xml(`<Record maxLength="2" playBeep="false" trimSilence="false" callbackUrl="${holdUrl}"></Record>`));
-  }
-
-  // ── Recording callback: caller has spoken, kick off background processing ──
+  // ── Recording turn: caller spoke ─────────────────────────────────────────
   if (recordingUrl) {
-    logger.info({
-      callDbIdFromQuery,
-      hasRecordingUrl: true,
-      bodyKeys: Object.keys((req.body ?? {}) as Record<string, unknown>),
-    }, 'AT voice turn received');
-
-    let callDbId = callDbIdFromQuery;
-    if (!callDbId) {
-      const businessId = await resolveBusinessIdByNumber(destinationNumber);
-      callDbId = businessId ? await findLatestActiveCallId(businessId, callerNumber ?? '') : null;
-    }
+    // Look up callDbId from our session map (reliable since AT strips query params)
+    const callDbId = sessionId ? sessionCallMap.get(sessionId) : null;
 
     if (!callDbId) {
-      logger.warn({ callerNumber, destinationNumber }, 'AT voice turn: call not found');
+      logger.warn({ sessionId, callerNumber, destinationNumber }, 'AT recording: no session mapping found');
       return res.send(xml('<Hangup></Hangup>'));
     }
 
-    const finalCallDbId = callDbId;
+    logger.info({ callDbId, sessionId, isActive }, 'AT recording callback received');
 
-    // Kick off AI processing in the background — do NOT await
-    computeAtVoiceReply(finalCallDbId, callerNumber, recordingUrl, baseUrl)
+    // Start AI processing in background
+    computeAtVoiceReply(callDbId, callerNumber, recordingUrl, baseUrl)
       .then(responseXml => {
-        replyCache.set(finalCallDbId, responseXml);
-        logger.info({ callDbId: finalCallDbId }, 'AT background processing complete, reply cached');
+        replyCache.set(callDbId, responseXml);
+        logger.info({ callDbId }, 'AT reply cached');
       })
       .catch(err => {
-        logger.error({ err, callDbId: finalCallDbId }, 'Error in background AT voice processing');
-        replyCache.set(
-          finalCallDbId,
-          xml(`<Say>${escapeXml('I am sorry, I encountered an error. Please try again.')}</Say><Hangup></Hangup>`),
-        );
+        logger.error({ err, callDbId }, 'Background AT voice processing error');
+        replyCache.set(callDbId, xml(`<Say>${escapeXml('I am sorry, I encountered an error. Please try again.')}</Say><Hangup></Hangup>`));
       });
 
-    // AT sometimes sends isActive=0 when maxLength is reached even if the caller is
-    // still on the line. Always respond with the hold pattern — if the call is truly
-    // over AT will ignore the XML; if the caller is still there they hear "One moment."
+    // If caller hung up: mark call ended but still send hold XML in case AT was wrong
     if (isActive === '0') {
-      // Fire-and-forget call-end cleanup (the hold callback can override resolution if caller stays)
-      handleAtCallEnd(req.body as Record<string, string>).catch(() => null);
+      handleAtCallEnd(body).catch(() => null);
     }
 
-    const holdUrl = `${baseUrl.replace(/\/$/, '')}/webhooks/at/voice?callId=${encodeURIComponent(finalCallDbId)}&hold=1`;
-    // 2-second poll: as soon as the AI response is cached the next hold callback delivers it.
-    // "Please hold" keeps the caller engaged so they don't hang up during the brief wait.
-    const holdXml = xml(
-      `<Say>${escapeXml('Please hold.')}</Say>` +
-      `<Record maxLength="2" playBeep="false" trimSilence="false" callbackUrl="${holdUrl}"></Record>`,
-    );
-    logger.info({ callDbId: finalCallDbId, isActive }, 'AT voice: sent hold response, processing in background');
-    return res.send(holdXml);
+    // Immediately say "Please hold" and start 2-second hold polling
+    return res.send(xml(`<Say>${escapeXml('Please hold.')}</Say>` + holdRecord(baseUrl)));
   }
 
-  // No recordingUrl — could be: silent recording turn (callId present) or pure call-end
+  // ── Call ended (no recording) ─────────────────────────────────────────────
   if (isActive === '0') {
-    await handleAtCallEnd(req.body as Record<string, string>);
+    await handleAtCallEnd(body);
+    if (sessionId) sessionCallMap.delete(sessionId);
     return res.send(xml(''));
   }
 
-  // Silent recording (caller didn't speak) — re-prompt instead of starting a new call
-  if (callDbIdFromQuery) {
+  // ── Silent turn: no audio recorded, caller still on line ─────────────────
+  // Happens when maxLength elapses without voice (sessionId present in our map)
+  if (sessionId && sessionCallMap.has(sessionId)) {
+    const callDbId = sessionCallMap.get(sessionId)!;
     return res.send(xml(
       `<Say>${escapeXml("I didn't hear anything. Please speak after the beep, then press hash when done.")}</Say>` +
-      recordTurn(callDbIdFromQuery, 6, baseUrl),
+      recordTurn(6, baseUrl),
     ));
   }
 
+  // ── New inbound call ──────────────────────────────────────────────────────
   try {
-    // Normalize number: AT sends in format like +2341234567890
     const normalizedDest = destinationNumber?.trim();
 
-    // Find business by destination number (try with and without +)
     let phoneRow = (await db
       .select({ businessId: phoneNumbers.businessId })
       .from(phoneNumbers)
@@ -285,14 +236,12 @@ export async function handleAtVoiceWebhook(req: Request, res: Response) {
       db.select({ operatingHours: knowledgeBases.operatingHours }).from(knowledgeBases).where(eq(knowledgeBases.businessId, businessId)).limit(1),
     ]);
 
-    const greeting = agentRow?.greeting
-      ?? `Hello, thank you for calling ${bizRow?.name ?? 'us'}. How can I help you today?`;
+    const greeting = agentRow?.greeting ?? `Hello, thank you for calling ${bizRow?.name ?? 'us'}. How can I help you today?`;
     const enableRecording = agentRow?.enableRecording ?? true;
     const maxDuration = agentRow?.maxCallDuration ?? 600;
     const turnSeconds = Math.min(6, maxDuration);
     const businessHoursOnly = agentRow?.businessHoursOnly ?? false;
-    const afterHoursMessage = agentRow?.afterHoursMessage
-      ?? 'We are currently closed. Please call back during business hours. Goodbye.';
+    const afterHoursMessage = agentRow?.afterHoursMessage ?? 'We are currently closed. Please call back during business hours. Goodbye.';
 
     const [callRow] = await db.insert(calls).values({
       businessId,
@@ -300,28 +249,28 @@ export async function handleAtVoiceWebhook(req: Request, res: Response) {
       status: 'ACTIVE',
     }).returning({ id: calls.id });
 
-    logger.info({ businessId, callerNumber, destinationNumber, sessionId }, 'AT call answered');
+    const callDbId = callRow?.id ?? '';
+
+    // Store session → call mapping for all subsequent callbacks
+    if (sessionId && callDbId) sessionCallMap.set(sessionId, callDbId);
+
+    logger.info({ businessId, callerNumber, destinationNumber, sessionId, callDbId }, 'AT call answered');
 
     if (businessHoursOnly && kbRow?.operatingHours) {
       const now = new Date();
       const days = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
       const currentDay = days[now.getDay()];
       const hours = kbRow.operatingHours as Record<string, string>;
-
       const todayHours = hours[currentDay];
       if (!todayHours || todayHours.toLowerCase() === 'closed') {
         return res.send(xml(`<Say>${escapeXml(afterHoursMessage)}</Say><Hangup></Hangup>`));
       }
-
       const [start, end] = todayHours.split('-');
       if (start && end) {
         const currentTime = now.getHours() * 60 + now.getMinutes();
         const [startH, startM] = start.split(':').map(Number);
         const [endH, endM] = end.split(':').map(Number);
-        const startTime = startH * 60 + startM;
-        const endTime = endH * 60 + endM;
-
-        if (currentTime < startTime || currentTime > endTime) {
+        if (currentTime < startH * 60 + startM || currentTime > endH * 60 + endM) {
           return res.send(xml(`<Say>${escapeXml(afterHoursMessage)}</Say><Hangup></Hangup>`));
         }
       }
@@ -331,11 +280,7 @@ export async function handleAtVoiceWebhook(req: Request, res: Response) {
       return res.send(xml(`<Say>${escapeXml(greeting)}</Say><Hangup></Hangup>`));
     }
 
-    const callDbId = callRow?.id ?? '';
-    const responseXml = xml(
-      `<Say>${escapeXml(greeting)}</Say>` +
-      recordTurn(callDbId, turnSeconds, baseUrl)
-    );
+    const responseXml = xml(`<Say>${escapeXml(greeting)}</Say>` + recordTurn(turnSeconds, baseUrl));
     logger.info({ callDbId, xml: responseXml.slice(0, 400) }, 'AT voice response');
     return res.send(responseXml);
 
@@ -345,33 +290,51 @@ export async function handleAtVoiceWebhook(req: Request, res: Response) {
   }
 }
 
-// POST /webhooks/at/voice/record — called by AT when a recording turn is done
-export async function handleAtRecordingWebhook(req: Request, res: Response) {
+// POST /webhooks/at/voice/hold — polling callback while AI processes
+export async function handleAtHoldWebhook(req: Request, res: Response) {
   res.set('Content-Type', 'text/xml');
 
-  const { callerNumber, recordingUrl } = req.body as Record<string, string>;
-  const callDbId = typeof req.query.callId === 'string' && req.query.callId ? req.query.callId : null;
-
-  if (!callDbId) {
-    return res.send(xml('<Hangup></Hangup>'));
-  }
-
-  logger.info({
-    callDbId,
-    hasRecordingUrl: Boolean(recordingUrl),
-    bodyKeys: Object.keys((req.body ?? {}) as Record<string, unknown>),
-  }, 'AT recording webhook received');
+  const body = req.body as Record<string, string>;
+  const { sessionId, isActive } = body;
 
   const proto = (req.headers['x-forwarded-proto'] as string | undefined)?.split(',')[0]?.trim() || 'https';
   const host = req.get('host');
   const baseUrl = host ? `${proto}://${host}` : env.API_URL.replace(/\/$/, '');
-  try {
-    const responseXml = await computeAtVoiceReply(callDbId, callerNumber, recordingUrl, baseUrl);
-    return res.send(responseXml);
-  } catch (err) {
-    logger.error({ err, callDbId }, 'Error in AT voice input handler');
-    return res.send(xml(`<Say>${escapeXml('I am sorry, I encountered an error. Please try again.')}</Say><Hangup/>`));
+
+  const callDbId = sessionId ? sessionCallMap.get(sessionId) : null;
+
+  if (!callDbId) {
+    logger.warn({ sessionId }, 'AT hold callback: no session mapping');
+    return res.send(xml('<Hangup></Hangup>'));
   }
+
+  const cached = replyCache.get(callDbId);
+  if (cached) {
+    replyCache.delete(callDbId);
+    logger.info({ callDbId }, 'AT hold: serving cached reply');
+    if (isActive === '0') {
+      await handleAtCallEnd(body);
+      sessionCallMap.delete(sessionId!);
+    }
+    return res.send(cached);
+  }
+
+  // AI still computing — extend hold by another 2 seconds
+  logger.info({ callDbId }, 'AT hold: still computing, extending');
+  if (isActive === '0') {
+    await handleAtCallEnd(body);
+    sessionCallMap.delete(sessionId!);
+    return res.send(xml(''));
+  }
+
+  return res.send(xml(holdRecord(baseUrl)));
+}
+
+// POST /webhooks/at/voice/record — legacy separate recording endpoint (kept for compatibility)
+export async function handleAtRecordingWebhook(req: Request, res: Response) {
+  res.set('Content-Type', 'text/xml');
+  // Delegate to main handler — it handles recording via sessionId map
+  return handleAtVoiceWebhook(req, res);
 }
 
 async function handleAtCallEnd(body: Record<string, string>) {
@@ -380,7 +343,6 @@ async function handleAtCallEnd(body: Record<string, string>) {
     const businessId = await resolveBusinessIdByNumber(destinationNumber);
     const latestCallId = businessId ? await findLatestActiveCallId(businessId, callerNumber) : null;
     if (latestCallId) {
-      // Only update if still ACTIVE — if computeAtVoiceReply already set COMPLETED+resolution, skip
       await db.update(calls)
         .set({ status: 'COMPLETED', resolution: 'ABANDONED', duration: parseInt(durationInSeconds ?? '0', 10), endedAt: new Date() })
         .where(and(eq(calls.id, latestCallId), eq(calls.status, 'ACTIVE')));

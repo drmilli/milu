@@ -21,7 +21,14 @@
       "Bash(node -e \"console.log\\(require\\('./node_modules/typescript/package.json'\\).version\\)\")",
       "Bash(node -e \"const ts = require\\('/Users/ok/Documents/projects/milu/node_modules/typescript'\\); const d = ts.Diagnostics; const keys = Object.keys\\(d\\).filter\\(k => d[k].message && String\\(d[k].message\\).includes\\('ignoreDeprecations'\\)\\); console.log\\(JSON.stringify\\(keys.map\\(k => d[k].message\\).slice\\(0,5\\)\\)\\)\")",
       "Bash(node -e \"const ts = require\\('/Users/ok/Documents/projects/milu/node_modules/typescript'\\); const src = ts.transpileModule.toString\\(\\); \")",
-      "Bash(node -e \"console.log\\(require\\('/Users/ok/Documents/projects/milu/node_modules/typescript/package.json'\\).version\\)\")"
+      "Bash(node -e \"console.log\\(require\\('/Users/ok/Documents/projects/milu/node_modules/typescript/package.json'\\).version\\)\")",
+      "Bash(chmod +x test-at-voice.sh)",
+      "Bash(./test-at-voice.sh https://api.miluai.app +2342017001479 +2349035735555)",
+      "Bash(pnpm dev *)",
+      "Bash(curl -s http://localhost:4000/)",
+      "Bash(curl -s http://localhost:4000/docs)",
+      "Bash(bash test-at-voice.sh http://localhost:4000 +2342017001479 +2349035735555)",
+      "Bash(grep -v \"^\\\\s*$\")"
     ],
     "additionalDirectories": [
       "/Users/ok/Documents/projects/milu"

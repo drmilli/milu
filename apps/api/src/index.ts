@@ -20,7 +20,7 @@ import { handleTwilioVoiceWebhook, handleTwilioVoiceGather, handleTwilioVoiceEnd
 // Infobip voice removed — using Twilio only for calls
 import { verifyWhatsAppWebhook, handleWhatsAppWebhook } from './webhooks/whatsapp';
 import { handleSendchampWebhook } from './webhooks/sendchamp';
-import { handleAtVoiceWebhook, handleAtRecordingWebhook } from './webhooks/at-voice';
+import { handleAtVoiceWebhook, handleAtHoldWebhook, handleAtRecordingWebhook } from './webhooks/at-voice';
 import { contactsRouter } from './routes/contacts';
 import { ordersRouter } from './routes/orders';
 import { appointmentsRouter } from './routes/appointments';
@@ -81,6 +81,7 @@ app.get('/webhooks/twilio/message-status', (_req, res) => res.sendStatus(200));
 app.get('/webhooks/twilio/incoming-message', (_req, res) => res.sendStatus(200));
 app.get('/webhooks/twilio/incoming-message/fallback', (_req, res) => res.sendStatus(200));
 app.post('/webhooks/at/voice', handleAtVoiceWebhook);
+app.post('/webhooks/at/voice/hold', handleAtHoldWebhook);
 app.post('/webhooks/at/voice/record', handleAtRecordingWebhook);
 // Infobip voice webhooks removed — using Twilio only for calls
 app.get('/webhooks/whatsapp', verifyWhatsAppWebhook);
