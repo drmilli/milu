@@ -287,22 +287,8 @@ export async function voiceChat(
   const msgs = messages.map(m => ({ role: m.role, content: m.content }));
   let raw = '';
 
-  // Claude Haiku first — fastest for short voice replies
-  if (env.ANTHROPIC_API_KEY) {
-    try {
-      const res = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: { 'x-api-key': env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-        body: JSON.stringify({ model: 'claude-haiku-4-5-20251001', max_tokens: 350, system: systemPrompt, messages: msgs }),
-        signal: AbortSignal.timeout(8000),
-      });
-      if (!res.ok) { const b = await res.text(); throw new Error(`Claude ${res.status}: ${b}`); }
-      const data = await res.json() as { content: Array<{ text: string }> };
-      raw = data.content[0]?.text ?? '';
-    } catch (err) { logger.warn({ err }, 'Claude voiceChat failed, trying OpenAI'); }
-  }
-
-  if (!raw && env.OPENAI_API_KEY) {
+  // OpenAI first
+  if (env.OPENAI_API_KEY) {
     try {
       const res = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
@@ -316,7 +302,22 @@ export async function voiceChat(
       if (!res.ok) { const b = await res.text(); throw new Error(`OpenAI ${res.status}: ${b}`); }
       const data = await res.json() as { choices: Array<{ message: { content: string } }> };
       raw = data.choices[0]?.message?.content ?? '';
-    } catch (err) { logger.error({ err }, 'OpenAI voiceChat failed'); }
+    } catch (err) { logger.warn({ err }, 'OpenAI voiceChat failed, trying Claude'); }
+  }
+
+  // Claude Haiku as fallback
+  if (!raw && env.ANTHROPIC_API_KEY) {
+    try {
+      const res = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: { 'x-api-key': env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+        body: JSON.stringify({ model: 'claude-haiku-4-5-20251001', max_tokens: 350, system: systemPrompt, messages: msgs }),
+        signal: AbortSignal.timeout(8000),
+      });
+      if (!res.ok) { const b = await res.text(); throw new Error(`Claude ${res.status}: ${b}`); }
+      const data = await res.json() as { content: Array<{ text: string }> };
+      raw = data.content[0]?.text ?? '';
+    } catch (err) { logger.error({ err }, 'Claude voiceChat fallback failed'); }
   }
 
   if (!raw) {
