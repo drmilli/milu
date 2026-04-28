@@ -64,9 +64,74 @@ const nav = [
   },
 ];
 
+interface ActiveCall {
+  id: string;
+  callerNumber: string;
+  startedAt: string;
+}
+
+function LiveCallCard({ token }: { token: string }) {
+  const [call, setCall] = useState<ActiveCall | null>(null);
+  const [elapsed, setElapsed] = useState(0);
+
+  useEffect(() => {
+    if (!token) return;
+    const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000';
+
+    const poll = () =>
+      fetch(`${API_URL}/api/v1/calls?status=ACTIVE&limit=1`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+        .then(r => r.json())
+        .then((data: { calls?: ActiveCall[] }) => {
+          setCall(data.calls?.[0] ?? null);
+        })
+        .catch(() => null);
+
+    poll();
+    const id = setInterval(poll, 8_000);
+    return () => clearInterval(id);
+  }, [token]);
+
+  // Live elapsed timer
+  useEffect(() => {
+    if (!call) { setElapsed(0); return; }
+    const started = new Date(call.startedAt).getTime();
+    const tick = () => setElapsed(Math.floor((Date.now() - started) / 1000));
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [call?.id]);
+
+  if (!call) return null;
+
+  const mm = String(Math.floor(elapsed / 60)).padStart(2, '0');
+  const ss = String(elapsed % 60).padStart(2, '0');
+
+  return (
+    <div className="mx-3 mb-3 p-3 rounded-xl bg-success/10 border border-success/20">
+      <div className="flex items-center gap-2 mb-2">
+        <span className="relative flex h-2 w-2 flex-shrink-0">
+          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-success opacity-75" />
+          <span className="relative inline-flex rounded-full h-2 w-2 bg-success" />
+        </span>
+        <span className="text-xs font-semibold text-success">Live Call</span>
+        <span className="ml-auto text-xs font-mono text-success/80">{mm}:{ss}</span>
+      </div>
+      <p className="text-xs text-cream/70 font-mono truncate">{call.callerNumber}</p>
+      <Link
+        href="/calls"
+        className="mt-2 block text-center text-[11px] font-medium text-success/80 hover:text-success transition-colors"
+      >
+        View call →
+      </Link>
+    </div>
+  );
+}
+
 export default function Sidebar() {
   const pathname = usePathname();
-  const { user, logout, ready } = useAuth(false);
+  const { user, logout, ready, token } = useAuth(false);
   const [businessName, setBusinessName] = useState('');
 
   useEffect(() => {
@@ -117,6 +182,9 @@ export default function Sidebar() {
           );
         })}
       </nav>
+
+      {/* Live call card */}
+      {token && <LiveCallCard token={token} />}
 
       {/* User footer */}
       <div className="px-4 py-3.5 border-t border-white/10">
