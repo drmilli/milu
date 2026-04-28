@@ -1,8 +1,6 @@
 'use client';
 
-export const dynamic = 'force-dynamic';
-
-import { useState, useEffect, useCallback } from 'react';
+import { Suspense, useState, useEffect, useCallback } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { clsx } from 'clsx';
 import { useAuth } from '../../../hooks/useAuth';
@@ -63,6 +61,14 @@ function Skeleton({ className }: { className: string }) {
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function CallsPage() {
+  return (
+    <Suspense fallback={null}>
+      <CallsPageInner />
+    </Suspense>
+  );
+}
+
+function CallsPageInner() {
   const { token, ready } = useAuth();
   const searchParams = useSearchParams();
   const highlightId = searchParams.get('call');
