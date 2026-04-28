@@ -48,8 +48,8 @@ async function computeAtVoiceReply(
   baseUrl: string,
 ): Promise<string> {
   const retry = xml(
-    `<Say>${escapeXml("Sorry, I didn't catch that. Please speak after the beep, then press hash when done.")}</Say>` +
-    recordTurn(6, baseUrl),
+    `<Say>${escapeXml("I'm sorry, I didn't quite catch that. Please go ahead and speak after the beep.")}</Say>` +
+    recordTurn(15, baseUrl),
   );
 
   if (!recordingUrl) return retry;
@@ -57,7 +57,8 @@ async function computeAtVoiceReply(
   const callerText = await transcribeRecordingSnippet(recordingUrl);
   logger.info({ callDbId, callerText: callerText.slice(0, 200) }, 'AT voice input');
 
-  if (!callerText) return retry;
+  // Ignore very short transcripts — likely silence or noise
+  if (!callerText || callerText.trim().length < 3) return retry;
 
   const [callRow] = await db.select().from(calls).where(eq(calls.id, callDbId)).limit(1);
   if (!callRow) {
@@ -95,11 +96,14 @@ async function computeAtVoiceReply(
 
   const { reply, action } = await voiceChat(messages, {
     businessName: bizRow?.name ?? 'this business',
+    agentName: agentRow?.name,
+    agentLanguage: agentRow?.language,
     faqs: (kbRow?.faqs as { question: string; answer: string }[]) ?? [],
     websiteSummary: kbRow?.websiteSummary,
     docSummaries: kbDocs.map(d => d.summary ?? '').filter(Boolean),
     agentTone: agentRow?.tone,
     escalationNumber: kbRow?.escalationNumber,
+    fallbackMessage: agentRow?.fallbackMessage,
   });
 
   await db.insert(transcripts).values({ callId: callDbId, speaker: 'agent', text: reply });
@@ -136,7 +140,7 @@ async function computeAtVoiceReply(
     .set({ resolution: 'AI' })
     .where(and(eq(calls.id, callDbId), isNull(calls.resolution)));
 
-  return xml(`<Say>${escapeXml(reply)}</Say>` + recordTurn(6, baseUrl));
+  return xml(`<Say>${escapeXml(reply)}</Say>` + recordTurn(15, baseUrl));
 }
 
 // POST /webhooks/at/voice — inbound call + recording turns
@@ -189,8 +193,8 @@ export async function handleAtVoiceWebhook(req: Request, res: Response) {
     // callSessionState=Completed POST with no recordingUrl. Calling handleAtCallEnd here would
     // mark the call COMPLETED while the caller is still on the line, hiding it from the live card.
 
-    // Immediately say "Please hold" and start 2-second hold polling
-    return res.send(xml(`<Say>${escapeXml('Please hold.')}</Say>` + holdRecord(baseUrl)));
+    // Immediately acknowledge and hold while AI processes
+    return res.send(xml(`<Say>${escapeXml('One moment please.')}</Say>` + holdRecord(baseUrl)));
   }
 
   // ── Call ended (no recording) ─────────────────────────────────────────────
@@ -205,8 +209,8 @@ export async function handleAtVoiceWebhook(req: Request, res: Response) {
   if (sessionId && sessionCallMap.has(sessionId)) {
     const callDbId = sessionCallMap.get(sessionId)!;
     return res.send(xml(
-      `<Say>${escapeXml("I didn't hear anything. Please speak after the beep, then press hash when done.")}</Say>` +
-      recordTurn(6, baseUrl),
+      `<Say>${escapeXml("I'm still here. Please go ahead and speak after the beep.")}</Say>` +
+      recordTurn(15, baseUrl),
     ));
   }
 
@@ -245,7 +249,7 @@ export async function handleAtVoiceWebhook(req: Request, res: Response) {
     const greeting = agentRow?.greeting ?? `Hello, thank you for calling ${bizRow?.name ?? 'us'}. How can I help you today?`;
     const enableRecording = agentRow?.enableRecording ?? true;
     const maxDuration = agentRow?.maxCallDuration ?? 600;
-    const turnSeconds = Math.min(6, maxDuration);
+    const turnSeconds = Math.min(15, maxDuration);
     const businessHoursOnly = agentRow?.businessHoursOnly ?? false;
     const afterHoursMessage = agentRow?.afterHoursMessage ?? 'We are currently closed. Please call back during business hours. Goodbye.';
 

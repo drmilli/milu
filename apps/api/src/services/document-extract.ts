@@ -244,16 +244,45 @@ export async function voiceChat(
   messages: ChatMessage[],
   context: {
     businessName: string;
+    agentName?: string | null;
+    agentLanguage?: string | null;
     faqs: { question: string; answer: string }[];
     websiteSummary?: string | null;
     docSummaries: string[];
     agentTone?: string | null;
     escalationNumber?: string | null;
+    fallbackMessage?: string | null;
   },
 ): Promise<VoiceChatResult> {
-  const systemPrompt = `You are a phone agent for "${context.businessName}". Be brief and natural — max 2 sentences per reply. No lists or markdown.${context.agentTone ? ` Tone: ${context.agentTone}.` : ''}
-${context.websiteSummary ? `Business: ${context.websiteSummary.slice(0, 400)}\n` : ''}${context.faqs.length ? `FAQs:\n${context.faqs.slice(0, 6).map(f => `Q: ${f.question} A: ${f.answer}`).join('\n')}\n` : ''}${context.docSummaries.length ? `Info: ${context.docSummaries.slice(0, 2).map(s => s.slice(0, 200)).join(' ')}\n` : ''}If you can't answer, say you'll transfer them to the team.${context.escalationNumber ? ' Escalation available.' : ''}
-End your reply with one of: [CONTINUE] [ESCALATE] [END]`;
+  const agentName = context.agentName || 'your agent';
+  const tone = context.agentTone || 'friendly and professional';
+  const lang = context.agentLanguage;
+
+  const systemPrompt = [
+    `You are ${agentName}, a phone customer service agent for "${context.businessName}".`,
+    `Tone: ${tone}. Speak naturally as on a real phone call — 1 to 3 short sentences max. Never use bullet points, numbered lists, markdown, or asterisks.`,
+    lang && lang !== 'en'
+      ? `Primary language: ${lang}. Respond in the language the customer uses. If they mix languages (e.g. Pidgin, code-switching), match their style.`
+      : `Respond in the same language or dialect the customer uses (English, Nigerian Pidgin, Yoruba, Igbo, etc.). Match their communication style naturally.`,
+    `If the customer is frustrated or upset, acknowledge their feelings first before answering.`,
+    `Never reveal you are an AI unless directly asked.`,
+    context.websiteSummary
+      ? `About ${context.businessName}: ${context.websiteSummary.slice(0, 600)}`
+      : null,
+    context.faqs.length
+      ? `Common questions:\n${context.faqs.slice(0, 10).map(f => `Q: ${f.question}\nA: ${f.answer}`).join('\n')}`
+      : null,
+    context.docSummaries.length
+      ? `Additional info: ${context.docSummaries.slice(0, 3).map(s => s.slice(0, 300)).join(' ')}`
+      : null,
+    context.escalationNumber
+      ? `If you cannot help or the customer requests a human, use [ESCALATE] to transfer them.`
+      : `If you cannot help, let the customer know someone from the team will follow up.`,
+    context.fallbackMessage
+      ? `Fallback response: "${context.fallbackMessage}"`
+      : null,
+    `\nEnd every reply with exactly one of these tags (no other text after it):\n[CONTINUE] — conversation should continue\n[ESCALATE] — transfer to human agent\n[END] — call is wrapping up naturally`,
+  ].filter(Boolean).join('\n');
 
   const msgs = messages.map(m => ({ role: m.role, content: m.content }));
   let raw = '';
@@ -264,7 +293,7 @@ End your reply with one of: [CONTINUE] [ESCALATE] [END]`;
       const res = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: { 'x-api-key': env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-        body: JSON.stringify({ model: 'claude-haiku-4-5-20251001', max_tokens: 200, system: systemPrompt, messages: msgs }),
+        body: JSON.stringify({ model: 'claude-haiku-4-5-20251001', max_tokens: 350, system: systemPrompt, messages: msgs }),
         signal: AbortSignal.timeout(8000),
       });
       if (!res.ok) { const b = await res.text(); throw new Error(`Claude ${res.status}: ${b}`); }
@@ -279,7 +308,7 @@ End your reply with one of: [CONTINUE] [ESCALATE] [END]`;
         method: 'POST',
         headers: { 'Authorization': `Bearer ${env.OPENAI_API_KEY}`, 'content-type': 'application/json' },
         body: JSON.stringify({
-          model: 'gpt-4o-mini', max_tokens: 200,
+          model: 'gpt-4o-mini', max_tokens: 350,
           messages: [{ role: 'system', content: systemPrompt }, ...msgs],
         }),
         signal: AbortSignal.timeout(8000),
@@ -291,12 +320,14 @@ End your reply with one of: [CONTINUE] [ESCALATE] [END]`;
   }
 
   if (!raw) {
-    return { reply: "I'm sorry, I'm having trouble right now. Please call back shortly.", action: 'end' };
+    const fallback = context.fallbackMessage ?? "I'm sorry, I'm having trouble right now. Please call back shortly.";
+    return { reply: fallback, action: 'end' };
   }
 
-  const actionMatch = raw.match(/\[(CONTINUE|ESCALATE|END)\]\s*$/i);
+  // Match action tag anywhere near end (tolerates trailing whitespace/newlines)
+  const actionMatch = raw.match(/\[(CONTINUE|ESCALATE|END)\][^\w]*$/i);
   const action = (actionMatch?.[1]?.toLowerCase() ?? 'continue') as 'continue' | 'escalate' | 'end';
-  const reply = raw.replace(/\s*\[(CONTINUE|ESCALATE|END)\]\s*$/i, '').trim();
+  const reply = raw.replace(/\s*\[(CONTINUE|ESCALATE|END)\][^\w]*$/i, '').trim();
   return { reply, action };
 }
 
