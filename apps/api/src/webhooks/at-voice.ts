@@ -240,7 +240,6 @@ export async function handleAtVoiceWebhook(req: Request, res: Response) {
 
   // ── Recording turn: caller spoke ─────────────────────────────────────────
   if (recordingUrl) {
-    // Look up callDbId from our session map (reliable since AT strips query params)
     const callDbId = sessionId ? await getSessionCall(sessionId) : null;
 
     if (!callDbId) {
@@ -250,33 +249,33 @@ export async function handleAtVoiceWebhook(req: Request, res: Response) {
 
     logger.info({ callDbId, sessionId, isActive }, 'AT recording callback received');
 
-    // isActive=0 means the recording ended AND the caller likely hung up.
-    // We delay handleAtCallEnd until AFTER AI processing so the transcript and
-    // resolution are saved first. The call stays ACTIVE during this window so
-    // the live dashboard card remains visible for the brief processing period.
     const callerHungUp = isActive === '0';
 
-    // Start AI processing in background
-    computeAtVoiceReply(callDbId, callerNumber, recordingUrl, baseUrl)
-      .then(responseXml => {
-        void setReply(callDbId, responseXml);
-        logger.info({ callDbId, callerHungUp }, 'AT reply cached');
-        if (callerHungUp) {
-          handleAtCallEnd(body).catch(() => null);
-          if (sessionId) void deleteSessionCall(sessionId);
-        }
-      })
-      .catch(err => {
-        logger.error({ err, callDbId }, 'Background AT voice processing error');
-        void setReply(callDbId, xml(`<Say>${escapeXml('I am sorry, I encountered an error. Please try again.')}</Say><Hangup></Hangup>`));
-        if (callerHungUp) {
-          handleAtCallEnd(body).catch(() => null);
-          if (sessionId) void deleteSessionCall(sessionId);
-        }
-      });
+    const retry = xml(
+      `<Say>${escapeXml("I'm sorry, I didn't quite catch that. Please go ahead and speak after the beep.")}</Say>` +
+      recordTurn(15, baseUrl),
+    );
 
-    // Immediately acknowledge and hold while AI processes
-    return res.send(xml(`<Say>${escapeXml('Got it, one moment please.')}</Say>` + holdRecord(baseUrl)));
+    // Process inline — AT allows ~15s for webhook responses; AI typically takes 3–6s.
+    // The hold-polling approach had a race condition where the session mapping was
+    // deleted before the hold callback arrived, causing immediate hangup.
+    let responseXml: string;
+    try {
+      responseXml = await Promise.race([
+        computeAtVoiceReply(callDbId, callerNumber, recordingUrl, baseUrl),
+        new Promise<string>(resolve => setTimeout(() => resolve(retry), 10000)),
+      ]);
+    } catch (err) {
+      logger.error({ err, callDbId }, 'AT voice processing error');
+      responseXml = retry;
+    }
+
+    if (callerHungUp) {
+      handleAtCallEnd(body).catch(() => null);
+      if (sessionId) void deleteSessionCall(sessionId);
+    }
+
+    return res.send(responseXml);
   }
 
   // ── Call ended (no recording) ─────────────────────────────────────────────

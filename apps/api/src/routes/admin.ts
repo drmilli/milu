@@ -236,6 +236,36 @@ adminRouter.get('/businesses', async (req, res, next) => {
   }
 });
 
+// ─── GET /admin/businesses/recent ─────────────────────────────────────────────
+adminRouter.get('/businesses/recent', async (_req, res, next) => {
+  try {
+    const rows = await db
+      .select({
+        id: businesses.id,
+        name: businesses.name,
+        plan: businesses.subscriptionTier,
+        createdAt: businesses.createdAt,
+        ownerEmail: users.email,
+        ownerFirstName: users.firstName,
+        ownerLastName: users.lastName,
+      })
+      .from(businesses)
+      .leftJoin(users, and(eq(users.businessId, businesses.id), eq(users.role, 'OWNER')))
+      .orderBy(desc(businesses.createdAt))
+      .limit(10);
+
+    return res.json(rows.map(r => ({
+      id: r.id,
+      name: r.name,
+      plan: r.plan,
+      joinedAt: r.createdAt,
+      owner: r.ownerFirstName
+        ? `${r.ownerFirstName} ${r.ownerLastName ?? ''}`.trim()
+        : (r.ownerEmail ?? 'Unknown'),
+    })));
+  } catch (err) { next(err); }
+});
+
 /**
  * @openapi
  * /api/v1/admin/businesses/{id}:
@@ -611,36 +641,6 @@ adminRouter.get('/analytics/call-volume', async (_req, res, next) => {
       ORDER BY DATE_TRUNC('day', started_at)
     `);
     return res.json(rows.rows.map((r: any) => ({ day: r.day, calls: Number(r.calls) })));
-  } catch (err) { next(err); }
-});
-
-// ─── GET /admin/businesses/recent ─────────────────────────────────────────────
-adminRouter.get('/businesses/recent', async (_req, res, next) => {
-  try {
-    const rows = await db
-      .select({
-        id: businesses.id,
-        name: businesses.name,
-        plan: businesses.subscriptionTier,
-        createdAt: businesses.createdAt,
-        ownerEmail: users.email,
-        ownerFirstName: users.firstName,
-        ownerLastName: users.lastName,
-      })
-      .from(businesses)
-      .leftJoin(users, and(eq(users.businessId, businesses.id), eq(users.role, 'OWNER')))
-      .orderBy(desc(businesses.createdAt))
-      .limit(10);
-
-    return res.json(rows.map(r => ({
-      id: r.id,
-      name: r.name,
-      plan: r.plan,
-      joinedAt: r.createdAt,
-      owner: r.ownerFirstName
-        ? `${r.ownerFirstName} ${r.ownerLastName ?? ''}`.trim()
-        : (r.ownerEmail ?? 'Unknown'),
-    })));
   } catch (err) { next(err); }
 });
 

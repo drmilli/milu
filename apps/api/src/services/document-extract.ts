@@ -297,7 +297,7 @@ export async function voiceChat(
           model: 'gpt-4o-mini', max_tokens: 350,
           messages: [{ role: 'system', content: systemPrompt }, ...msgs],
         }),
-        signal: AbortSignal.timeout(8000),
+        signal: AbortSignal.timeout(6000),
       });
       if (!res.ok) { const b = await res.text(); throw new Error(`OpenAI ${res.status}: ${b}`); }
       const data = await res.json() as { choices: Array<{ message: { content: string } }> };
@@ -312,7 +312,7 @@ export async function voiceChat(
         method: 'POST',
         headers: { 'x-api-key': env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
         body: JSON.stringify({ model: 'claude-haiku-4-5-20251001', max_tokens: 350, system: systemPrompt, messages: msgs }),
-        signal: AbortSignal.timeout(8000),
+        signal: AbortSignal.timeout(6000),
       });
       if (!res.ok) { const b = await res.text(); throw new Error(`Claude ${res.status}: ${b}`); }
       const data = await res.json() as { content: Array<{ text: string }> };

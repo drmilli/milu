@@ -24,7 +24,7 @@ export async function transcribeRecordingSnippet(recordingUrl: string): Promise<
 
   try {
     if (env.DEEPGRAM_API_KEY) {
-      const timeout = withTimeout(10000);
+      const timeout = withTimeout(6000);
       const res = await fetch('https://api.deepgram.com/v1/listen?model=nova-2&language=en&punctuate=true', {
         method: 'POST',
         headers: {
