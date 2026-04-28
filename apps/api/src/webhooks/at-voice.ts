@@ -1,5 +1,5 @@
 import type { Request, Response } from 'express';
-import { and, desc, eq } from 'drizzle-orm';
+import { and, desc, eq, isNull, sql } from 'drizzle-orm';
 import { db, phoneNumbers, agentConfigs, businesses, businessSettings, calls, escalations, knowledgeBases, knowledgeDocuments, transcripts } from '../db';
 import { logger } from '../config/logger';
 import { env } from '../config/env';
@@ -131,6 +131,11 @@ async function computeAtVoiceReply(
     return xml(`<Say>${escapeXml(reply)}</Say><Hangup></Hangup>`);
   }
 
+  // Mark as AI-resolved once the agent successfully responds (don't overwrite HUMAN)
+  await db.update(calls)
+    .set({ resolution: 'AI' })
+    .where(and(eq(calls.id, callDbId), isNull(calls.resolution)));
+
   return xml(`<Say>${escapeXml(reply)}</Say>` + recordTurn(6, baseUrl));
 }
 
@@ -178,10 +183,11 @@ export async function handleAtVoiceWebhook(req: Request, res: Response) {
         replyCache.set(callDbId, xml(`<Say>${escapeXml('I am sorry, I encountered an error. Please try again.')}</Say><Hangup></Hangup>`));
       });
 
-    // If caller hung up: mark call ended but still send hold XML in case AT was wrong
-    if (isActive === '0') {
-      handleAtCallEnd(body).catch(() => null);
-    }
+    // NOTE: do NOT call handleAtCallEnd here even if isActive=0.
+    // AT sends isActive=0 in recording callbacks when the recording ended (maxLength/# pressed),
+    // NOT necessarily when the caller hung up. The real end event arrives separately as a
+    // callSessionState=Completed POST with no recordingUrl. Calling handleAtCallEnd here would
+    // mark the call COMPLETED while the caller is still on the line, hiding it from the live card.
 
     // Immediately say "Please hold" and start 2-second hold polling
     return res.send(xml(`<Say>${escapeXml('Please hold.')}</Say>` + holdRecord(baseUrl)));
@@ -344,7 +350,13 @@ async function handleAtCallEnd(body: Record<string, string>) {
     const latestCallId = businessId ? await findLatestActiveCallId(businessId, callerNumber) : null;
     if (latestCallId) {
       await db.update(calls)
-        .set({ status: 'COMPLETED', resolution: 'ABANDONED', duration: parseInt(durationInSeconds ?? '0', 10), endedAt: new Date() })
+        .set({
+          status: 'COMPLETED',
+          // Keep existing resolution if already set (e.g. AI); only default to ABANDONED
+          resolution: sql`COALESCE(${calls.resolution}, 'ABANDONED'::resolution_type)`,
+          duration: parseInt(durationInSeconds ?? '0', 10),
+          endedAt: new Date(),
+        })
         .where(and(eq(calls.id, latestCallId), eq(calls.status, 'ACTIVE')));
     }
     logger.info({ callerNumber, durationInSeconds }, 'AT call ended');
