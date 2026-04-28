@@ -104,7 +104,7 @@ function LiveCallCard({ token }: { token: string }) {
     tick();
     const id = setInterval(tick, 1000);
     return () => clearInterval(id);
-  }, [call?.id]);
+  }, [call]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!call) return null;
 
