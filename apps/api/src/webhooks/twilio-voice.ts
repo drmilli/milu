@@ -1,4 +1,5 @@
 import type { Request, Response } from 'express';
+import crypto from 'crypto';
 import { and, desc, eq, sql } from 'drizzle-orm';
 import { db, phoneNumbers, agentConfigs, businesses, calls, escalations, notifications, transcripts, knowledgeBases, knowledgeDocuments, businessSettings } from '../db';
 import { logger } from '../config/logger';
@@ -6,6 +7,7 @@ import { env } from '../config/env';
 import { voiceChat, type ChatMessage } from '../services/document-extract';
 import { sendEscalationAlert } from '../services/whatsapp';
 import { notifyBusinessOwners } from '../services/notifications';
+import { redis } from '../utils/redis';
 
 function twiml(body: string) {
   return `<?xml version="1.0" encoding="UTF-8"?><Response>${body}</Response>`;
@@ -24,6 +26,51 @@ function getBaseUrl(req: Request): string {
   const proto = (req.headers['x-forwarded-proto'] as string | undefined)?.split(',')[0]?.trim() ?? 'https';
   const host = req.get('host');
   return host ? `${proto}://${host}` : env.API_URL.replace(/\/$/, '');
+}
+
+type OpenAiTtsVoice = 'alloy' | 'ash' | 'coral' | 'echo' | 'fable' | 'onyx' | 'nova' | 'sage' | 'shimmer';
+
+function mapAgentVoiceToOpenAi(voiceId: string | null | undefined): OpenAiTtsVoice {
+  const v = (voiceId ?? '').toLowerCase().trim();
+  if (v === 'alloy' || v === 'ash' || v === 'coral' || v === 'echo' || v === 'fable' || v === 'onyx' || v === 'nova' || v === 'sage' || v === 'shimmer') {
+    return v;
+  }
+  if (v === 'amaka') return 'nova';
+  if (v === 'chidi') return 'onyx';
+  if (v === 'ngozi') return 'shimmer';
+  return 'nova';
+}
+
+async function ttsUrl(text: string, voiceId: string | null | undefined, baseUrl: string): Promise<string | null> {
+  if (!env.OPENAI_API_KEY) return null;
+  if (!redis) return null;
+
+  const voice = mapAgentVoiceToOpenAi(voiceId);
+  const res = await fetch('https://api.openai.com/v1/audio/speech', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${env.OPENAI_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: 'gpt-4o-mini-tts',
+      voice,
+      input: text,
+      format: 'mp3',
+    }),
+    signal: AbortSignal.timeout(20000),
+  });
+
+  if (!res.ok) {
+    const err = await res.text().catch(() => '');
+    logger.warn({ status: res.status, err: err.slice(0, 200) }, 'OpenAI TTS failed');
+    return null;
+  }
+
+  const buf = Buffer.from(await res.arrayBuffer());
+  const id = crypto.randomUUID();
+  await redis.set(`tts:${id}`, buf.toString('base64'), 'EX', 5 * 60).catch(() => null);
+  return `${baseUrl.replace(/\/$/, '')}/webhooks/tts/${id}`;
 }
 
 function gatherTurn(callId: string, language: string, baseUrl: string, timeout = 5) {
@@ -86,10 +133,12 @@ export async function handleTwilioVoiceWebhook(req: Request, res: Response) {
     const callId = callRow?.id ?? '';
     logger.info({ businessId, fromNumber, toNumber, callSid, callId }, 'Inbound Twilio call answered');
 
-    const xml = twiml(
-      `<Say voice="alice" language="${language}">${escapeXml(greeting)}</Say>` +
-      gatherTurn(callId, language, baseUrl),
-    );
+    const audioUrl = await ttsUrl(greeting, agentRow?.voiceId ?? 'amaka', baseUrl);
+    const speak = audioUrl
+      ? `<Play>${escapeXml(audioUrl)}</Play>`
+      : `<Say voice="alice" language="${language}">${escapeXml(greeting)}</Say>`;
+
+    const xml = twiml(speak + gatherTurn(callId, language, baseUrl));
     return res.send(xml);
   } catch (err) {
     logger.error({ err, toNumber, fromNumber }, 'Error handling Twilio voice webhook');
@@ -163,13 +212,18 @@ export async function handleTwilioVoiceGather(req: Request, res: Response) {
 
     if (action === 'end') {
       await db.update(calls).set({ status: 'COMPLETED', resolution: 'AI', endedAt: new Date() }).where(eq(calls.id, callId));
-      return res.send(twiml(`<Say voice="alice" language="${language}">${escapeXml(reply)}</Say><Hangup/>`));
+      const audioUrl = await ttsUrl(reply, agentRow?.voiceId ?? 'amaka', baseUrl);
+      const speak = audioUrl
+        ? `<Play>${escapeXml(audioUrl)}</Play>`
+        : `<Say voice="alice" language="${language}">${escapeXml(reply)}</Say>`;
+      return res.send(twiml(`${speak}<Hangup/>`));
     }
 
-    return res.send(twiml(
-      `<Say voice="alice" language="${language}">${escapeXml(reply)}</Say>` +
-      gatherTurn(callId, language, baseUrl),
-    ));
+    const audioUrl = await ttsUrl(reply, agentRow?.voiceId ?? 'amaka', baseUrl);
+    const speak = audioUrl
+      ? `<Play>${escapeXml(audioUrl)}</Play>`
+      : `<Say voice="alice" language="${language}">${escapeXml(reply)}</Say>`;
+    return res.send(twiml(speak + gatherTurn(callId, language, baseUrl)));
   } catch (err) {
     logger.error({ err, callId }, 'Error handling Twilio voice gather');
     return res.send(retry);

@@ -28,12 +28,12 @@ function escapeXml(value: string) {
 function recordTurn(seconds: number, baseUrl: string) {
   const callbackUrl = `${baseUrl.replace(/\/$/, '')}/webhooks/at/voice`;
   const maxLength = Math.max(3, Math.min(30, seconds));
-  return `<Record maxLength="${maxLength}" finishOnKey="#" trimSilence="true" playBeep="true" callbackUrl="${callbackUrl}"></Record>`;
+  return `<Record maxLength="${maxLength}" timeout="10" playBeep="true" callbackUrl="${callbackUrl}"></Record>`;
 }
 
 function holdRecord(baseUrl: string) {
   const callbackUrl = `${baseUrl.replace(/\/$/, '')}/webhooks/at/voice/hold`;
-  return `<Record maxLength="2" playBeep="false" trimSilence="false" callbackUrl="${callbackUrl}"></Record>`;
+  return `<Record maxLength="2" timeout="2" playBeep="false" callbackUrl="${callbackUrl}"></Record>`;
 }
 
 // Module-level state — survives across requests within one process.
@@ -233,6 +233,7 @@ export async function handleAtVoiceWebhook(req: Request, res: Response) {
     destinationNumber,
     isActive,
     hasRecordingUrl: Boolean(recordingUrl),
+    bodyKeys: Object.keys(body),
     // AT strips query params — confirm by logging
     queryKeys: Object.keys(req.query),
   }, 'AT voice webhook');
@@ -373,7 +374,8 @@ export async function handleAtVoiceWebhook(req: Request, res: Response) {
       return res.send(xml(`<Say>${escapeXml(greeting)}</Say><Hangup></Hangup>`));
     }
 
-    const responseXml = xml(`<Say>${escapeXml(greeting)}</Say>` + recordTurn(turnSeconds, baseUrl));
+    const script = `${greeting} Please speak after the beep.`;
+    const responseXml = xml(`<Say>${escapeXml(script)}</Say>` + recordTurn(turnSeconds, baseUrl));
     logger.info({ callDbId, xml: responseXml.slice(0, 400) }, 'AT voice response');
     return res.send(responseXml);
 

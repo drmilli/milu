@@ -35,6 +35,7 @@ import { reportsRouter } from './routes/reports';
 import { webhookConfigRouter } from './routes/webhookConfig';
 import { auditLogsRouter } from './routes/auditLogs';
 import { apiKeysRouter } from './routes/apiKeys';
+import { redis } from './utils/redis';
 
 const app: Express = express();
 const server = http.createServer(app);
@@ -82,6 +83,20 @@ app.post('/webhooks/twilio/incoming-message/fallback', handleTwilioIncomingMessa
 app.get('/webhooks/twilio/message-status', (_req, res) => res.sendStatus(200));
 app.get('/webhooks/twilio/incoming-message', (_req, res) => res.sendStatus(200));
 app.get('/webhooks/twilio/incoming-message/fallback', (_req, res) => res.sendStatus(200));
+
+app.get('/webhooks/tts/:id', async (req, res) => {
+  const id = req.params.id;
+  if (!id || !redis) return res.sendStatus(404);
+  const key = `tts:${id}`;
+  const b64 = await redis.get(key).catch(() => null);
+  if (!b64) return res.sendStatus(404);
+  await redis.del(key).catch(() => null);
+  const bytes = Buffer.from(b64, 'base64');
+  res.setHeader('Content-Type', 'audio/mpeg');
+  res.setHeader('Cache-Control', 'no-store');
+  return res.status(200).send(bytes);
+});
+
 app.post('/webhooks/at/voice', handleAtVoiceWebhook);
 app.get('/webhooks/at/voice', handleAtVoiceWebhook);
 app.post('/webhooks/at/voice/hold', handleAtHoldWebhook);
