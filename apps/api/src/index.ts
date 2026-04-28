@@ -131,20 +131,28 @@ server.listen(env.PORT, async () => {
     whop: !!env.WHOP_API_KEY,
   }, 'Milu API started');
 
-  // Close any ACTIVE calls stuck open from before the isActive=0 fix
-  try {
-    const staleThreshold = new Date(Date.now() - 2 * 60 * 60 * 1000); // 2 hours ago
-    const result = await db.update(calls)
-      .set({
-        status: 'COMPLETED',
-        resolution: drizzleSql`COALESCE(${calls.resolution}, 'ABANDONED'::resolution_type)`,
-        endedAt: new Date(),
-      })
-      .where(and(eq(calls.status, 'ACTIVE'), lt(calls.startedAt, staleThreshold)));
-    logger.info({ result }, 'Cleaned up stale ACTIVE calls on startup');
-  } catch (err) {
-    logger.warn({ err }, 'Stale call cleanup failed (non-fatal)');
+  async function closeStaleActiveCalls() {
+    try {
+      // Any call ACTIVE for more than 15 minutes is stuck — max legit call duration is ~10 min
+      const staleThreshold = new Date(Date.now() - 15 * 60 * 1000);
+      await db.update(calls)
+        .set({
+          status: 'COMPLETED',
+          resolution: drizzleSql`COALESCE(${calls.resolution}, 'ABANDONED'::resolution_type)`,
+          endedAt: new Date(),
+        })
+        .where(and(eq(calls.status, 'ACTIVE'), lt(calls.startedAt, staleThreshold)));
+    } catch (err) {
+      logger.warn({ err }, 'Stale call cleanup failed (non-fatal)');
+    }
   }
+
+  // Run once on startup to clear previously stuck calls
+  await closeStaleActiveCalls();
+  logger.info('Stale call cleanup ran on startup');
+
+  // Then run every 5 minutes as a safety net
+  setInterval(closeStaleActiveCalls, 5 * 60 * 1000);
 });
 
 export default app;

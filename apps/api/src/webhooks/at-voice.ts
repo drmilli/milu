@@ -176,22 +176,30 @@ export async function handleAtVoiceWebhook(req: Request, res: Response) {
 
     logger.info({ callDbId, sessionId, isActive }, 'AT recording callback received');
 
+    // isActive=0 means the recording ended AND the caller likely hung up.
+    // We delay handleAtCallEnd until AFTER AI processing so the transcript and
+    // resolution are saved first. The call stays ACTIVE during this window so
+    // the live dashboard card remains visible for the brief processing period.
+    const callerHungUp = isActive === '0';
+
     // Start AI processing in background
     computeAtVoiceReply(callDbId, callerNumber, recordingUrl, baseUrl)
       .then(responseXml => {
         replyCache.set(callDbId, responseXml);
-        logger.info({ callDbId }, 'AT reply cached');
+        logger.info({ callDbId, callerHungUp }, 'AT reply cached');
+        if (callerHungUp) {
+          handleAtCallEnd(body).catch(() => null);
+          if (sessionId) sessionCallMap.delete(sessionId);
+        }
       })
       .catch(err => {
         logger.error({ err, callDbId }, 'Background AT voice processing error');
         replyCache.set(callDbId, xml(`<Say>${escapeXml('I am sorry, I encountered an error. Please try again.')}</Say><Hangup></Hangup>`));
+        if (callerHungUp) {
+          handleAtCallEnd(body).catch(() => null);
+          if (sessionId) sessionCallMap.delete(sessionId);
+        }
       });
-
-    // NOTE: do NOT call handleAtCallEnd here even if isActive=0.
-    // AT sends isActive=0 in recording callbacks when the recording ended (maxLength/# pressed),
-    // NOT necessarily when the caller hung up. The real end event arrives separately as a
-    // callSessionState=Completed POST with no recordingUrl. Calling handleAtCallEnd here would
-    // mark the call COMPLETED while the caller is still on the line, hiding it from the live card.
 
     // Immediately acknowledge and hold while AI processes
     return res.send(xml(`<Say>${escapeXml('One moment please.')}</Say>` + holdRecord(baseUrl)));
