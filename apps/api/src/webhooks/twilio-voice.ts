@@ -7,7 +7,7 @@ import { env } from '../config/env';
 import { voiceChat, type ChatMessage } from '../services/document-extract';
 import { sendEscalationAlert } from '../services/whatsapp';
 import { notifyBusinessOwners } from '../services/notifications';
-import { redis } from '../utils/redis';
+import { redis, ttsStoreSet } from '../utils/redis';
 
 function twiml(body: string) {
   return `<?xml version="1.0" encoding="UTF-8"?><Response>${body}</Response>`;
@@ -43,7 +43,6 @@ function mapAgentVoiceToOpenAi(voiceId: string | null | undefined): OpenAiTtsVoi
 
 async function ttsUrl(text: string, voiceId: string | null | undefined, baseUrl: string): Promise<string | null> {
   if (!env.OPENAI_API_KEY) return null;
-  if (!redis) return null;
 
   const voice = mapAgentVoiceToOpenAi(voiceId);
   const res = await fetch('https://api.openai.com/v1/audio/speech', {
@@ -69,7 +68,12 @@ async function ttsUrl(text: string, voiceId: string | null | undefined, baseUrl:
 
   const buf = Buffer.from(await res.arrayBuffer());
   const id = crypto.randomUUID();
-  await redis.set(`tts:${id}`, buf.toString('base64'), 'EX', 5 * 60).catch(() => null);
+  const ttlSeconds = 5 * 60;
+  if (redis) {
+    await redis.set(`tts:${id}`, JSON.stringify({ ct: 'audio/mpeg', b64: buf.toString('base64') }), 'EX', ttlSeconds).catch(() => null);
+  } else {
+    ttsStoreSet(id, 'audio/mpeg', buf.toString('base64'), ttlSeconds);
+  }
   return `${baseUrl.replace(/\/$/, '')}/webhooks/tts/${id}`;
 }
 

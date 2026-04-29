@@ -35,7 +35,7 @@ import { reportsRouter } from './routes/reports';
 import { webhookConfigRouter } from './routes/webhookConfig';
 import { auditLogsRouter } from './routes/auditLogs';
 import { apiKeysRouter } from './routes/apiKeys';
-import { redis } from './utils/redis';
+import { redis, ttsStoreDelete, ttsStoreGet } from './utils/redis';
 
 const app: Express = express();
 const server = http.createServer(app);
@@ -86,13 +86,37 @@ app.get('/webhooks/twilio/incoming-message/fallback', (_req, res) => res.sendSta
 
 app.get('/webhooks/tts/:id', async (req, res) => {
   const id = req.params.id;
-  if (!id || !redis) return res.sendStatus(404);
+  if (!id) return res.sendStatus(404);
+
+  const inMem = ttsStoreGet(id);
+  if (inMem) {
+    ttsStoreDelete(id);
+    const bytes = Buffer.from(inMem.b64, 'base64');
+    res.setHeader('Content-Type', inMem.ct);
+    res.setHeader('Cache-Control', 'no-store');
+    return res.status(200).send(bytes);
+  }
+
+  if (!redis) return res.sendStatus(404);
   const key = `tts:${id}`;
-  const b64 = await redis.get(key).catch(() => null);
-  if (!b64) return res.sendStatus(404);
+  const raw = await redis.get(key).catch(() => null);
+  if (!raw) return res.sendStatus(404);
   await redis.del(key).catch(() => null);
+
+  let contentType = 'audio/mpeg';
+  let b64 = raw;
+  if (raw.startsWith('{')) {
+    try {
+      const parsed = JSON.parse(raw) as { ct?: string; b64?: string };
+      if (parsed.ct) contentType = parsed.ct;
+      if (parsed.b64) b64 = parsed.b64;
+    } catch {
+      // ignore
+    }
+  }
+
   const bytes = Buffer.from(b64, 'base64');
-  res.setHeader('Content-Type', 'audio/mpeg');
+  res.setHeader('Content-Type', contentType);
   res.setHeader('Cache-Control', 'no-store');
   return res.status(200).send(bytes);
 });

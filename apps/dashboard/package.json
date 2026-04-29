@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "next dev -p 3000",
     "build": "next build",
-    "start": "PORT=3000 node .next/standalone/apps/dashboard/server.js",
+    "start": "node -e \"const fs=require('fs'); const path=require('path'); const candidates=['.next/standalone/apps/dashboard/server.js','.next/standalone/server.js']; const file=candidates.find(p=>fs.existsSync(path.join(process.cwd(),p))); if(!file){ console.error('Missing Next standalone server.js. Run `next build` with `output: standalone`.'); process.exit(1);} require(path.join(process.cwd(),file));\"",
     "lint": "next lint",
     "typecheck": "tsc --noEmit"
   },

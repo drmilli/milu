@@ -7,7 +7,8 @@ import { voiceChat, type ChatMessage } from '../services/document-extract';
 import { transcribeRecordingSnippet } from '../services/transcription';
 import { notifyBusinessOwners } from '../services/notifications';
 import { sendEscalationAlert } from '../services/whatsapp';
-import { redis } from '../utils/redis';
+import crypto from 'crypto';
+import { redis, ttsStoreSet } from '../utils/redis';
 
 function xml(body: string) {
   return `<?xml version="1.0" encoding="UTF-8"?><Response>${body}</Response>`;
@@ -20,6 +21,55 @@ function escapeXml(value: string) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&apos;');
+}
+
+type OpenAiTtsVoice = 'alloy' | 'ash' | 'coral' | 'echo' | 'fable' | 'onyx' | 'nova' | 'sage' | 'shimmer';
+
+function mapAgentVoiceToOpenAi(voiceId: string | null | undefined): OpenAiTtsVoice {
+  const v = (voiceId ?? '').toLowerCase().trim();
+  if (v === 'alloy' || v === 'ash' || v === 'coral' || v === 'echo' || v === 'fable' || v === 'onyx' || v === 'nova' || v === 'sage' || v === 'shimmer') {
+    return v;
+  }
+  if (v === 'amaka') return 'nova';
+  if (v === 'chidi') return 'onyx';
+  if (v === 'ngozi') return 'shimmer';
+  return 'nova';
+}
+
+async function ttsUrl(text: string, voiceId: string | null | undefined, baseUrl: string): Promise<string | null> {
+  if (!env.OPENAI_API_KEY) return null;
+
+  const voice = mapAgentVoiceToOpenAi(voiceId);
+  const res = await fetch('https://api.openai.com/v1/audio/speech', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${env.OPENAI_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: 'gpt-4o-mini-tts',
+      voice,
+      input: text,
+      format: 'mp3',
+    }),
+    signal: AbortSignal.timeout(20000),
+  });
+
+  if (!res.ok) {
+    const err = await res.text().catch(() => '');
+    logger.warn({ status: res.status, err: err.slice(0, 200) }, 'OpenAI TTS failed');
+    return null;
+  }
+
+  const buf = Buffer.from(await res.arrayBuffer());
+  const id = crypto.randomUUID();
+  const ttlSeconds = 5 * 60;
+  if (redis) {
+    await redis.set(`tts:${id}`, JSON.stringify({ ct: 'audio/mpeg', b64: buf.toString('base64') }), 'EX', ttlSeconds).catch(() => null);
+  } else {
+    ttsStoreSet(id, 'audio/mpeg', buf.toString('base64'), ttlSeconds);
+  }
+  return `${baseUrl.replace(/\/$/, '')}/webhooks/tts/${id}`;
 }
 
 // AT strips query params from callbackUrl — use path-only URLs.
@@ -181,6 +231,11 @@ async function computeAtVoiceReply(
 
   await db.insert(transcripts).values({ callId: callDbId, speaker: 'agent', text: reply });
 
+  const audioUrl = await ttsUrl(reply, agentRow?.voiceId ?? 'amaka', baseUrl);
+  const speak = audioUrl
+    ? `<Play>${escapeXml(audioUrl)}</Play>`
+    : `<Say>${escapeXml(reply)}</Say>`;
+
   if (action === 'escalate') {
     const reason = 'Agent escalation';
     const summary = callerText.slice(0, 600);
@@ -200,12 +255,12 @@ async function computeAtVoiceReply(
     await notifyBusinessOwners(callRow.businessId, 'Call Escalated', `Caller ${callerNumber ?? callRow.callerNumber ?? ''} needs your attention. ${summary}`);
     await db.update(calls).set({ status: 'COMPLETED', resolution: 'HUMAN', endedAt: new Date() }).where(eq(calls.id, callDbId));
 
-    return xml(`<Say>${escapeXml(reply)}</Say><Hangup></Hangup>`);
+    return xml(`${speak}<Hangup></Hangup>`);
   }
 
   if (action === 'end') {
     await db.update(calls).set({ status: 'COMPLETED', resolution: 'AI', endedAt: new Date() }).where(eq(calls.id, callDbId));
-    return xml(`<Say>${escapeXml(reply)}</Say><Hangup></Hangup>`);
+    return xml(`${speak}<Hangup></Hangup>`);
   }
 
   // Mark as AI-resolved once the agent successfully responds (don't overwrite HUMAN)
@@ -213,7 +268,7 @@ async function computeAtVoiceReply(
     .set({ resolution: 'AI' })
     .where(and(eq(calls.id, callDbId), isNull(calls.resolution)));
 
-  return xml(`<Say>${escapeXml(reply)}</Say>` + recordTurn(15, baseUrl));
+  return xml(speak + recordTurn(15, baseUrl));
 }
 
 // POST /webhooks/at/voice — inbound call + recording turns
@@ -374,7 +429,11 @@ export async function handleAtVoiceWebhook(req: Request, res: Response) {
     }
 
     const script = `${greeting} Please speak after the beep, and stay on the line while I find an answer for you.`;
-    const responseXml = xml(`<Say>${escapeXml(script)}</Say>` + recordTurn(turnSeconds, baseUrl));
+    const greetingAudioUrl = await ttsUrl(script, agentRow?.voiceId ?? 'amaka', baseUrl);
+    const greetSpeak = greetingAudioUrl
+      ? `<Play>${escapeXml(greetingAudioUrl)}</Play>`
+      : `<Say>${escapeXml(script)}</Say>`;
+    const responseXml = xml(greetSpeak + recordTurn(turnSeconds, baseUrl));
     logger.info({ callDbId, xml: responseXml.slice(0, 400) }, 'AT voice response');
     return res.send(responseXml);
 
