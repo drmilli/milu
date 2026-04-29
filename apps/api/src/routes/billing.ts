@@ -150,6 +150,10 @@ const TIER_META: Record<string, { planId: string; planName: string; priceNgn: nu
   ENTERPRISE: { planId: 'enterprise', planName: 'Enterprise', priceNgn: 0,     priceUsd: 0,  callLimit: null, memberLimit: null },
 };
 
+function trialEndsAt(createdAt: Date) {
+  return new Date(createdAt.getTime() + 14 * 24 * 60 * 60 * 1000);
+}
+
 billingRouter.get('/subscription/:businessId', authMiddleware, async (req, res, next) => {
   try {
     const [biz] = await db
@@ -172,15 +176,20 @@ billingRouter.get('/subscription/:businessId', authMiddleware, async (req, res, 
         .where(eq(users.businessId, req.params.businessId)),
     ]);
 
-    // Renewal date = same day next month
-    const renewsAt = new Date(biz.createdAt);
-    while (renewsAt <= new Date()) renewsAt.setMonth(renewsAt.getMonth() + 1);
+    const now = new Date();
+    const isTrial = tier === 'STARTER' && now < trialEndsAt(biz.createdAt);
+
+    // Renewal date = end of trial (trialing), else same day next month
+    const renewsAt = isTrial ? trialEndsAt(biz.createdAt) : new Date(biz.createdAt);
+    if (!isTrial) {
+      while (renewsAt <= now) renewsAt.setMonth(renewsAt.getMonth() + 1);
+    }
 
     return res.json({
       planId: meta.planId,
-      planName: meta.planName,
-      status: biz.isActive ? 'active' : 'cancelled',
-      price: meta.priceNgn,
+      planName: isTrial ? `Free Trial (${meta.planName})` : meta.planName,
+      status: biz.isActive ? (isTrial ? 'trialing' : 'active') : 'cancelled',
+      price: isTrial ? 0 : meta.priceNgn,
       currency: 'NGN',
       renewsAt: renewsAt.toISOString(),
       usage: {

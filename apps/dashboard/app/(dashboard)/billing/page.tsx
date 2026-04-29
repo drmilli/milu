@@ -276,8 +276,9 @@ export default function BillingPage() {
                   </span>
                 </div>
                 <p className="text-sm text-primary-warm mt-1">
-                  {fmtAmount(sub.price, sub.currency)} / month
-                  {sub.status !== 'cancelled' && ` · Renews ${fmtDate(sub.renewsAt)}`}
+                  {sub.status === 'trialing'
+                    ? `Free trial · Ends ${fmtDate(sub.renewsAt)}`
+                    : `${fmtAmount(sub.price, sub.currency)} / month${sub.status !== 'cancelled' ? ` · Renews ${fmtDate(sub.renewsAt)}` : ''}`}
                 </p>
               </div>
               <button

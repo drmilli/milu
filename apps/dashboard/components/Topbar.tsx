@@ -13,6 +13,12 @@ interface Notification {
   read: boolean;
 }
 
+interface Subscription {
+  planName: string;
+  status: 'active' | 'trialing' | 'cancelled' | 'past_due';
+  renewsAt: string;
+}
+
 const typeIcon: Record<string, React.ReactNode> = {
   escalation: (
     <div className="w-8 h-8 rounded-full bg-warning/15 flex items-center justify-center flex-shrink-0">
@@ -47,10 +53,15 @@ function timeAgo(iso: string) {
   return `${Math.floor(h / 24)}d ago`;
 }
 
+function fmtDate(iso: string) {
+  return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
 export default function Topbar() {
   const { token, user, ready } = useAuth(false);
   const [notifOpen, setNotifOpen] = useState(false);
   const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [subscription, setSubscription] = useState<Subscription | null>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   const loadNotifications = useCallback(() => {
@@ -59,7 +70,17 @@ export default function Topbar() {
       .then(setNotifications).catch(() => null);
   }, [token, user?.businessId]);
 
-  useEffect(() => { if (ready) loadNotifications(); }, [ready, loadNotifications]);
+  const loadSubscription = useCallback(() => {
+    if (!token || !user?.businessId) return;
+    apiGet<Subscription>(`/billing/subscription/${user.businessId}`, token)
+      .then(setSubscription).catch(() => null);
+  }, [token, user?.businessId]);
+
+  useEffect(() => {
+    if (!ready) return;
+    loadNotifications();
+    loadSubscription();
+  }, [ready, loadNotifications, loadSubscription]);
 
   useEffect(() => {
     function handleClick(e: MouseEvent) {
@@ -87,6 +108,9 @@ export default function Topbar() {
 
   const unreadCount = notifications.filter(n => !n.read).length;
   const bizInitial = (user?.businessName || user?.email || '?')[0].toUpperCase();
+  const planLine = subscription
+    ? `${subscription.planName} · ${subscription.status === 'trialing' ? 'ends' : 'renews'} ${fmtDate(subscription.renewsAt)}`
+    : (user?.planName ? `${user.planName} plan` : '');
 
   return (
     <header className="h-14 border-b border-cream-dark bg-cream-light flex items-center justify-between px-6 flex-shrink-0 relative z-30">
@@ -100,7 +124,7 @@ export default function Topbar() {
             {user?.businessName || '—'}
           </p>
           <p className="text-xs text-primary-warm leading-tight capitalize">
-            {user?.planName ? `${user.planName} plan` : ''}
+            {planLine}
           </p>
         </div>
       </div>

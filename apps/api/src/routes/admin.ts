@@ -103,12 +103,14 @@ adminRouter.get('/stats', async (_req, res, next) => {
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
     const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
     const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const trialThreshold = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000);
 
     const [
       bizCount, activeBiz, newBizThisMonth,
       callCount, callsThisMonth, callsLastMonth,
       escalationCount, escalationsToday, escalationBizToday,
       planCounts, resolvedCalls, activeCalls,
+      activeTrialCount,
     ] = await Promise.all([
       db.select({ n: sql<number>`count(*)` }).from(businesses),
       db.select({ n: sql<number>`count(*)` }).from(businesses).where(eq(businesses.isActive, true)),
@@ -122,11 +124,14 @@ adminRouter.get('/stats', async (_req, res, next) => {
       db.select({ tier: businesses.subscriptionTier, count: sql<number>`count(*)` }).from(businesses).groupBy(businesses.subscriptionTier),
       db.select({ n: sql<number>`count(*)` }).from(calls).where(eq(calls.resolution, 'AI')),
       db.select({ n: sql<number>`count(*)` }).from(calls).where(eq(calls.status, 'ACTIVE')),
+      db.select({ n: sql<number>`count(*)` }).from(businesses)
+        .where(and(eq(businesses.subscriptionTier, 'STARTER'), gte(businesses.createdAt, trialThreshold))),
     ]);
 
     const planMap: Record<string, number> = {};
     for (const r of planCounts) planMap[r.tier] = Number(r.count);
-    const starterMrr = (planMap['STARTER'] ?? 0) * 15000;
+    const starterPaid = Math.max(0, (planMap['STARTER'] ?? 0) - Number(activeTrialCount[0]?.n ?? 0));
+    const starterMrr = starterPaid * 15000;
     const growthMrr = (planMap['GROWTH'] ?? 0) * 45000;
     const mrr = starterMrr + growthMrr;
     const totalCalls = Number(callCount[0].n);
@@ -138,7 +143,7 @@ adminRouter.get('/stats', async (_req, res, next) => {
       totalBusinesses: Number(bizCount[0].n),
       activeBusinesses: Number(activeBiz[0].n),
       newBusinessesThisMonth: Number(newBizThisMonth[0].n),
-      activeTrials: planMap['STARTER'] ?? 0,
+      activeTrials: Number(activeTrialCount[0]?.n ?? 0),
       trialsExpiringSoon: 0,
       activeCalls: Number(activeCalls[0].n),
       callsThisMonth: thisMonthCalls,
@@ -215,16 +220,17 @@ adminRouter.get('/businesses', async (req, res, next) => {
       ]);
       const owner = ownerRows[0];
       const planMrr: Record<string, number> = { STARTER: 15000, GROWTH: 45000, ENTERPRISE: 0 };
+      const isTrial = b.subscriptionTier === 'STARTER' && (Date.now() - new Date(b.createdAt).getTime()) < 14 * 24 * 60 * 60 * 1000;
       return {
         id: b.id,
         name: b.name,
         industry: b.industry ?? '',
         owner: owner ? [owner.firstName, owner.lastName].filter(Boolean).join(' ') || owner.email : 'Unknown',
         email: owner?.email ?? '',
-        plan: b.subscriptionTier === 'STARTER' ? 'Starter' : b.subscriptionTier === 'GROWTH' ? 'Growth' : 'Enterprise',
+        plan: isTrial ? 'Trial' : b.subscriptionTier === 'STARTER' ? 'Starter' : b.subscriptionTier === 'GROWTH' ? 'Growth' : 'Enterprise',
         status: b.isActive ? 'active' : 'suspended',
         calls: Number(callCountRows[0]?.n ?? 0),
-        mrr: planMrr[b.subscriptionTier] ?? 0,
+        mrr: isTrial ? 0 : planMrr[b.subscriptionTier] ?? 0,
         joined: b.createdAt.toISOString(),
       };
     }));
