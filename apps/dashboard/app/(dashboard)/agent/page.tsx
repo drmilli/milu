@@ -22,8 +22,11 @@ interface AgentConfig {
 
 const PRESET_VOICES = [
   { id: 'amaka', name: 'Amaka', desc: 'Warm, friendly — great for retail' },
-  { id: 'chidi', name: 'Chidi', desc: 'Calm, professional — great for services' },
   { id: 'ngozi', name: 'Ngozi', desc: 'Energetic, upbeat — great for hospitality' },
+  { id: 'aisha', name: 'Aisha', desc: 'Clear, confident — great for clinics' },
+  { id: 'chidi', name: 'Chidi (Male)', desc: 'Calm, professional — great for services' },
+  { id: 'tunde', name: 'Tunde (Male)', desc: 'Friendly, upbeat — great for sales' },
+  { id: 'kola', name: 'Kola (Male)', desc: 'Deep, composed — great for support' },
 ];
 
 const TONES = ['professional', 'friendly', 'concise', 'empathetic', 'formal'];

@@ -1,6 +1,6 @@
 import type { Request, Response } from 'express';
 import { and, desc, eq, isNull, sql } from 'drizzle-orm';
-import { db, phoneNumbers, agentConfigs, businesses, businessSettings, calls, escalations, knowledgeBases, knowledgeDocuments, transcripts } from '../db';
+import { db, phoneNumbers, agentConfigs, businesses, businessSettings, calls, escalations, knowledgeBases, knowledgeDocuments, transcripts, contacts, orders, appointments } from '../db';
 import { logger } from '../config/logger';
 import { env } from '../config/env';
 import { voiceChat, type ChatMessage } from '../services/document-extract';
@@ -33,7 +33,15 @@ function mapAgentVoiceToOpenAi(voiceId: string | null | undefined): OpenAiTtsVoi
   if (v === 'amaka') return 'nova';
   if (v === 'chidi') return 'onyx';
   if (v === 'ngozi') return 'shimmer';
+  if (v === 'aisha') return 'alloy';
+  if (v === 'tunde') return 'echo';
+  if (v === 'kola') return 'ash';
   return 'nova';
+}
+
+function isUrgent(text: string) {
+  const t = text.toLowerCase();
+  return /\b(urgent|emergency|asap|immediately|right now|right away)\b/.test(t);
 }
 
 async function ttsUrl(text: string, voiceId: string | null | undefined, baseUrl: string): Promise<string | null> {
@@ -217,19 +225,89 @@ async function computeAtVoiceReply(
     { role: 'user' as const, content: callerText },
   ];
 
-  const { reply, action } = await voiceChat(messages, {
-    businessName: bizRow?.name ?? 'this business',
-    agentName: agentRow?.name,
-    agentLanguage: agentRow?.language,
-    faqs: (kbRow?.faqs as { question: string; answer: string }[]) ?? [],
-    websiteSummary: kbRow?.websiteSummary,
-    docSummaries: kbDocs.map(d => d.summary ?? '').filter(Boolean),
-    agentTone: agentRow?.tone,
-    escalationNumber: kbRow?.escalationNumber,
-    fallbackMessage: agentRow?.fallbackMessage,
-  });
+  const urgent = isUrgent(callerText);
+  const {
+    reply,
+    action,
+    appointment: appt,
+    order,
+  } = urgent
+    ? { reply: 'Alright. I’ll get someone to help you right away.', action: 'escalate' as const, appointment: null, order: null }
+    : await voiceChat(messages, {
+      businessName: bizRow?.name ?? 'this business',
+      agentName: agentRow?.name,
+      agentLanguage: agentRow?.language,
+      faqs: (kbRow?.faqs as { question: string; answer: string }[]) ?? [],
+      websiteSummary: kbRow?.websiteSummary,
+      docSummaries: kbDocs.map(d => d.summary ?? '').filter(Boolean),
+      agentTone: agentRow?.tone,
+      escalationNumber: kbRow?.escalationNumber,
+      fallbackMessage: agentRow?.fallbackMessage,
+    });
 
   await db.insert(transcripts).values({ callId: callDbId, speaker: 'agent', text: reply });
+
+  let contactId: string | undefined;
+  const phone = callRow.callerNumber ?? '';
+  if (phone) {
+    const [existingContact] = await db.select({ id: contacts.id }).from(contacts)
+      .where(and(eq(contacts.businessId, callRow.businessId), eq(contacts.phone, phone)))
+      .limit(1);
+    if (existingContact?.id) {
+      contactId = existingContact.id;
+      await db.update(contacts).set({ lastCallAt: new Date() })
+        .where(eq(contacts.id, contactId));
+    } else {
+      const [created] = await db.insert(contacts).values({
+        businessId: callRow.businessId,
+        phone,
+        name: appt?.customerName ?? order?.customerName,
+        lastCallAt: new Date(),
+      }).returning({ id: contacts.id });
+      contactId = created?.id;
+    }
+  }
+
+  if (appt?.scheduledAt) {
+    const scheduledAt = new Date(appt.scheduledAt);
+    if (!Number.isNaN(scheduledAt.getTime())) {
+      const [row] = await db.insert(appointments).values({
+        businessId: callRow.businessId,
+        contactId,
+        callId: callDbId,
+        scheduledAt,
+        duration: Math.max(5, Math.min(240, appt.durationMinutes ?? 30)),
+        serviceType: appt.serviceType,
+        customerPhone: appt.customerPhone ?? phone,
+        customerName: appt.customerName,
+        notes: appt.notes,
+      }).returning({ id: appointments.id });
+      logger.info({ callDbId, appointmentId: row?.id }, 'Appointment created from call');
+      await notifyBusinessOwners(callRow.businessId, 'New Appointment', `Booked for ${appt.customerName ?? appt.customerPhone ?? phone} on ${scheduledAt.toLocaleString()}`);
+    }
+  }
+
+  if (order?.items?.length) {
+    const orderNumber = `ORD-${Date.now().toString(36).toUpperCase()}`;
+    const totalAmount = typeof order.totalAmount === 'number'
+      ? Math.max(0, Math.round(order.totalAmount))
+      : order.items.reduce((sum, it) => sum + (typeof it.price === 'number' ? it.price * it.qty : 0), 0) || undefined;
+    const [row] = await db.insert(orders).values({
+      businessId: callRow.businessId,
+      contactId,
+      callId: callDbId,
+      orderNumber,
+      customerPhone: order.customerPhone ?? phone,
+      customerName: order.customerName,
+      items: order.items.map(i => ({ name: i.name, qty: i.qty, price: i.price ?? 0 })),
+      totalAmount,
+      currency: order.currency ?? 'NGN',
+      deliveryAddress: order.deliveryAddress,
+      notes: order.notes,
+    }).returning({ id: orders.id });
+    logger.info({ callDbId, orderId: row?.id, orderNumber }, 'Order created from call');
+    await notifyBusinessOwners(callRow.businessId, 'New Order', `Order #${orderNumber} from ${order.customerName ?? order.customerPhone ?? phone}`);
+  }
 
   const audioUrl = await ttsUrl(reply, agentRow?.voiceId ?? 'amaka', baseUrl);
   const speak = audioUrl

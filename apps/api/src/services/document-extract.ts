@@ -238,6 +238,23 @@ Your role:
 export interface VoiceChatResult {
   reply: string;
   action: 'continue' | 'escalate' | 'end';
+  appointment?: {
+    scheduledAt: string;
+    durationMinutes?: number;
+    serviceType?: string;
+    customerName?: string;
+    customerPhone?: string;
+    notes?: string;
+  } | null;
+  order?: {
+    customerName?: string;
+    customerPhone?: string;
+    items: Array<{ name: string; qty: number; price?: number }>;
+    currency?: string;
+    deliveryAddress?: string;
+    notes?: string;
+    totalAmount?: number;
+  } | null;
 }
 
 export async function voiceChat(
@@ -281,6 +298,12 @@ export async function voiceChat(
     context.fallbackMessage
       ? `Fallback response: "${context.fallbackMessage}"`
       : null,
+    `If the customer is trying to book an appointment, you must collect the booking details. Once you have them, include a JSON block exactly like this anywhere in your message (before the final action tag):`,
+    `[APPOINTMENT]{"scheduledAt":"2026-04-30T15:00:00+01:00","durationMinutes":30,"serviceType":"Haircut","customerName":"Ada","customerPhone":"+234...","notes":"..."}[/APPOINTMENT]`,
+    `Only include [APPOINTMENT] if you have a specific date/time for scheduledAt. If missing, ask a short follow-up question instead.`,
+    `If the customer is placing an order, you must collect order details. Once you have them, include a JSON block exactly like this anywhere in your message (before the final action tag):`,
+    `[ORDER]{"items":[{"name":"Burger","qty":2,"price":2500}],"currency":"NGN","deliveryAddress":"...","customerName":"Ada","customerPhone":"+234...","notes":"...","totalAmount":5000}[/ORDER]`,
+    `Only include [ORDER] if you have at least one item with qty. If missing, ask a short follow-up question instead.`,
     `\nEnd every reply with exactly one of these tags (no other text after it):\n[CONTINUE] — conversation should continue\n[ESCALATE] — transfer to human agent\n[END] — call is wrapping up naturally`,
   ].filter(Boolean).join('\n');
 
@@ -294,10 +317,10 @@ export async function voiceChat(
         method: 'POST',
         headers: { 'Authorization': `Bearer ${env.OPENAI_API_KEY}`, 'content-type': 'application/json' },
         body: JSON.stringify({
-          model: 'gpt-4o-mini', max_tokens: 350,
+          model: 'gpt-4o-mini', max_tokens: 220, temperature: 0.2,
           messages: [{ role: 'system', content: systemPrompt }, ...msgs],
         }),
-        signal: AbortSignal.timeout(6000),
+        signal: AbortSignal.timeout(4500),
       });
       if (!res.ok) { const b = await res.text(); throw new Error(`OpenAI ${res.status}: ${b}`); }
       const data = await res.json() as { choices: Array<{ message: { content: string } }> };
@@ -311,8 +334,8 @@ export async function voiceChat(
       const res = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: { 'x-api-key': env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-        body: JSON.stringify({ model: 'claude-haiku-4-5-20251001', max_tokens: 350, system: systemPrompt, messages: msgs }),
-        signal: AbortSignal.timeout(6000),
+        body: JSON.stringify({ model: 'claude-haiku-4-5-20251001', max_tokens: 220, system: systemPrompt, messages: msgs }),
+        signal: AbortSignal.timeout(4500),
       });
       if (!res.ok) { const b = await res.text(); throw new Error(`Claude ${res.status}: ${b}`); }
       const data = await res.json() as { content: Array<{ text: string }> };
@@ -322,14 +345,32 @@ export async function voiceChat(
 
   if (!raw) {
     const fallback = context.fallbackMessage ?? "I'm sorry, I'm having trouble right now. Please call back shortly.";
-    return { reply: fallback, action: 'end' };
+    return { reply: fallback, action: 'end', appointment: null, order: null };
   }
+
+  let appointment: VoiceChatResult['appointment'] = null;
+  const apptMatch = raw.match(/\[APPOINTMENT\]\s*([\s\S]*?)\s*\[\/APPOINTMENT\]/i);
+  if (apptMatch?.[1]) {
+    try {
+      appointment = JSON.parse(apptMatch[1]) as NonNullable<VoiceChatResult['appointment']>;
+    } catch { appointment = null; }
+  }
+
+  let order: VoiceChatResult['order'] = null;
+  const orderMatch = raw.match(/\[ORDER\]\s*([\s\S]*?)\s*\[\/ORDER\]/i);
+  if (orderMatch?.[1]) {
+    try {
+      order = JSON.parse(orderMatch[1]) as NonNullable<VoiceChatResult['order']>;
+    } catch { order = null; }
+  }
+
+  raw = raw.replace(/\s*\[APPOINTMENT\][\s\S]*?\[\/APPOINTMENT\]\s*/ig, '\n').replace(/\s*\[ORDER\][\s\S]*?\[\/ORDER\]\s*/ig, '\n');
 
   // Match action tag anywhere near end (tolerates trailing whitespace/newlines)
   const actionMatch = raw.match(/\[(CONTINUE|ESCALATE|END)\][^\w]*$/i);
   const action = (actionMatch?.[1]?.toLowerCase() ?? 'continue') as 'continue' | 'escalate' | 'end';
   const reply = raw.replace(/\s*\[(CONTINUE|ESCALATE|END)\][^\w]*$/i, '').trim();
-  return { reply, action };
+  return { reply, action, appointment, order };
 }
 
 export async function scrapeWebsite(url: string): Promise<string> {

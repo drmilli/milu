@@ -1,7 +1,7 @@
 import type { Request, Response } from 'express';
 import crypto from 'crypto';
 import { and, desc, eq, sql } from 'drizzle-orm';
-import { db, phoneNumbers, agentConfigs, businesses, calls, escalations, notifications, transcripts, knowledgeBases, knowledgeDocuments, businessSettings } from '../db';
+import { db, phoneNumbers, agentConfigs, businesses, calls, escalations, notifications, transcripts, knowledgeBases, knowledgeDocuments, businessSettings, contacts, orders, appointments } from '../db';
 import { logger } from '../config/logger';
 import { env } from '../config/env';
 import { voiceChat, type ChatMessage } from '../services/document-extract';
@@ -38,7 +38,15 @@ function mapAgentVoiceToOpenAi(voiceId: string | null | undefined): OpenAiTtsVoi
   if (v === 'amaka') return 'nova';
   if (v === 'chidi') return 'onyx';
   if (v === 'ngozi') return 'shimmer';
+  if (v === 'aisha') return 'alloy';
+  if (v === 'tunde') return 'echo';
+  if (v === 'kola') return 'ash';
   return 'nova';
+}
+
+function isUrgent(text: string) {
+  const t = text.toLowerCase();
+  return /\b(urgent|emergency|asap|immediately|right now|right away)\b/.test(t);
 }
 
 async function ttsUrl(text: string, voiceId: string | null | undefined, baseUrl: string): Promise<string | null> {
@@ -77,9 +85,186 @@ async function ttsUrl(text: string, voiceId: string | null | undefined, baseUrl:
   return `${baseUrl.replace(/\/$/, '')}/webhooks/tts/${id}`;
 }
 
-function gatherTurn(callId: string, language: string, baseUrl: string, timeout = 5) {
+const twilioTwimlCache = new Map<string, { xml: string; expiresAt: number }>();
+
+function twilioCacheSet(callId: string, xml: string) {
+  twilioTwimlCache.set(callId, { xml, expiresAt: Date.now() + 2 * 60 * 1000 });
+}
+
+function twilioCachePop(callId: string): string | null {
+  const hit = twilioTwimlCache.get(callId);
+  if (!hit) return null;
+  twilioTwimlCache.delete(callId);
+  if (Date.now() > hit.expiresAt) return null;
+  return hit.xml;
+}
+
+async function twilioCacheSetPersistent(callId: string, xml: string) {
+  if (redis) {
+    await redis.set(`twilio:twiml:${callId}`, xml, 'EX', 120).catch(() => null);
+    return;
+  }
+  twilioCacheSet(callId, xml);
+}
+
+async function twilioCachePopPersistent(callId: string): Promise<string | null> {
+  if (redis) {
+    const key = `twilio:twiml:${callId}`;
+    const res = await redis.multi().get(key).del(key).exec().catch(() => null);
+    const value = Array.isArray(res) ? (res[0]?.[1] as string | null | undefined) : null;
+    if (typeof value === 'string' && value) return value;
+    return null;
+  }
+  return twilioCachePop(callId);
+}
+
+function gatherTurn(callId: string, language: string, baseUrl: string, timeout = 3) {
   const action = `${baseUrl}/webhooks/twilio/voice/gather?callId=${encodeURIComponent(callId)}`;
-  return `<Gather input="speech" action="${action}" method="POST" timeout="${timeout}" speechTimeout="auto" language="${language}"><Pause length="1"/></Gather>`;
+  return `<Gather input="speech" action="${action}" method="POST" timeout="${timeout}" speechTimeout="auto" language="${language}"></Gather>`;
+}
+
+function redirectToRespond(callId: string, baseUrl: string, attempt: number) {
+  const url = `${baseUrl}/webhooks/twilio/voice/respond?callId=${encodeURIComponent(callId)}&attempt=${attempt}`;
+  return `<Redirect method="POST">${escapeXml(url)}</Redirect>`;
+}
+
+async function computeTwilioTurn(callId: string, speechResult: string, baseUrl: string) {
+  const language = 'en-US';
+
+  const [callRow] = await db.select().from(calls).where(eq(calls.id, callId)).limit(1);
+  if (!callRow) {
+    return twiml('<Say voice="alice">Something went wrong. Goodbye.</Say><Hangup/>');
+  }
+
+  const [history, [agentRow], [bizRow], [kbRow], kbDocs] = await Promise.all([
+    db.select({ speaker: transcripts.speaker, text: transcripts.text })
+      .from(transcripts)
+      .where(eq(transcripts.callId, callId))
+      .orderBy(transcripts.createdAt),
+    db.select().from(agentConfigs).where(eq(agentConfigs.businessId, callRow.businessId)).limit(1),
+    db.select({ name: businesses.name }).from(businesses).where(eq(businesses.id, callRow.businessId)).limit(1),
+    db.select({ faqs: knowledgeBases.faqs, websiteSummary: knowledgeBases.websiteSummary, escalationNumber: knowledgeBases.escalationNumber })
+      .from(knowledgeBases).where(eq(knowledgeBases.businessId, callRow.businessId)).limit(1),
+    db.select({ summary: knowledgeDocuments.summary })
+      .from(knowledgeDocuments).where(eq(knowledgeDocuments.businessId, callRow.businessId)).limit(5),
+  ]);
+
+  const messages: ChatMessage[] = [
+    ...history.map(t => ({
+      role: (t.speaker === 'agent' ? 'assistant' : 'user') as 'user' | 'assistant',
+      content: t.text,
+    })),
+    { role: 'user' as const, content: speechResult },
+  ];
+
+  const urgent = isUrgent(speechResult);
+  const {
+    reply,
+    action,
+    appointment: appt,
+    order,
+  } = urgent
+    ? { reply: 'Alright. I’ll get someone to help you right away.', action: 'escalate' as const, appointment: null, order: null }
+    : await voiceChat(messages, {
+      businessName: bizRow?.name ?? 'this business',
+      agentName: agentRow?.name,
+      agentLanguage: agentRow?.language,
+      faqs: (kbRow?.faqs as { question: string; answer: string }[]) ?? [],
+      websiteSummary: kbRow?.websiteSummary,
+      docSummaries: kbDocs.map(d => d.summary ?? '').filter(Boolean),
+      agentTone: agentRow?.tone,
+      escalationNumber: kbRow?.escalationNumber,
+      fallbackMessage: agentRow?.fallbackMessage,
+    });
+
+  await db.insert(transcripts).values({ callId, speaker: 'agent', text: reply });
+
+  let contactId: string | undefined;
+  const phone = callRow.callerNumber ?? '';
+  if (phone) {
+    const [existingContact] = await db.select({ id: contacts.id }).from(contacts)
+      .where(and(eq(contacts.businessId, callRow.businessId), eq(contacts.phone, phone)))
+      .limit(1);
+    if (existingContact?.id) {
+      contactId = existingContact.id;
+      await db.update(contacts).set({ lastCallAt: new Date() })
+        .where(eq(contacts.id, contactId));
+    } else {
+      const [created] = await db.insert(contacts).values({
+        businessId: callRow.businessId,
+        phone,
+        name: appt?.customerName ?? order?.customerName,
+        lastCallAt: new Date(),
+      }).returning({ id: contacts.id });
+      contactId = created?.id;
+    }
+  }
+
+  if (appt?.scheduledAt) {
+    const scheduledAt = new Date(appt.scheduledAt);
+    if (!Number.isNaN(scheduledAt.getTime())) {
+      const [row] = await db.insert(appointments).values({
+        businessId: callRow.businessId,
+        contactId,
+        callId,
+        scheduledAt,
+        duration: Math.max(5, Math.min(240, appt.durationMinutes ?? 30)),
+        serviceType: appt.serviceType,
+        customerPhone: appt.customerPhone ?? phone,
+        customerName: appt.customerName,
+        notes: appt.notes,
+      }).returning({ id: appointments.id });
+      logger.info({ callId, appointmentId: row?.id }, 'Appointment created from call');
+      await notifyBusinessOwners(callRow.businessId, 'New Appointment', `Booked for ${appt.customerName ?? appt.customerPhone ?? phone} on ${scheduledAt.toLocaleString()}`);
+    }
+  }
+
+  if (order?.items?.length) {
+    const orderNumber = `ORD-${Date.now().toString(36).toUpperCase()}`;
+    const totalAmount = typeof order.totalAmount === 'number'
+      ? Math.max(0, Math.round(order.totalAmount))
+      : order.items.reduce((sum, it) => sum + (typeof it.price === 'number' ? it.price * it.qty : 0), 0) || undefined;
+    const [row] = await db.insert(orders).values({
+      businessId: callRow.businessId,
+      contactId,
+      callId,
+      orderNumber,
+      customerPhone: order.customerPhone ?? phone,
+      customerName: order.customerName,
+      items: order.items.map(i => ({ name: i.name, qty: i.qty, price: i.price ?? 0 })),
+      totalAmount,
+      currency: order.currency ?? 'NGN',
+      deliveryAddress: order.deliveryAddress,
+      notes: order.notes,
+    }).returning({ id: orders.id });
+    logger.info({ callId, orderId: row?.id, orderNumber }, 'Order created from call');
+    await notifyBusinessOwners(callRow.businessId, 'New Order', `Order #${orderNumber} from ${order.customerName ?? order.customerPhone ?? phone}`);
+  }
+
+  if (action === 'escalate') {
+    await handleEscalation(callId, callRow.businessId, callRow.callerNumber ?? '', speechResult);
+    await db.update(calls).set({ status: 'COMPLETED', resolution: 'HUMAN', endedAt: new Date() }).where(eq(calls.id, callId));
+    const audioUrl = await ttsUrl(reply, agentRow?.voiceId ?? 'amaka', baseUrl);
+    const speak = audioUrl
+      ? `<Play>${escapeXml(audioUrl)}</Play>`
+      : `<Say voice="alice" language="${language}">${escapeXml(reply)}</Say>`;
+    return twiml(`${speak}<Hangup/>`);
+  }
+
+  if (action === 'end') {
+    await db.update(calls).set({ status: 'COMPLETED', resolution: 'AI', endedAt: new Date() }).where(eq(calls.id, callId));
+    const audioUrl = await ttsUrl(reply, agentRow?.voiceId ?? 'amaka', baseUrl);
+    const speak = audioUrl
+      ? `<Play>${escapeXml(audioUrl)}</Play>`
+      : `<Say voice="alice" language="${language}">${escapeXml(reply)}</Say>`;
+    return twiml(`${speak}<Hangup/>`);
+  }
+
+  const audioUrl = await ttsUrl(reply, agentRow?.voiceId ?? 'amaka', baseUrl);
+  const speak = audioUrl
+    ? `<Play>${escapeXml(audioUrl)}</Play>`
+    : `<Say voice="alice" language="${language}">${escapeXml(reply)}</Say>`;
+  return twiml(speak + gatherTurn(callId, language, baseUrl));
 }
 
 export async function handleTwilioVoiceWebhook(req: Request, res: Response) {
@@ -168,70 +353,46 @@ export async function handleTwilioVoiceGather(req: Request, res: Response) {
   if (!callId || !speechResult.trim()) return res.send(retry);
 
   try {
-    const [callRow] = await db.select().from(calls).where(eq(calls.id, callId)).limit(1);
-    if (!callRow) {
-      logger.warn({ callId }, 'Twilio gather: call not found');
-      return res.send(twiml('<Say voice="alice">Something went wrong. Goodbye.</Say><Hangup/>'));
-    }
-
-    const [history, [agentRow], [bizRow], [kbRow], kbDocs] = await Promise.all([
-      db.select({ speaker: transcripts.speaker, text: transcripts.text })
-        .from(transcripts)
-        .where(eq(transcripts.callId, callId))
-        .orderBy(transcripts.createdAt),
-      db.select().from(agentConfigs).where(eq(agentConfigs.businessId, callRow.businessId)).limit(1),
-      db.select({ name: businesses.name }).from(businesses).where(eq(businesses.id, callRow.businessId)).limit(1),
-      db.select({ faqs: knowledgeBases.faqs, websiteSummary: knowledgeBases.websiteSummary, escalationNumber: knowledgeBases.escalationNumber })
-        .from(knowledgeBases).where(eq(knowledgeBases.businessId, callRow.businessId)).limit(1),
-      db.select({ summary: knowledgeDocuments.summary })
-        .from(knowledgeDocuments).where(eq(knowledgeDocuments.businessId, callRow.businessId)).limit(5),
-    ]);
-
     await db.insert(transcripts).values({ callId, speaker: 'caller', text: speechResult });
 
-    const messages: ChatMessage[] = [
-      ...history.map(t => ({
-        role: (t.speaker === 'agent' ? 'assistant' : 'user') as 'user' | 'assistant',
-        content: t.text,
-      })),
-      { role: 'user' as const, content: speechResult },
-    ];
+    computeTwilioTurn(callId, speechResult, baseUrl)
+      .then((xml) => twilioCacheSetPersistent(callId, xml))
+      .catch(() => twilioCacheSetPersistent(callId, retry));
 
-    const { reply, action } = await voiceChat(messages, {
-      businessName: bizRow?.name ?? 'this business',
-      faqs: (kbRow?.faqs as { question: string; answer: string }[]) ?? [],
-      websiteSummary: kbRow?.websiteSummary,
-      docSummaries: kbDocs.map(d => d.summary ?? '').filter(Boolean),
-      agentTone: agentRow?.tone,
-      escalationNumber: kbRow?.escalationNumber,
-    });
+    const thinking = twiml(
+      `<Say voice="alice" language="${language}">${escapeXml('Alright.')}</Say>` +
+      '<Pause length="1"/>' +
+      redirectToRespond(callId, baseUrl, 0),
+    );
 
-    await db.insert(transcripts).values({ callId, speaker: 'agent', text: reply });
-
-    if (action === 'escalate') {
-      await handleEscalation(callId, callRow.businessId, callRow.callerNumber ?? '', speechResult);
-      await db.update(calls).set({ status: 'COMPLETED', resolution: 'HUMAN', endedAt: new Date() }).where(eq(calls.id, callId));
-      return res.send(twiml(`<Say voice="alice" language="${language}">${escapeXml(reply)}</Say><Hangup/>`));
-    }
-
-    if (action === 'end') {
-      await db.update(calls).set({ status: 'COMPLETED', resolution: 'AI', endedAt: new Date() }).where(eq(calls.id, callId));
-      const audioUrl = await ttsUrl(reply, agentRow?.voiceId ?? 'amaka', baseUrl);
-      const speak = audioUrl
-        ? `<Play>${escapeXml(audioUrl)}</Play>`
-        : `<Say voice="alice" language="${language}">${escapeXml(reply)}</Say>`;
-      return res.send(twiml(`${speak}<Hangup/>`));
-    }
-
-    const audioUrl = await ttsUrl(reply, agentRow?.voiceId ?? 'amaka', baseUrl);
-    const speak = audioUrl
-      ? `<Play>${escapeXml(audioUrl)}</Play>`
-      : `<Say voice="alice" language="${language}">${escapeXml(reply)}</Say>`;
-    return res.send(twiml(speak + gatherTurn(callId, language, baseUrl)));
+    return res.send(thinking);
   } catch (err) {
     logger.error({ err, callId }, 'Error handling Twilio voice gather');
     return res.send(retry);
   }
+}
+
+export async function handleTwilioVoiceRespond(req: Request, res: Response) {
+  res.set('Content-Type', 'text/xml');
+
+  const callId = typeof req.query.callId === 'string' ? req.query.callId : '';
+  const attempt = typeof req.query.attempt === 'string' ? parseInt(req.query.attempt, 10) : 0;
+  const baseUrl = getBaseUrl(req);
+  const language = 'en-US';
+
+  if (!callId) return res.send(twiml('<Hangup/>'));
+
+  const cached = await twilioCachePopPersistent(callId);
+  if (cached) return res.send(cached);
+
+  if (Number.isFinite(attempt) && attempt >= 8) {
+    return res.send(twiml(
+      `<Say voice="alice" language="${language}">${escapeXml("Sorry, I'm taking longer than expected. Please say that again.")}</Say>` +
+      gatherTurn(callId, language, baseUrl),
+    ));
+  }
+
+  return res.send(twiml('<Pause length="1"/>' + redirectToRespond(callId, baseUrl, (attempt || 0) + 1)));
 }
 
 async function handleEscalation(callId: string, businessId: string, callerNumber: string, summary: string) {
