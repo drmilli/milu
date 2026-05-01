@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
-import { useParams } from 'next/navigation';
+import { useParams, useSearchParams } from 'next/navigation';
 import { useAdminAuth } from '../../../../hooks/useAdminAuth';
 import { adminGet, adminPatch, adminPost, adminDelete } from '../../../../lib/api';
 
@@ -35,6 +35,7 @@ interface BusinessDetail {
     resolution: 'AI' | 'HUMAN' | 'ABANDONED';
     intent: string | null;
     startedAt: string;
+    recordingUrl?: string | null;
   }[];
   invoices?: { id: string; date: string; amount: number; status: string; invoiceUrl?: string }[];
   subscription?: { nextBillingAt?: string };
@@ -85,6 +86,17 @@ interface TwilioIncomingNumber {
 
 type CatalogType = 'PRODUCT' | 'SERVICE';
 
+type CatalogItemUpsert = {
+  type: CatalogType;
+  name: string;
+  description?: string | null;
+  price?: number | null;
+  currency?: string;
+  isAvailable?: boolean;
+  availabilityNote?: string | null;
+  tags?: string[];
+};
+
 interface CatalogItem {
   id: string;
   businessId: string;
@@ -100,6 +112,11 @@ interface CatalogItem {
   updatedAt: string;
 }
 
+function parseCatalogFilter(value: string): 'all' | CatalogType {
+  if (value === 'PRODUCT' || value === 'SERVICE' || value === 'all') return value;
+  return 'all';
+}
+
 function CatalogItemModal({
   mode,
   initial,
@@ -109,16 +126,7 @@ function CatalogItemModal({
   mode: 'create' | 'edit';
   initial?: Partial<CatalogItem>;
   onClose: () => void;
-  onSave: (data: {
-    type: CatalogType;
-    name: string;
-    description?: string | null;
-    price?: number | null;
-    currency?: string;
-    isAvailable?: boolean;
-    availabilityNote?: string | null;
-    tags?: string[];
-  }) => Promise<void>;
+  onSave: (data: CatalogItemUpsert) => Promise<void>;
 }) {
   const [type, setType] = useState<CatalogType>((initial?.type as CatalogType) ?? 'PRODUCT');
   const [name, setName] = useState(initial?.name ?? '');
@@ -229,15 +237,19 @@ function CatalogItemModal({
   );
 }
 
-const tabs = ['Overview', 'Agent', 'Calls', 'Team', 'Billing', 'Phone Numbers', 'Products & Services'];
+const tabs = ['Overview', 'Agent', 'Calls', 'Team', 'Billing', 'Phone Numbers', 'Products'];
 
 export default function BusinessDetailPage() {
   const { id } = useParams<{ id: string }>();
+  const searchParams = useSearchParams();
   const { token, ready } = useAdminAuth();
 
   const [biz, setBiz] = useState<BusinessDetail | null>(null);
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState('Overview');
+  const [tab, setTab] = useState(() => {
+    const t = searchParams.get('tab');
+    return t && tabs.includes(t) ? t : 'Overview';
+  });
   const [planInput, setPlanInput] = useState('');
   const [statusInput, setStatusInput] = useState('');
   const [saving, setSaving] = useState(false);
@@ -260,6 +272,8 @@ export default function BusinessDetailPage() {
   const [showCatalogCreate, setShowCatalogCreate] = useState(false);
   const [catalogEditing, setCatalogEditing] = useState<CatalogItem | null>(null);
   const [catalogSavingId, setCatalogSavingId] = useState<string | null>(null);
+  const [playingUrl, setPlayingUrl] = useState<string | null>(null);
+  const [loadingRecordingId, setLoadingRecordingId] = useState<string | null>(null);
 
   const load = useCallback(() => {
     if (!token || !id) return;
@@ -308,18 +322,18 @@ export default function BusinessDetailPage() {
   }, [tab, loadPhoneNums, loadTwilioNums, token, id]);
 
   useEffect(() => {
-    if (tab === 'Products & Services' && token && id) {
+    if (tab === 'Products' && token && id) {
       loadCatalog();
     }
   }, [tab, loadCatalog, token, id]);
 
-  async function createCatalogItem(data: Parameters<typeof CatalogItemModal>[0]['onSave'] extends (a: infer A) => any ? A : never) {
+  async function createCatalogItem(data: CatalogItemUpsert) {
     if (!token || !id) return;
     await adminPost(`/admin/businesses/${id}/catalog`, data, token);
     loadCatalog();
   }
 
-  async function updateCatalogItem(itemId: string, data: Parameters<typeof CatalogItemModal>[0]['onSave'] extends (a: infer A) => any ? A : never) {
+  async function updateCatalogItem(itemId: string, data: CatalogItemUpsert) {
     if (!token || !id) return;
     await adminPatch(`/admin/businesses/${id}/catalog/${itemId}`, data, token);
     loadCatalog();
@@ -342,6 +356,19 @@ export default function BusinessDetailPage() {
     if (!ok) return;
     await adminDelete(`/admin/businesses/${id}/catalog/${item.id}`, token).catch(() => null);
     setCatalog(prev => prev.filter(p => p.id !== item.id));
+  }
+
+  async function playRecording(callId: string) {
+    if (!token) return;
+    setLoadingRecordingId(callId);
+    try {
+      const res = await adminGet<{ url: string }>(`/calls/${callId}/recording`, token);
+      setPlayingUrl(res.url);
+    } catch {
+      setPlayingUrl(null);
+    } finally {
+      setLoadingRecordingId(null);
+    }
   }
 
   async function handleAddPhone() {
@@ -562,6 +589,7 @@ export default function BusinessDetailPage() {
                 <th className="text-left px-4 py-3 text-xs font-semibold text-primary-warm uppercase tracking-wider">Duration</th>
                 <th className="text-left px-4 py-3 text-xs font-semibold text-primary-warm uppercase tracking-wider">Status</th>
                 <th className="text-left px-4 py-3 text-xs font-semibold text-primary-warm uppercase tracking-wider">Time</th>
+                <th className="text-right px-5 py-3 text-xs font-semibold text-primary-warm uppercase tracking-wider">Audio</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-cream-dark">
@@ -576,6 +604,18 @@ export default function BusinessDetailPage() {
                     </span>
                   </td>
                   <td className="px-4 py-3.5 text-primary-warm">{timeAgo(c.startedAt)}</td>
+                  <td className="px-5 py-3.5 text-right">
+                    <button
+                      onClick={() => playRecording(c.id)}
+                      disabled={loadingRecordingId === c.id}
+                      className="inline-flex items-center justify-center w-9 h-9 rounded-lg border border-cream-dark text-primary-warm hover:text-primary hover:border-primary/30 transition-colors disabled:opacity-50"
+                      title={c.recordingUrl ? 'Play recording' : 'Check recording'}
+                    >
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M5.25 5.25v13.5l13.5-6.75-13.5-6.75z" />
+                      </svg>
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -749,7 +789,7 @@ export default function BusinessDetailPage() {
         </div>
       )}
 
-      {tab === 'Products & Services' && (
+      {tab === 'Products' && (
         <div className="space-y-5">
           <div className="bg-white rounded-2xl border border-cream-dark p-5 space-y-4">
             <div className="flex items-start justify-between gap-3">
@@ -774,7 +814,7 @@ export default function BusinessDetailPage() {
               />
               <select
                 value={catalogType}
-                onChange={e => setCatalogType(e.target.value as any)}
+                onChange={e => setCatalogType(parseCatalogFilter(e.target.value))}
                 className="text-sm border border-cream-dark rounded-lg px-3 py-2 bg-cream-light text-primary-dark focus:outline-none focus:border-primary/50"
               >
                 <option value="all">All</option>
@@ -928,6 +968,22 @@ export default function BusinessDetailPage() {
             >
               Suspend account
             </button>
+          </div>
+        </div>
+      )}
+
+      {playingUrl && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-primary-dark/40 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-cream-dark">
+              <h2 className="font-semibold text-primary-dark">Call recording</h2>
+              <button onClick={() => setPlayingUrl(null)} className="w-8 h-8 flex items-center justify-center rounded-lg text-primary-warm hover:bg-cream transition-colors">
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+            </div>
+            <div className="px-6 py-5">
+              <audio controls autoPlay className="w-full" src={playingUrl} />
+            </div>
           </div>
         </div>
       )}

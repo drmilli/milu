@@ -164,12 +164,20 @@ export default function BusinessesPage() {
                   {new Date(b.joined).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
                 </td>
                 <td className="px-4 py-4">
-                  <Link
-                    href={`/admin/businesses/${b.id}`}
-                    className="text-xs text-primary hover:text-primary-dark font-medium hover:underline"
-                  >
-                    View →
-                  </Link>
+                  <div className="flex items-center gap-3 justify-end">
+                    <Link
+                      href={`/admin/businesses/${b.id}?tab=Products`}
+                      className="text-xs text-primary hover:text-primary-dark font-medium hover:underline"
+                    >
+                      Products
+                    </Link>
+                    <Link
+                      href={`/admin/businesses/${b.id}`}
+                      className="text-xs text-primary hover:text-primary-dark font-medium hover:underline"
+                    >
+                      View →
+                    </Link>
+                  </div>
                 </td>
               </tr>
             ))}

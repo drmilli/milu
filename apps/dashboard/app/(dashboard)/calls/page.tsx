@@ -16,6 +16,7 @@ interface Call {
   resolution?: string;
   status?: string;
   startedAt: string;
+  recordingUrl?: string | null;
 }
 
 interface Transcript {
@@ -81,6 +82,8 @@ function CallsPageInner() {
   const [selected, setSelected] = useState<Call | null>(null);
   const [transcript, setTranscript] = useState<Transcript[]>([]);
   const [loadingTranscript, setLoadingTranscript] = useState(false);
+  const [playingUrl, setPlayingUrl] = useState<string | null>(null);
+  const [loadingRecording, setLoadingRecording] = useState(false);
 
   const [filter, setFilter] = useState<'all' | 'AI' | 'HUMAN' | 'ABANDONED'>('all');
   const [search, setSearch] = useState('');
@@ -117,6 +120,24 @@ function CallsPageInner() {
       .catch(() => null)
       .finally(() => setLoadingTranscript(false));
   }, [selected, token]);
+
+  useEffect(() => {
+    setPlayingUrl(null);
+    setLoadingRecording(false);
+  }, [selected?.id]);
+
+  async function playRecording() {
+    if (!selected || !token) return;
+    setLoadingRecording(true);
+    try {
+      const res = await apiGet<{ url: string }>(`/calls/${selected.id}/recording`, token);
+      setPlayingUrl(res.url);
+    } catch {
+      setPlayingUrl(null);
+    } finally {
+      setLoadingRecording(false);
+    }
+  }
 
   // Debounce search
   useEffect(() => {
@@ -240,9 +261,21 @@ function CallsPageInner() {
                   <span className="capitalize">{selected.intent?.toLowerCase().replace('_', ' ') ?? '—'}</span>
                 </p>
               </div>
-              <span className={clsx('text-xs font-medium px-3 py-1.5 rounded-full', statusCls[resolutionLabel(selected.resolution)])}>
-                {resolutionLabel(selected.resolution)}
-              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={playRecording}
+                  disabled={loadingRecording}
+                  className="inline-flex items-center justify-center w-9 h-9 rounded-lg border border-cream-dark text-primary-warm hover:text-primary hover:border-primary/30 transition-colors disabled:opacity-50"
+                  title="Play recording"
+                >
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M5.25 5.25v13.5l13.5-6.75-13.5-6.75z" />
+                  </svg>
+                </button>
+                <span className={clsx('text-xs font-medium px-3 py-1.5 rounded-full', statusCls[resolutionLabel(selected.resolution)])}>
+                  {resolutionLabel(selected.resolution)}
+                </span>
+              </div>
             </div>
 
             <div className="flex-1 overflow-y-auto p-6 space-y-4">
@@ -282,6 +315,22 @@ function CallsPageInner() {
           </>
         )}
       </div>
+
+      {playingUrl && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-primary-dark/40 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-cream-dark">
+              <h2 className="font-semibold text-primary-dark">Call recording</h2>
+              <button onClick={() => setPlayingUrl(null)} className="w-8 h-8 flex items-center justify-center rounded-lg text-primary-warm hover:bg-cream transition-colors">
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+            </div>
+            <div className="px-6 py-5">
+              <audio controls autoPlay className="w-full" src={playingUrl} />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

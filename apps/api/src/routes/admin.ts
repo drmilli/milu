@@ -301,7 +301,7 @@ adminRouter.get('/businesses/:id', async (req, res, next) => {
     const [members, recentCalls, callTotal, callMonth, escalationCount, agentRow] = await Promise.all([
       db.select({ id: users.id, email: users.email, firstName: users.firstName, lastName: users.lastName, role: users.role })
         .from(users).where(eq(users.businessId, req.params.id)),
-      db.select({ id: calls.id, callerNumber: calls.callerNumber, duration: calls.duration, resolution: calls.resolution, intent: calls.intent, startedAt: calls.startedAt })
+      db.select({ id: calls.id, callerNumber: calls.callerNumber, duration: calls.duration, resolution: calls.resolution, intent: calls.intent, startedAt: calls.startedAt, recordingUrl: calls.recordingUrl })
         .from(calls).where(eq(calls.businessId, req.params.id)).orderBy(desc(calls.startedAt)).limit(10),
       db.select({ n: sql<number>`count(*)` }).from(calls).where(eq(calls.businessId, req.params.id)),
       db.select({ n: sql<number>`count(*)` }).from(calls).where(and(eq(calls.businessId, req.params.id), gte(calls.startedAt, startOfMonth))),
@@ -349,6 +349,7 @@ adminRouter.get('/businesses/:id', async (req, res, next) => {
         resolution: c.resolution ?? 'ABANDONED',
         intent: c.intent,
         startedAt: c.startedAt.toISOString(),
+        recordingUrl: c.recordingUrl,
       })),
       invoices: [],
       subscription: { nextBillingAt: undefined },
@@ -593,6 +594,7 @@ adminRouter.get('/calls', async (req, res, next) => {
         status: calls.status,
         intent: calls.intent,
         startedAt: calls.startedAt,
+        recordingUrl: calls.recordingUrl,
         businessName: businesses.name,
       }).from(calls)
         .leftJoin(businesses, eq(businesses.id, calls.businessId))
@@ -611,6 +613,7 @@ adminRouter.get('/calls', async (req, res, next) => {
         resolution: c.resolution ?? 'ABANDONED',
         intent: c.intent,
         startedAt: c.startedAt.toISOString(),
+        recordingUrl: c.recordingUrl,
       })),
       total, page, limit, totalPages: Math.ceil(total / limit),
     });

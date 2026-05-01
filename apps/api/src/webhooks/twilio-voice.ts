@@ -1,5 +1,6 @@
 import type { Request, Response } from 'express';
 import crypto from 'crypto';
+import twilio from 'twilio';
 import { and, desc, eq, sql } from 'drizzle-orm';
 import { db, phoneNumbers, agentConfigs, businesses, calls, escalations, notifications, transcripts, knowledgeBases, knowledgeDocuments, businessSettings, contacts, orders, appointments, catalogItems } from '../db';
 import { logger } from '../config/logger';
@@ -47,6 +48,105 @@ function mapAgentVoiceToOpenAi(voiceId: string | null | undefined): OpenAiTtsVoi
 function isUrgent(text: string) {
   const t = text.toLowerCase();
   return /\b(urgent|emergency|asap|immediately|right now|right away)\b/.test(t);
+}
+
+function getTwilioClient() {
+  if (!env.TWILIO_ACCOUNT_SID || !env.TWILIO_AUTH_TOKEN) return null;
+  return twilio(env.TWILIO_ACCOUNT_SID, env.TWILIO_AUTH_TOKEN);
+}
+
+function twilioBasicAuthHeader() {
+  if (!env.TWILIO_ACCOUNT_SID || !env.TWILIO_AUTH_TOKEN) return null;
+  const token = Buffer.from(`${env.TWILIO_ACCOUNT_SID}:${env.TWILIO_AUTH_TOKEN}`).toString('base64');
+  return `Basic ${token}`;
+}
+
+function twilioRecordingMediaUrl(recordingSid: string) {
+  if (!env.TWILIO_ACCOUNT_SID) return null;
+  return `https://api.twilio.com/2010-04-01/Accounts/${env.TWILIO_ACCOUNT_SID}/Recordings/${recordingSid}.mp3`;
+}
+
+function normalizeTwilioRecordingUrl(urlOrSid: string) {
+  const v = urlOrSid.trim();
+  if (!v) return null;
+  if (v.startsWith('http')) {
+    return v.endsWith('.mp3') ? v : `${v}.mp3`;
+  }
+  return twilioRecordingMediaUrl(v);
+}
+
+function cloudinaryEnabled() {
+  return Boolean(env.CLOUDINARY_CLOUD_NAME && env.CLOUDINARY_API_KEY && env.CLOUDINARY_API_SECRET);
+}
+
+function sha1Hex(input: string) {
+  return crypto.createHash('sha1').update(input).digest('hex');
+}
+
+async function uploadMp3ToCloudinary(callId: string, bytes: Uint8Array) {
+  if (!cloudinaryEnabled()) return null;
+
+  const cloudName = env.CLOUDINARY_CLOUD_NAME as string;
+  const apiKey = env.CLOUDINARY_API_KEY as string;
+  const apiSecret = env.CLOUDINARY_API_SECRET as string;
+  const folder = (env.CLOUDINARY_FOLDER?.trim() || 'milu/calls').replace(/\/+$/, '');
+  const timestamp = Math.floor(Date.now() / 1000);
+
+  const paramsToSign: Record<string, string> = {
+    folder,
+    overwrite: 'true',
+    public_id: callId,
+    timestamp: String(timestamp),
+  };
+
+  const toSign = Object.keys(paramsToSign)
+    .sort()
+    .map(k => `${k}=${paramsToSign[k]}`)
+    .join('&');
+  const signature = sha1Hex(`${toSign}${apiSecret}`);
+
+  const body = new FormData();
+  body.append('file', new Blob([bytes], { type: 'audio/mpeg' }), `${callId}.mp3`);
+  body.append('api_key', apiKey);
+  body.append('timestamp', String(timestamp));
+  body.append('signature', signature);
+  body.append('folder', folder);
+  body.append('public_id', callId);
+  body.append('overwrite', 'true');
+
+  const res = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/video/upload`, {
+    method: 'POST',
+    body,
+    signal: AbortSignal.timeout(30000),
+  });
+
+  if (!res.ok) {
+    const err = await res.text().catch(() => '');
+    logger.warn({ status: res.status, err: err.slice(0, 300) }, 'Cloudinary upload failed');
+    return null;
+  }
+
+  const json = await res.json().catch(() => null) as { secure_url?: string } | null;
+  return json?.secure_url ?? null;
+}
+
+async function fetchTwilioRecordingBytes(mediaUrl: string): Promise<Uint8Array | null> {
+  const auth = twilioBasicAuthHeader();
+  if (!auth) return null;
+
+  const res = await fetch(mediaUrl, {
+    headers: { Authorization: auth },
+    signal: AbortSignal.timeout(30000),
+  });
+
+  if (!res.ok) {
+    const err = await res.text().catch(() => '');
+    logger.warn({ status: res.status, err: err.slice(0, 200) }, 'Failed to download Twilio recording');
+    return null;
+  }
+
+  const buf = Buffer.from(await res.arrayBuffer());
+  return new Uint8Array(buf);
 }
 
 function isCatalogQuestion(text: string) {
@@ -390,12 +490,17 @@ export async function handleTwilioVoiceWebhook(req: Request, res: Response) {
     const callId = callRow?.id ?? '';
     logger.info({ businessId, fromNumber, toNumber, callSid, callId }, 'Inbound Twilio call answered');
 
+    const enableRecording = agentRow?.enableRecording ?? true;
+    const record = enableRecording
+      ? `<Start><Record recordingStatusCallback="${escapeXml(`${baseUrl}/webhooks/twilio/voice/recording?callId=${encodeURIComponent(callId)}`)}" recordingStatusCallbackMethod="POST" recordingChannels="dual" /></Start>`
+      : '';
+
     const audioUrl = await ttsUrl(greeting, agentRow?.voiceId ?? 'amaka', baseUrl);
     const speak = audioUrl
       ? `<Play>${escapeXml(audioUrl)}</Play>`
       : `<Say voice="alice" language="${language}">${escapeXml(greeting)}</Say>`;
 
-    const xml = twiml(speak + gatherTurn(callId, language, baseUrl));
+    const xml = twiml(record + speak + gatherTurn(callId, language, baseUrl));
     return res.send(xml);
   } catch (err) {
     logger.error({ err, toNumber, fromNumber }, 'Error handling Twilio voice webhook');
@@ -482,6 +587,7 @@ export async function handleTwilioVoiceEnd(req: Request, res: Response) {
 
   const fromNumber = (req.body.From as string) || '';
   const toNumber = (req.body.To as string) || '';
+  const callSid = (req.body.CallSid as string | undefined) || '';
   const callDuration = parseInt(req.body.CallDuration ?? '0', 10);
   const callId = typeof req.query.callId === 'string' && req.query.callId ? req.query.callId : null;
 
@@ -491,12 +597,53 @@ export async function handleTwilioVoiceEnd(req: Request, res: Response) {
       await db.update(calls).set({ status: 'COMPLETED', resolution: 'AI', duration: callDuration, endedAt: new Date() })
         .where(and(eq(calls.id, idToUpdate), eq(calls.status, 'ACTIVE')));
     }
-    logger.info({ fromNumber, toNumber, callDuration }, 'Twilio call ended');
+    logger.info({ fromNumber, toNumber, callDuration, callSid: callSid || null }, 'Twilio call ended');
+
+    if (idToUpdate && callSid) {
+      const client = getTwilioClient();
+      if (client) {
+        const recordings = await client.recordings.list({ callSid, limit: 1 }).catch(() => []);
+        const recordingSid = recordings?.[0]?.sid;
+        const mediaUrl = recordingSid ? twilioRecordingMediaUrl(recordingSid) : null;
+        if (mediaUrl) {
+          await db.update(calls).set({ recordingUrl: mediaUrl }).where(and(eq(calls.id, idToUpdate), sql`${calls.recordingUrl} is null`));
+          logger.info({ callId: idToUpdate, recordingSid }, 'Twilio call recording saved');
+        }
+      }
+    }
   } catch (err) {
     logger.error({ err }, 'Error handling Twilio call end');
   }
 
   return res.send(twiml('<Hangup/>'));
+}
+
+export async function handleTwilioVoiceRecording(req: Request, res: Response) {
+  res.sendStatus(200);
+
+  const callId = typeof req.query.callId === 'string' ? req.query.callId : '';
+  if (!callId) return;
+
+  const recordingStatus = (req.body.RecordingStatus as string | undefined) ?? '';
+  if (recordingStatus && recordingStatus !== 'completed') return;
+
+  const recordingUrl = (req.body.RecordingUrl as string | undefined) ?? '';
+  const recordingSid = (req.body.RecordingSid as string | undefined) ?? '';
+  const mediaUrl = normalizeTwilioRecordingUrl(recordingUrl || recordingSid);
+  if (!mediaUrl) return;
+
+  try {
+    const bytes = await fetchTwilioRecordingBytes(mediaUrl);
+    if (!bytes) return;
+
+    const cloudUrl = await uploadMp3ToCloudinary(callId, bytes);
+    const finalUrl = cloudUrl ?? mediaUrl;
+
+    await db.update(calls).set({ recordingUrl: finalUrl }).where(eq(calls.id, callId));
+    logger.info({ callId, stored: cloudUrl ? 'cloudinary' : 'twilio' }, 'Call recording stored');
+  } catch (err) {
+    logger.error({ err, callId }, 'Failed to store call recording');
+  }
 }
 
 export async function handleTwilioVoiceStatus(req: Request, res: Response) {

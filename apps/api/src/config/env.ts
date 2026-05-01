@@ -51,6 +51,11 @@ const envSchema = z.object({
   INFOBIP_API_KEY: z.string().optional(),
   INFOBIP_BASE_URL: z.string().optional(),
   INFOBIP_WHATSAPP_SENDER: z.string().optional(),
+  // Cloudinary (call recordings)
+  CLOUDINARY_CLOUD_NAME: z.string().optional(),
+  CLOUDINARY_API_KEY: z.string().optional(),
+  CLOUDINARY_API_SECRET: z.string().optional(),
+  CLOUDINARY_FOLDER: z.string().optional(),
   // Sendchamp
   SENDCHAMP_API_KEY: z.string().optional(),
   SENDCHAMP_EMAIL_API_KEY: z.string().optional(),
