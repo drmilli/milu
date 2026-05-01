@@ -7,6 +7,17 @@ import { apiDelete, apiGet, apiPatch, apiPost } from '../../../lib/api';
 
 type CatalogType = 'PRODUCT' | 'SERVICE';
 
+type CatalogItemUpsert = {
+  type: CatalogType;
+  name: string;
+  description?: string | null;
+  price?: number | null;
+  currency?: string;
+  isAvailable?: boolean;
+  availabilityNote?: string | null;
+  tags?: string[];
+};
+
 interface CatalogItem {
   id: string;
   businessId: string;
@@ -36,6 +47,11 @@ function TagPill({ text }: { text: string }) {
   );
 }
 
+function parseCatalogFilter(value: string): 'all' | CatalogType {
+  if (value === 'PRODUCT' || value === 'SERVICE' || value === 'all') return value;
+  return 'all';
+}
+
 function ItemModal({
   mode,
   initial,
@@ -45,16 +61,7 @@ function ItemModal({
   mode: 'create' | 'edit';
   initial?: Partial<CatalogItem>;
   onClose: () => void;
-  onSave: (data: {
-    type: CatalogType;
-    name: string;
-    description?: string | null;
-    price?: number | null;
-    currency?: string;
-    isAvailable?: boolean;
-    availabilityNote?: string | null;
-    tags?: string[];
-  }) => Promise<void>;
+  onSave: (data: CatalogItemUpsert) => Promise<void>;
 }) {
   const [type, setType] = useState<CatalogType>((initial?.type as CatalogType) ?? 'PRODUCT');
   const [name, setName] = useState(initial?.name ?? '');
@@ -200,13 +207,13 @@ export default function ProductsServicesPage() {
     return { product, service, total: items.length };
   }, [items]);
 
-  async function createItem(data: Parameters<typeof ItemModal>[0]['onSave'] extends (a: infer A) => any ? A : never) {
+  async function createItem(data: CatalogItemUpsert) {
     if (!token || !businessId) return;
     await apiPost<CatalogItem>(`/businesses/${businessId}/catalog`, data, token);
     load();
   }
 
-  async function updateItem(id: string, data: Parameters<typeof ItemModal>[0]['onSave'] extends (a: infer A) => any ? A : never) {
+  async function updateItem(id: string, data: CatalogItemUpsert) {
     if (!token || !businessId) return;
     await apiPatch<CatalogItem>(`/businesses/${businessId}/catalog/${id}`, data, token);
     load();
@@ -271,7 +278,7 @@ export default function ProductsServicesPage() {
           />
           <select
             value={type}
-            onChange={e => setType(e.target.value as any)}
+            onChange={e => setType(parseCatalogFilter(e.target.value))}
             className="text-sm border border-cream-dark rounded-xl px-4 py-2.5 bg-cream-light text-primary-dark focus:outline-none focus:border-primary/50"
           >
             <option value="all">All</option>
@@ -376,4 +383,3 @@ export default function ProductsServicesPage() {
     </div>
   );
 }
-
