@@ -14,6 +14,7 @@ export const callbackStatusEnum = pgEnum('callback_status', ['PENDING', 'SCHEDUL
 export const notificationChannelEnum = pgEnum('notification_channel', ['IN_APP', 'EMAIL', 'SMS', 'WHATSAPP']);
 export const notificationStatusEnum = pgEnum('notification_status', ['PENDING', 'SENT', 'FAILED', 'READ']);
 export const escalationStatusEnum = pgEnum('escalation_status', ['OPEN', 'ASSIGNED', 'RESOLVED']);
+export const catalogItemTypeEnum = pgEnum('catalog_item_type', ['PRODUCT', 'SERVICE']);
 
 // ─── Core ─────────────────────────────────────────────────────────────────────
 export const businesses = pgTable('businesses', {
@@ -198,6 +199,22 @@ export const appointments = pgTable('appointments', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 });
 
+// ─── Products & Services (Catalog) ────────────────────────────────────────────
+export const catalogItems = pgTable('catalog_items', {
+  id: text('id').primaryKey().$defaultFn(() => randomUUID()),
+  businessId: text('business_id').notNull().references(() => businesses.id, { onDelete: 'cascade' }),
+  type: catalogItemTypeEnum('type').notNull(),
+  name: text('name').notNull(),
+  description: text('description'),
+  price: integer('price'),
+  currency: text('currency').default('NGN').notNull(),
+  isAvailable: boolean('is_available').default(true).notNull(),
+  availabilityNote: text('availability_note'),
+  tags: jsonb('tags').$type<string[]>().default([]).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
 // ─── Callback Requests ────────────────────────────────────────────────────────
 export const callbackRequests = pgTable('callback_requests', {
   id: text('id').primaryKey().$defaultFn(() => randomUUID()),
@@ -306,6 +323,7 @@ export const businessesRelations = relations(businesses, ({ many, one }) => ({
   contacts: many(contacts),
   orders: many(orders),
   appointments: many(appointments),
+  catalogItems: many(catalogItems),
   escalations: many(escalations),
   webhookConfigs: many(webhookConfigs),
 }));
@@ -343,6 +361,10 @@ export const appointmentsRelations = relations(appointments, ({ one }) => ({
   contact: one(contacts, { fields: [appointments.contactId], references: [contacts.id] }),
 }));
 
+export const catalogItemsRelations = relations(catalogItems, ({ one }) => ({
+  business: one(businesses, { fields: [catalogItems.businessId], references: [businesses.id] }),
+}));
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 export type Business = typeof businesses.$inferSelect;
 export type User = typeof users.$inferSelect;
@@ -354,6 +376,7 @@ export type Escalation = typeof escalations.$inferSelect;
 export type Contact = typeof contacts.$inferSelect;
 export type Order = typeof orders.$inferSelect;
 export type Appointment = typeof appointments.$inferSelect;
+export type CatalogItem = typeof catalogItems.$inferSelect;
 export type Notification = typeof notifications.$inferSelect;
 export type AgentConfig = typeof agentConfigs.$inferSelect;
 export type KbChat = typeof kbChats.$inferSelect;

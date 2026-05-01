@@ -266,6 +266,7 @@ export async function voiceChat(
     faqs: { question: string; answer: string }[];
     websiteSummary?: string | null;
     docSummaries: string[];
+    catalogSummary?: string | null;
     agentTone?: string | null;
     escalationNumber?: string | null;
     fallbackMessage?: string | null;
@@ -291,6 +292,14 @@ export async function voiceChat(
       : null,
     context.docSummaries.length
       ? `Additional info: ${context.docSummaries.slice(0, 3).map(s => s.slice(0, 300)).join(' ')}`
+      : null,
+    context.catalogSummary
+      ? [
+        `Products & services catalog (source of truth):`,
+        context.catalogSummary.slice(0, 2000),
+        `Only mention items, prices, and availability that appear in the catalog above. If an item isn't in the catalog, ask a short clarifying question or say you can confirm and follow up.`,
+        `If you need to check availability/pricing, you may say: "Hold on, let me check." before answering.`,
+      ].join('\n')
       : null,
     context.escalationNumber
       ? `If you cannot help or the customer requests a human, use [ESCALATE] to transfer them.`

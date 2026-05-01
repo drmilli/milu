@@ -83,7 +83,153 @@ interface TwilioIncomingNumber {
   assignedBusinessName: string | null;
 }
 
-const tabs = ['Overview', 'Agent', 'Calls', 'Team', 'Billing', 'Phone Numbers'];
+type CatalogType = 'PRODUCT' | 'SERVICE';
+
+interface CatalogItem {
+  id: string;
+  businessId: string;
+  type: CatalogType;
+  name: string;
+  description: string | null;
+  price: number | null;
+  currency: string;
+  isAvailable: boolean;
+  availabilityNote: string | null;
+  tags: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+function CatalogItemModal({
+  mode,
+  initial,
+  onClose,
+  onSave,
+}: {
+  mode: 'create' | 'edit';
+  initial?: Partial<CatalogItem>;
+  onClose: () => void;
+  onSave: (data: {
+    type: CatalogType;
+    name: string;
+    description?: string | null;
+    price?: number | null;
+    currency?: string;
+    isAvailable?: boolean;
+    availabilityNote?: string | null;
+    tags?: string[];
+  }) => Promise<void>;
+}) {
+  const [type, setType] = useState<CatalogType>((initial?.type as CatalogType) ?? 'PRODUCT');
+  const [name, setName] = useState(initial?.name ?? '');
+  const [description, setDescription] = useState(initial?.description ?? '');
+  const [price, setPrice] = useState<string>(typeof initial?.price === 'number' ? String(initial?.price) : '');
+  const [currency, setCurrency] = useState(initial?.currency ?? 'NGN');
+  const [isAvailable, setIsAvailable] = useState(initial?.isAvailable ?? true);
+  const [availabilityNote, setAvailabilityNote] = useState(initial?.availabilityNote ?? '');
+  const [tags, setTags] = useState((initial?.tags ?? []).join(', '));
+  const [saving, setSaving] = useState(false);
+
+  const inputCls = 'w-full px-4 py-2.5 rounded-xl border border-cream-dark bg-cream-light text-sm text-primary-dark placeholder:text-cream-dark focus:outline-none focus:border-primary/50';
+
+  async function handleSave() {
+    if (!name.trim()) return;
+    setSaving(true);
+    try {
+      const parsedPrice = price.trim() ? Number(price) : null;
+      await onSave({
+        type,
+        name: name.trim(),
+        description: description.trim() ? description.trim() : null,
+        price: Number.isFinite(parsedPrice) ? Math.max(0, Math.round(parsedPrice as number)) : null,
+        currency: currency.trim().toUpperCase() || 'NGN',
+        isAvailable,
+        availabilityNote: availabilityNote.trim() ? availabilityNote.trim() : null,
+        tags: tags
+          .split(',')
+          .map(t => t.trim())
+          .filter(Boolean)
+          .slice(0, 20),
+      });
+      onClose();
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-primary-dark/40 backdrop-blur-sm">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xl max-h-[90vh] flex flex-col">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-cream-dark flex-shrink-0">
+          <h2 className="font-semibold text-primary-dark">{mode === 'create' ? 'New product/service' : 'Edit item'}</h2>
+          <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-lg text-primary-warm hover:bg-cream transition-colors">
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+          </button>
+        </div>
+
+        <div className="px-6 py-5 space-y-4 overflow-y-auto flex-1">
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-medium text-primary-dark mb-1.5">Type</label>
+              <select className={inputCls} value={type} onChange={e => setType(e.target.value as CatalogType)}>
+                <option value="PRODUCT">Product</option>
+                <option value="SERVICE">Service</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-primary-dark mb-1.5">Currency</label>
+              <input className={inputCls} value={currency} onChange={e => setCurrency(e.target.value)} placeholder="NGN" />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-primary-dark mb-1.5">Name</label>
+            <input className={inputCls} value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Haircut" />
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-primary-dark mb-1.5">Description (optional)</label>
+            <textarea rows={3} className={`${inputCls} resize-none`} value={description} onChange={e => setDescription(e.target.value)} placeholder="Short description customers might ask about" />
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-medium text-primary-dark mb-1.5">Price (optional)</label>
+              <input type="number" min={0} className={inputCls} value={price} onChange={e => setPrice(e.target.value)} placeholder="0" />
+            </div>
+            <div className="flex items-end gap-3">
+              <label className="flex items-center gap-2 text-sm text-primary-dark">
+                <input type="checkbox" checked={isAvailable} onChange={e => setIsAvailable(e.target.checked)} />
+                Available
+              </label>
+            </div>
+          </div>
+
+          {!isAvailable && (
+            <div>
+              <label className="block text-xs font-medium text-primary-dark mb-1.5">Availability note (optional)</label>
+              <input className={inputCls} value={availabilityNote} onChange={e => setAvailabilityNote(e.target.value)} placeholder="e.g. back in stock on Friday" />
+            </div>
+          )}
+
+          <div>
+            <label className="block text-xs font-medium text-primary-dark mb-1.5">Tags (comma separated)</label>
+            <input className={inputCls} value={tags} onChange={e => setTags(e.target.value)} placeholder="e.g. kids, express, premium" />
+          </div>
+        </div>
+
+        <div className="flex gap-3 justify-end px-6 py-4 border-t border-cream-dark flex-shrink-0">
+          <button onClick={onClose} className="text-sm text-primary-warm hover:text-primary-dark px-4 py-2">Cancel</button>
+          <button onClick={handleSave} disabled={saving || !name.trim()} className="bg-primary text-cream-light px-5 py-2 rounded-xl text-sm font-medium hover:bg-primary-dark transition-colors disabled:opacity-50">
+            {saving ? 'Saving…' : 'Save'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const tabs = ['Overview', 'Agent', 'Calls', 'Team', 'Billing', 'Phone Numbers', 'Products & Services'];
 
 export default function BusinessDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -106,6 +252,14 @@ export default function BusinessDetailPage() {
   const [twilioLoading, setTwilioLoading] = useState(false);
   const [assigningSid, setAssigningSid] = useState<string | null>(null);
   const [phoneError, setPhoneError] = useState('');
+
+  const [catalog, setCatalog] = useState<CatalogItem[]>([]);
+  const [catalogLoading, setCatalogLoading] = useState(false);
+  const [catalogType, setCatalogType] = useState<'all' | CatalogType>('all');
+  const [catalogQ, setCatalogQ] = useState('');
+  const [showCatalogCreate, setShowCatalogCreate] = useState(false);
+  const [catalogEditing, setCatalogEditing] = useState<CatalogItem | null>(null);
+  const [catalogSavingId, setCatalogSavingId] = useState<string | null>(null);
 
   const load = useCallback(() => {
     if (!token || !id) return;
@@ -133,12 +287,62 @@ export default function BusinessDetailPage() {
       .then(setTwilioNums).catch(() => null).finally(() => setTwilioLoading(false));
   }, [token]);
 
+  const loadCatalog = useCallback(() => {
+    if (!token || !id) return;
+    setCatalogLoading(true);
+    const params = new URLSearchParams();
+    if (catalogQ.trim()) params.set('q', catalogQ.trim());
+    if (catalogType !== 'all') params.set('type', catalogType);
+    const qs = params.toString();
+    adminGet<CatalogItem[]>(`/admin/businesses/${id}/catalog${qs ? `?${qs}` : ''}`, token)
+      .then(setCatalog)
+      .catch(() => null)
+      .finally(() => setCatalogLoading(false));
+  }, [token, id, catalogQ, catalogType]);
+
   useEffect(() => {
     if (tab === 'Phone Numbers' && token && id) {
       loadPhoneNums();
       loadTwilioNums();
     }
   }, [tab, loadPhoneNums, loadTwilioNums, token, id]);
+
+  useEffect(() => {
+    if (tab === 'Products & Services' && token && id) {
+      loadCatalog();
+    }
+  }, [tab, loadCatalog, token, id]);
+
+  async function createCatalogItem(data: Parameters<typeof CatalogItemModal>[0]['onSave'] extends (a: infer A) => any ? A : never) {
+    if (!token || !id) return;
+    await adminPost(`/admin/businesses/${id}/catalog`, data, token);
+    loadCatalog();
+  }
+
+  async function updateCatalogItem(itemId: string, data: Parameters<typeof CatalogItemModal>[0]['onSave'] extends (a: infer A) => any ? A : never) {
+    if (!token || !id) return;
+    await adminPatch(`/admin/businesses/${id}/catalog/${itemId}`, data, token);
+    loadCatalog();
+  }
+
+  async function toggleCatalogAvailability(item: CatalogItem) {
+    if (!token || !id) return;
+    setCatalogSavingId(item.id);
+    try {
+      await adminPatch(`/admin/businesses/${id}/catalog/${item.id}`, { isAvailable: !item.isAvailable }, token);
+      setCatalog(prev => prev.map(p => p.id === item.id ? { ...p, isAvailable: !p.isAvailable } : p));
+    } finally {
+      setCatalogSavingId(null);
+    }
+  }
+
+  async function deleteCatalogItem(item: CatalogItem) {
+    if (!token || !id) return;
+    const ok = window.confirm(`Delete "${item.name}"?`);
+    if (!ok) return;
+    await adminDelete(`/admin/businesses/${id}/catalog/${item.id}`, token).catch(() => null);
+    setCatalog(prev => prev.filter(p => p.id !== item.id));
+  }
 
   async function handleAddPhone() {
     if (!token || !id || !newNumber.trim()) return;
@@ -542,6 +746,132 @@ export default function BusinessDetailPage() {
               </div>
             )}
           </div>
+        </div>
+      )}
+
+      {tab === 'Products & Services' && (
+        <div className="space-y-5">
+          <div className="bg-white rounded-2xl border border-cream-dark p-5 space-y-4">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h3 className="text-sm font-semibold text-primary-dark">Catalog</h3>
+                <p className="text-xs text-primary-warm mt-1">This is what the phone agent uses to answer availability and pricing questions.</p>
+              </div>
+              <button
+                onClick={() => setShowCatalogCreate(true)}
+                className="bg-primary text-cream-light text-xs px-3 py-2 rounded-lg hover:bg-primary-dark transition-colors"
+              >
+                Add item
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+              <input
+                value={catalogQ}
+                onChange={e => setCatalogQ(e.target.value)}
+                placeholder="Search by name…"
+                className="sm:col-span-2 text-sm border border-cream-dark rounded-lg px-3 py-2 bg-cream-light text-primary-dark placeholder:text-primary-warm/50 focus:outline-none focus:border-primary/50"
+              />
+              <select
+                value={catalogType}
+                onChange={e => setCatalogType(e.target.value as any)}
+                className="text-sm border border-cream-dark rounded-lg px-3 py-2 bg-cream-light text-primary-dark focus:outline-none focus:border-primary/50"
+              >
+                <option value="all">All</option>
+                <option value="PRODUCT">Products</option>
+                <option value="SERVICE">Services</option>
+              </select>
+              <button
+                onClick={loadCatalog}
+                className="text-sm px-3 py-2 rounded-lg border border-cream-dark text-primary-warm hover:text-primary hover:border-primary/30 transition-colors"
+              >
+                Search
+              </button>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-2xl border border-cream-dark overflow-hidden">
+            <div className="px-5 py-3.5 border-b border-cream-dark bg-cream-light/60">
+              <h3 className="text-xs font-semibold text-primary-warm uppercase tracking-wider">Items</h3>
+            </div>
+
+            {catalogLoading ? (
+              <div className="py-12 text-center text-primary-warm text-sm animate-pulse">Loading…</div>
+            ) : catalog.length === 0 ? (
+              <div className="py-14 text-center space-y-1">
+                <p className="text-sm font-medium text-primary-dark">No items</p>
+                <p className="text-xs text-primary-warm">Add products/services for this business.</p>
+              </div>
+            ) : (
+              <div className="divide-y divide-cream-dark">
+                {catalog.map(item => {
+                  const price = typeof item.price === 'number'
+                    ? (item.currency === 'NGN' ? `₦${item.price.toLocaleString('en-NG')}` : `${item.currency} ${item.price.toLocaleString()}`)
+                    : '—';
+                  return (
+                    <div key={item.id} className="px-5 py-4 flex flex-col sm:flex-row sm:items-center gap-3">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-medium px-2.5 py-1 rounded-full border border-cream-dark bg-cream text-primary-warm">
+                            {item.type === 'PRODUCT' ? 'Product' : 'Service'}
+                          </span>
+                          <p className="font-semibold text-primary-dark truncate">{item.name}</p>
+                          <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${item.isAvailable ? 'bg-success/10 text-success' : 'bg-danger/10 text-danger'}`}>
+                            {item.isAvailable ? 'Available' : 'Unavailable'}
+                          </span>
+                        </div>
+                        {item.description && <p className="text-sm text-primary-warm mt-1 line-clamp-2">{item.description}</p>}
+                        <div className="flex items-center gap-2 mt-2">
+                          <span className="text-sm font-medium text-primary-dark">{price}</span>
+                          {!item.isAvailable && item.availabilityNote && (
+                            <span className="text-xs text-primary-warm">• {item.availabilityNote}</span>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2 justify-end">
+                        <button
+                          onClick={() => toggleCatalogAvailability(item)}
+                          disabled={catalogSavingId === item.id}
+                          className="text-xs px-3 py-2 rounded-lg border border-cream-dark text-primary-warm hover:text-primary hover:border-primary/30 transition-colors disabled:opacity-50"
+                        >
+                          {catalogSavingId === item.id ? 'Saving…' : (item.isAvailable ? 'Mark unavailable' : 'Mark available')}
+                        </button>
+                        <button
+                          onClick={() => setCatalogEditing(item)}
+                          className="text-xs px-3 py-2 rounded-lg border border-cream-dark text-primary-warm hover:text-primary hover:border-primary/30 transition-colors"
+                        >
+                          Edit
+                        </button>
+                        <button
+                          onClick={() => deleteCatalogItem(item)}
+                          className="text-xs px-3 py-2 rounded-lg border border-danger/30 text-danger hover:bg-danger/5 transition-colors"
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {showCatalogCreate && (
+            <CatalogItemModal
+              mode="create"
+              onClose={() => setShowCatalogCreate(false)}
+              onSave={createCatalogItem}
+            />
+          )}
+          {catalogEditing && (
+            <CatalogItemModal
+              mode="edit"
+              initial={catalogEditing}
+              onClose={() => setCatalogEditing(null)}
+              onSave={(data) => updateCatalogItem(catalogEditing.id, data)}
+            />
+          )}
         </div>
       )}
 

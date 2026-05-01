@@ -1,6 +1,6 @@
 import type { Request, Response } from 'express';
 import { and, desc, eq, isNull, sql } from 'drizzle-orm';
-import { db, phoneNumbers, agentConfigs, businesses, businessSettings, calls, escalations, knowledgeBases, knowledgeDocuments, transcripts, contacts, orders, appointments } from '../db';
+import { db, phoneNumbers, agentConfigs, businesses, businessSettings, calls, escalations, knowledgeBases, knowledgeDocuments, transcripts, contacts, orders, appointments, catalogItems } from '../db';
 import { logger } from '../config/logger';
 import { env } from '../config/env';
 import { voiceChat, type ChatMessage } from '../services/document-extract';
@@ -42,6 +42,67 @@ function mapAgentVoiceToOpenAi(voiceId: string | null | undefined): OpenAiTtsVoi
 function isUrgent(text: string) {
   const t = text.toLowerCase();
   return /\b(urgent|emergency|asap|immediately|right now|right away)\b/.test(t);
+}
+
+function extractCatalogSearchTerm(text: string): string {
+  const cleaned = text.toLowerCase().replace(/[^a-z0-9\s]/g, ' ');
+  const stop = new Set([
+    'do', 'you', 'have', 'got', 'is', 'are', 'the', 'a', 'an', 'any', 'available', 'availability', 'in', 'stock',
+    'please', 'tell', 'me', 'your', 'our', 'what', 'which', 'how', 'much', 'price', 'cost', 'for', 'of', 'on',
+    'menu', 'product', 'products', 'service', 'services', 'sell', 'selling', 'today', 'now',
+  ]);
+  const tokens = cleaned.split(/\s+/).filter(w => w.length >= 3 && !stop.has(w));
+  return tokens.join(' ').trim();
+}
+
+async function buildCatalogSummary(businessId: string, queryText: string): Promise<string | null> {
+  try {
+    const term = extractCatalogSearchTerm(queryText);
+    const conditions: any[] = [eq(catalogItems.businessId, businessId)];
+
+    if (term) {
+      const like = `%${term}%`;
+      conditions.push(sql`(${catalogItems.name} ILIKE ${like} OR coalesce(${catalogItems.description}, '') ILIKE ${like})`);
+    }
+
+    const rows = await db.select({
+      type: catalogItems.type,
+      name: catalogItems.name,
+      description: catalogItems.description,
+      price: catalogItems.price,
+      currency: catalogItems.currency,
+      isAvailable: catalogItems.isAvailable,
+      availabilityNote: catalogItems.availabilityNote,
+      updatedAt: catalogItems.updatedAt,
+    })
+      .from(catalogItems)
+      .where(and(...conditions))
+      .orderBy(desc(catalogItems.updatedAt))
+      .limit(term ? 12 : 20);
+
+    if (!rows.length) {
+      if (!term) return null;
+      return `No catalog matches found for: "${term}".`;
+    }
+
+    const available = rows.filter(r => r.isAvailable).slice(0, 10);
+    const unavailable = rows.filter(r => !r.isAvailable).slice(0, 6);
+
+    const line = (r: typeof rows[number]) => {
+      const price = typeof r.price === 'number' ? ` — ${r.currency} ${r.price}` : '';
+      const status = r.isAvailable ? 'Available' : 'Unavailable';
+      const note = r.availabilityNote ? ` (${r.availabilityNote})` : '';
+      return `${r.type}: ${r.name}${price} — ${status}${note}`;
+    };
+
+    const sections: string[] = [];
+    if (available.length) sections.push(`Available:\n${available.map(line).join('\n')}`);
+    if (unavailable.length) sections.push(`Unavailable:\n${unavailable.map(line).join('\n')}`);
+    return sections.join('\n\n');
+  } catch (err) {
+    logger.warn({ err }, 'Failed to build catalog summary');
+    return null;
+  }
 }
 
 async function ttsUrl(text: string, voiceId: string | null | undefined, baseUrl: string): Promise<string | null> {
@@ -197,7 +258,7 @@ async function computeAtVoiceReply(
     return xml('<Hangup></Hangup>');
   }
 
-  const [history, [agentRow], [bizRow], [kbRow], kbDocs] = await Promise.all([
+  const [history, [agentRow], [bizRow], [kbRow], kbDocs, catalogSummary] = await Promise.all([
     db.select({ speaker: transcripts.speaker, text: transcripts.text })
       .from(transcripts)
       .where(eq(transcripts.callId, callDbId))
@@ -213,6 +274,7 @@ async function computeAtVoiceReply(
       .from(knowledgeDocuments)
       .where(eq(knowledgeDocuments.businessId, callRow.businessId))
       .limit(5),
+    buildCatalogSummary(callRow.businessId, callerText),
   ]);
 
   await db.insert(transcripts).values({ callId: callDbId, speaker: 'caller', text: callerText });
@@ -240,6 +302,7 @@ async function computeAtVoiceReply(
       faqs: (kbRow?.faqs as { question: string; answer: string }[]) ?? [],
       websiteSummary: kbRow?.websiteSummary,
       docSummaries: kbDocs.map(d => d.summary ?? '').filter(Boolean),
+      catalogSummary,
       agentTone: agentRow?.tone,
       escalationNumber: kbRow?.escalationNumber,
       fallbackMessage: agentRow?.fallbackMessage,

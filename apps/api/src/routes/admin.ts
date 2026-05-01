@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { eq, desc, ilike, and, or, sql, gte, inArray, lt } from 'drizzle-orm';
 import bcrypt from 'bcryptjs';
 import twilio from 'twilio';
-import { db, businesses, users, calls, escalations, phoneNumbers, agentConfigs, notifications } from '../db';
+import { db, businesses, users, calls, escalations, phoneNumbers, agentConfigs, notifications, catalogItems } from '../db';
 import { logger } from '../config/logger';
 import { adminGuard } from '../middleware/admin-guard';
 import { signAdminToken, verifyAdminToken } from '../utils/jwt';
@@ -403,6 +403,88 @@ adminRouter.patch('/businesses/:id', async (req, res, next) => {
   } catch (err) {
     next(err);
   }
+});
+
+// ─── Admin: Products & Services (Catalog) ─────────────────────────────────────
+
+adminRouter.get('/businesses/:id/catalog', async (req, res, next) => {
+  try {
+    const { q, type } = z.object({
+      q: z.string().optional(),
+      type: z.enum(['PRODUCT', 'SERVICE']).optional(),
+    }).parse(req.query);
+
+    const conditions: any[] = [eq(catalogItems.businessId, req.params.id)];
+    if (type) conditions.push(eq(catalogItems.type, type));
+    if (q?.trim()) conditions.push(sql`${catalogItems.name} ILIKE ${'%' + q.trim() + '%'}`);
+    const where = conditions.length ? and(...conditions) : undefined;
+
+    const rows = await db.select().from(catalogItems).where(where).orderBy(catalogItems.createdAt);
+    return res.json(rows);
+  } catch (err) { next(err); }
+});
+
+adminRouter.post('/businesses/:id/catalog', async (req, res, next) => {
+  try {
+    const data = z.object({
+      type: z.enum(['PRODUCT', 'SERVICE']),
+      name: z.string().min(1),
+      description: z.string().optional().nullable(),
+      price: z.number().int().nonnegative().optional().nullable(),
+      currency: z.string().min(3).max(3).optional(),
+      isAvailable: z.boolean().optional(),
+      availabilityNote: z.string().optional().nullable(),
+      tags: z.array(z.string()).optional(),
+    }).parse(req.body);
+
+    const [row] = await db.insert(catalogItems).values({
+      businessId: req.params.id,
+      type: data.type,
+      name: data.name,
+      description: data.description ?? null,
+      price: data.price ?? null,
+      currency: data.currency ?? 'NGN',
+      isAvailable: data.isAvailable ?? true,
+      availabilityNote: data.availabilityNote ?? null,
+      tags: data.tags ?? [],
+      updatedAt: new Date(),
+    }).returning();
+
+    return res.status(201).json(row);
+  } catch (err) { next(err); }
+});
+
+adminRouter.patch('/businesses/:id/catalog/:itemId', async (req, res, next) => {
+  try {
+    const data = z.object({
+      type: z.enum(['PRODUCT', 'SERVICE']).optional(),
+      name: z.string().min(1).optional(),
+      description: z.string().optional().nullable(),
+      price: z.number().int().nonnegative().optional().nullable(),
+      currency: z.string().min(3).max(3).optional(),
+      isAvailable: z.boolean().optional(),
+      availabilityNote: z.string().optional().nullable(),
+      tags: z.array(z.string()).optional(),
+    }).parse(req.body);
+
+    const [row] = await db.update(catalogItems).set({
+      ...data,
+      description: data.description === undefined ? undefined : (data.description ?? null),
+      price: data.price === undefined ? undefined : (data.price ?? null),
+      availabilityNote: data.availabilityNote === undefined ? undefined : (data.availabilityNote ?? null),
+      updatedAt: new Date(),
+    }).where(and(eq(catalogItems.id, req.params.itemId), eq(catalogItems.businessId, req.params.id))).returning();
+
+    if (!row) return res.status(404).json({ error: 'Item not found' });
+    return res.json(row);
+  } catch (err) { next(err); }
+});
+
+adminRouter.delete('/businesses/:id/catalog/:itemId', async (req, res, next) => {
+  try {
+    await db.delete(catalogItems).where(and(eq(catalogItems.id, req.params.itemId), eq(catalogItems.businessId, req.params.id)));
+    return res.status(204).send();
+  } catch (err) { next(err); }
 });
 
 /**

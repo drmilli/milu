@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { eq, and, sql } from 'drizzle-orm';
-import { db, businesses, knowledgeBases, knowledgeDocuments, kbChats, phoneNumbers, users, phoneVerifications, notifications } from '../db';
+import { db, businesses, knowledgeBases, knowledgeDocuments, kbChats, phoneNumbers, users, phoneVerifications, notifications, catalogItems } from '../db';
 import { authMiddleware } from '../middleware/auth';
 import { sendCustomSms } from '../services/sms';
 import { searchAvailableNumbers, purchaseNumber, releaseNumber } from '../services/infobip';
@@ -281,6 +281,88 @@ businessesRouter.post('/:id/kb/chat', async (req, res, next) => {
     await db.insert(kbChats).values({ businessId: req.params.id, role: 'assistant', content: reply });
 
     return res.json({ reply });
+  } catch (err) { next(err); }
+});
+
+// ─── Products & Services (Catalog) ────────────────────────────────────────────
+
+businessesRouter.get('/:id/catalog', async (req, res, next) => {
+  try {
+    const { q, type } = z.object({
+      q: z.string().optional(),
+      type: z.enum(['PRODUCT', 'SERVICE']).optional(),
+    }).parse(req.query);
+
+    const conditions: any[] = [eq(catalogItems.businessId, req.params.id)];
+    if (type) conditions.push(eq(catalogItems.type, type));
+    if (q?.trim()) conditions.push(sql`${catalogItems.name} ILIKE ${'%' + q.trim() + '%'}`);
+    const where = conditions.length ? and(...conditions) : undefined;
+
+    const rows = await db.select().from(catalogItems).where(where).orderBy(catalogItems.createdAt);
+    return res.json(rows);
+  } catch (err) { next(err); }
+});
+
+businessesRouter.post('/:id/catalog', async (req, res, next) => {
+  try {
+    const data = z.object({
+      type: z.enum(['PRODUCT', 'SERVICE']),
+      name: z.string().min(1),
+      description: z.string().optional().nullable(),
+      price: z.number().int().nonnegative().optional().nullable(),
+      currency: z.string().min(3).max(3).optional(),
+      isAvailable: z.boolean().optional(),
+      availabilityNote: z.string().optional().nullable(),
+      tags: z.array(z.string()).optional(),
+    }).parse(req.body);
+
+    const [row] = await db.insert(catalogItems).values({
+      businessId: req.params.id,
+      type: data.type,
+      name: data.name,
+      description: data.description ?? null,
+      price: data.price ?? null,
+      currency: data.currency ?? 'NGN',
+      isAvailable: data.isAvailable ?? true,
+      availabilityNote: data.availabilityNote ?? null,
+      tags: data.tags ?? [],
+      updatedAt: new Date(),
+    }).returning();
+
+    return res.status(201).json(row);
+  } catch (err) { next(err); }
+});
+
+businessesRouter.patch('/:id/catalog/:itemId', async (req, res, next) => {
+  try {
+    const data = z.object({
+      type: z.enum(['PRODUCT', 'SERVICE']).optional(),
+      name: z.string().min(1).optional(),
+      description: z.string().optional().nullable(),
+      price: z.number().int().nonnegative().optional().nullable(),
+      currency: z.string().min(3).max(3).optional(),
+      isAvailable: z.boolean().optional(),
+      availabilityNote: z.string().optional().nullable(),
+      tags: z.array(z.string()).optional(),
+    }).parse(req.body);
+
+    const [row] = await db.update(catalogItems).set({
+      ...data,
+      description: data.description === undefined ? undefined : (data.description ?? null),
+      price: data.price === undefined ? undefined : (data.price ?? null),
+      availabilityNote: data.availabilityNote === undefined ? undefined : (data.availabilityNote ?? null),
+      updatedAt: new Date(),
+    }).where(and(eq(catalogItems.id, req.params.itemId), eq(catalogItems.businessId, req.params.id))).returning();
+
+    if (!row) return res.status(404).json({ error: 'Item not found' });
+    return res.json(row);
+  } catch (err) { next(err); }
+});
+
+businessesRouter.delete('/:id/catalog/:itemId', async (req, res, next) => {
+  try {
+    await db.delete(catalogItems).where(and(eq(catalogItems.id, req.params.itemId), eq(catalogItems.businessId, req.params.id)));
+    return res.status(204).send();
   } catch (err) { next(err); }
 });
 
