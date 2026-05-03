@@ -182,6 +182,9 @@ callsRouter.get('/:id/transcript', async (req, res, next) => {
  */
 callsRouter.get('/:id/recording', async (req, res, next) => {
   try {
+    if (req.user?.role === 'OWNER' && req.plan && !req.plan.features.callRecording) {
+      return res.status(402).json({ error: 'Upgrade to Growth to access call recordings.' });
+    }
     const [call] = await db.select({ recordingUrl: calls.recordingUrl }).from(calls).where(eq(calls.id, req.params.id)).limit(1);
     if (!call?.recordingUrl) return res.status(404).json({ error: 'No recording found' });
     return res.json({ url: call.recordingUrl });

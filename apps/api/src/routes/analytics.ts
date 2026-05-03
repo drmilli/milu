@@ -21,6 +21,22 @@ function dateRange(from?: string, to?: string) {
   return conditions;
 }
 
+function requireFullAnalytics(req: any, res: any): boolean {
+  if (req.user?.role === 'OWNER' && req.plan && req.plan.features.analytics !== 'full') {
+    res.status(402).json({ error: 'Upgrade to Growth to access advanced analytics.' });
+    return false;
+  }
+  return true;
+}
+
+function requireAnyAnalytics(req: any, res: any): boolean {
+  if (req.user?.role === 'OWNER' && req.plan && req.plan.features.analytics === 'none') {
+    res.status(402).json({ error: 'Upgrade to access analytics.' });
+    return false;
+  }
+  return true;
+}
+
 /**
  * @openapi
  * /api/v1/analytics/summary:
@@ -56,6 +72,7 @@ function dateRange(from?: string, to?: string) {
  */
 analyticsRouter.get('/summary', async (req, res, next) => {
   try {
+    if (!requireAnyAnalytics(req, res)) return;
     const { businessId: qBid, from, to } = z.object({
       businessId: z.string().optional(),
       from: z.string().optional(),
@@ -110,6 +127,7 @@ analyticsRouter.get('/summary', async (req, res, next) => {
  */
 analyticsRouter.get('/intents', async (req, res, next) => {
   try {
+    if (!requireFullAnalytics(req, res)) return;
     const { businessId: qBid } = z.object({ businessId: z.string().optional() }).parse(req.query);
     const bid = req.user?.businessId ?? qBid;
     const where = bid ? eq(calls.businessId, bid) : undefined;
@@ -145,6 +163,7 @@ analyticsRouter.get('/intents', async (req, res, next) => {
  */
 analyticsRouter.get('/resolution-rate', async (req, res, next) => {
   try {
+    if (!requireFullAnalytics(req, res)) return;
     const { businessId: qBid } = z.object({ businessId: z.string().optional() }).parse(req.query);
     const bid = req.user?.businessId ?? qBid;
     const where = bid ? eq(calls.businessId, bid) : undefined;
@@ -189,6 +208,7 @@ analyticsRouter.get('/resolution-rate', async (req, res, next) => {
  */
 analyticsRouter.get('/daily-volume', async (req, res, next) => {
   try {
+    if (!requireAnyAnalytics(req, res)) return;
     const { businessId: qBid, days } = z.object({
       businessId: z.string().optional(),
       days: z.coerce.number().default(30),

@@ -15,7 +15,8 @@ export const metadata: Metadata = {
 const plans = [
   {
     name: 'Starter',
-    price: '₦15,000',
+    price: '$25',
+    originalPrice: '$65',
     period: '/month',
     description: 'Perfect for small businesses getting started with AI voice.',
     features: [
@@ -31,7 +32,8 @@ const plans = [
   },
   {
     name: 'Growth',
-    price: '₦45,000',
+    price: '$45',
+    originalPrice: '$110',
     period: '/month',
     description: 'For growing businesses that need the full suite.',
     features: [
@@ -140,6 +142,11 @@ export default function PricingPage() {
                     <p className={`font-heading font-bold text-4xl leading-none ${plan.highlighted ? 'text-cream-light' : 'text-primary-dark'}`}>
                       {plan.price}
                     </p>
+                    {'originalPrice' in plan && plan.originalPrice ? (
+                      <span className={`text-sm mb-0.5 line-through ${plan.highlighted ? 'text-cream/40' : 'text-cream-dark'}`}>
+                        {plan.originalPrice}
+                      </span>
+                    ) : null}
                     {plan.period && (
                       <span className={`text-sm mb-0.5 ${plan.highlighted ? 'text-cream/60' : 'text-primary-warm'}`}>
                         {plan.period}

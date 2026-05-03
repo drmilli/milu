@@ -6,7 +6,6 @@ import { apiGet } from '../../../lib/api';
 
 // ─── Whop plan config ─────────────────────────────────────────────────────────
 // Fill in your Whop checkout links below.
-// NGN plans for Nigerian users, USD plans for everyone else.
 
 interface WhopPlan {
   id: string;
@@ -17,32 +16,25 @@ interface WhopPlan {
   memberLimit: number | null;
   features: string[];
   highlighted: boolean;
-  ngn: { price: number; checkoutUrl: string } | null;
   usd: { price: number; checkoutUrl: string } | null;
 }
 
-const SHARED_FEATURES = [
-  '200 AI calls / month',
-  '1 team member',
-  'Knowledge base & FAQ handling',
-  'Basic analytics',
-  'Email support',
-  'Booking + escalation',
-  'Full analytics',
-  'WhatsApp alerts',
+const ONE_TIME_FEATURES = [
+  'Voice calls',
+  'AI answers',
+  'Call logs',
 ];
 
 const PLANS: WhopPlan[] = [
   {
     id: 'one_time',
     name: 'One-time',
-    tagline: 'Pay once, use for one month',
+    tagline: 'Pay once, access core features',
     billing: 'one_time',
     callLimit: 200,
     memberLimit: 1,
-    features: SHARED_FEATURES,
+    features: ONE_TIME_FEATURES,
     highlighted: false,
-    ngn: { price: 25000, checkoutUrl: 'https://whop.com/checkout/plan_fx5MUn7M4Z7an' },
     usd: { price: 20, checkoutUrl: 'https://whop.com/checkout/plan_wVq0cVPGuVcNM' },
   },
   {
@@ -52,10 +44,15 @@ const PLANS: WhopPlan[] = [
     billing: 'monthly',
     callLimit: 200,
     memberLimit: 1,
-    features: SHARED_FEATURES,
+    features: [
+      '200 AI calls / month',
+      '1 phone number',
+      'Knowledge base & FAQ handling',
+      'Basic analytics',
+      'Email support',
+    ],
     highlighted: false,
-    ngn: { price: 15000, checkoutUrl: 'https://whop.com/checkout/plan_1QRJ7Yafk8U66' },
-    usd: { price: 10, checkoutUrl: 'https://whop.com/checkout/plan_NP7nmD2igcr6r' },
+    usd: { price: 25, checkoutUrl: 'https://whop.com/checkout/plan_NP7nmD2igcr6r' },
   },
   {
     id: 'growth',
@@ -66,6 +63,7 @@ const PLANS: WhopPlan[] = [
     memberLimit: null,
     features: [
       '500 AI calls / month',
+      '1 phone number',
       'Unlimited team members',
       'Knowledge base & FAQ handling',
       'Booking + escalation',
@@ -74,8 +72,7 @@ const PLANS: WhopPlan[] = [
       'Priority support',
     ],
     highlighted: true,
-    ngn: { price: 45000, checkoutUrl: 'https://whop.com/checkout/plan_Zuy6tvIe36zPE' },
-    usd: { price: 30, checkoutUrl: 'https://whop.com/checkout/plan_2KpoWlIQeuDfL' },
+    usd: { price: 45, checkoutUrl: 'https://whop.com/checkout/plan_2KpoWlIQeuDfL' },
   },
   {
     id: 'enterprise',
@@ -93,7 +90,6 @@ const PLANS: WhopPlan[] = [
       'Custom integrations',
     ],
     highlighted: false,
-    ngn: null,
     usd: null,
   },
 ];
@@ -122,17 +118,10 @@ interface Invoice {
   invoiceUrl?: string;
 }
 
-type Region = 'ng' | 'intl';
-
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function fmtPrice(plan: WhopPlan, region: Region) {
-  if (region === 'ng') return plan.ngn ? '₦' + plan.ngn.price.toLocaleString('en-NG') : null;
-  return plan.usd ? '$' + plan.usd.price : null;
-}
-
 function fmtAmount(amount: number, currency: string) {
-  if (currency === 'NGN') return '₦' + amount.toLocaleString('en-NG');
+  if (currency === 'USD') return '$' + amount.toLocaleString('en-US', { minimumFractionDigits: 2 });
   return '$' + amount.toLocaleString('en-US', { minimumFractionDigits: 2 });
 }
 
@@ -171,26 +160,8 @@ export default function BillingPage() {
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const [region, setRegion] = useState<Region>('ng');
-  const [regionDetected, setRegionDetected] = useState(false);
-
   const [showPlans, setShowPlans] = useState(false);
   const [checkoutTarget, setCheckoutTarget] = useState<string | null>(null);
-
-  // Detect country from IP
-  useEffect(() => {
-    fetch('https://api.country.is/')
-      .then(r => r.json())
-      .then((data: { country: string }) => {
-        setRegion(data.country === 'NG' ? 'ng' : 'intl');
-        setRegionDetected(true);
-      })
-      .catch(() => {
-        // Fall back to NGN if detection fails — safer for the primary market
-        setRegion('ng');
-        setRegionDetected(true);
-      });
-  }, []);
 
   const load = useCallback(() => {
     if (!token || !businessId) return;
@@ -206,7 +177,7 @@ export default function BillingPage() {
   useEffect(() => { if (ready) load(); }, [ready, load]);
 
   function goToCheckout(plan: WhopPlan) {
-    const pricing = region === 'ng' ? plan.ngn : plan.usd;
+    const pricing = plan.usd;
     if (!pricing) return;
     setCheckoutTarget(plan.id);
     window.location.href = pricing.checkoutUrl;
@@ -222,28 +193,6 @@ export default function BillingPage() {
           <h1 className="font-heading font-bold text-2xl text-primary-dark">Billing</h1>
           <p className="text-sm text-primary-warm mt-0.5">Manage your plan, usage, and payment history.</p>
         </div>
-
-        {/* Currency toggle */}
-        {regionDetected && (
-          <div className="flex items-center gap-1 bg-cream rounded-xl border border-cream-dark p-1">
-            <button
-              onClick={() => setRegion('ng')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                region === 'ng' ? 'bg-white text-primary-dark shadow-sm' : 'text-primary-warm hover:text-primary-dark'
-              }`}
-            >
-              ₦ NGN
-            </button>
-            <button
-              onClick={() => setRegion('intl')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                region === 'intl' ? 'bg-white text-primary-dark shadow-sm' : 'text-primary-warm hover:text-primary-dark'
-              }`}
-            >
-              $ USD
-            </button>
-          </div>
-        )}
       </div>
 
       {/* Current plan / usage */}
@@ -314,9 +263,7 @@ export default function BillingPage() {
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <h2 className="font-semibold text-primary-dark">Choose a plan</h2>
-            <span className="text-xs text-primary-warm">
-              Showing prices in {region === 'ng' ? 'Nigerian Naira (₦)' : 'US Dollars ($)'}
-            </span>
+            <span className="text-xs text-primary-warm">Showing prices in US Dollars ($)</span>
           </div>
 
           <div className="grid sm:grid-cols-3 gap-4">
@@ -344,10 +291,10 @@ export default function BillingPage() {
                   </div>
 
                   <div className="mb-4">
-                    {fmtPrice(plan, region) ? (
+                    {plan.usd ? (
                       <>
                         <span className="font-heading font-bold text-2xl text-primary-dark">
-                          {fmtPrice(plan, region)}
+                          {'$' + plan.usd.price.toLocaleString('en-US')}
                         </span>
                         <span className="text-xs text-primary-warm ml-1">
                           {plan.billing === 'one_time' ? 'one time' : '/ month'}
@@ -411,7 +358,7 @@ export default function BillingPage() {
             <a href="https://whop.com" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
               Whop
             </a>
-            . Prices shown in {region === 'ng' ? 'Nigerian Naira' : 'US Dollars'}.
+            . Prices shown in US Dollars ($).
           </p>
         </div>
       )}

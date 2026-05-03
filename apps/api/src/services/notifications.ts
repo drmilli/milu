@@ -1,5 +1,5 @@
 import { eq, sql } from 'drizzle-orm';
-import { db, notifications, users, businessSettings } from '../db';
+import { db, notifications, users, businessSettings, businesses } from '../db';
 import { sendWhatsAppNotification } from './whatsapp';
 import { sendCustomSms } from './sms';
 import { logger } from '../config/logger';
@@ -275,15 +275,26 @@ export async function sendNotification(opts: SendOptions): Promise<void> {
 }
 
 export async function notifyBusinessOwners(businessId: string, title: string, body: string, data?: Record<string, unknown>) {
+  const [biz] = await db
+    .select({ subscriptionTier: businesses.subscriptionTier, createdAt: businesses.createdAt })
+    .from(businesses)
+    .where(eq(businesses.id, businessId))
+    .limit(1);
+
+  const billingTier = (biz?.subscriptionTier ?? 'STARTER') as 'STARTER' | 'GROWTH' | 'ENTERPRISE';
+  const isTrial = billingTier === 'STARTER' && !!biz?.createdAt && new Date() < new Date(biz.createdAt.getTime() + 10 * 24 * 60 * 60 * 1000);
+  const effectiveTier = isTrial ? 'GROWTH' : billingTier;
+
   const [settings] = await db.select().from(businessSettings).where(eq(businessSettings.businessId, businessId)).limit(1);
   const configured = (settings?.notifyChannels ?? ['EMAIL']) as Channel[];
   const channels = Array.from(new Set<Channel>(['EMAIL', ...configured]));
+  const allowedChannels = effectiveTier === 'STARTER' ? ['EMAIL'] as Channel[] : channels;
 
   const owners = await db.select({ id: users.id, email: users.email }).from(users)
     .where(eq(users.businessId, businessId));
 
   for (const owner of owners) {
-    for (const channel of channels) {
+    for (const channel of allowedChannels) {
       await sendNotification({
         businessId,
         userId: owner.id,

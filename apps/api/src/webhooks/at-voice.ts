@@ -44,6 +44,27 @@ function isUrgent(text: string) {
   return /\b(urgent|emergency|asap|immediately|right now|right away)\b/.test(t);
 }
 
+type EffectivePlan = {
+  billingTier: 'STARTER' | 'GROWTH' | 'ENTERPRISE';
+  tier: 'STARTER' | 'GROWTH' | 'ENTERPRISE';
+  isTrial: boolean;
+  features: { ops: boolean; whatsappNotifications: boolean };
+};
+
+function trialEndsAt(createdAt: Date) {
+  return new Date(createdAt.getTime() + 10 * 24 * 60 * 60 * 1000);
+}
+
+function buildPlanFromBusinessRow(biz: { subscriptionTier: string | null; createdAt: Date }): EffectivePlan {
+  const billingTier = (biz.subscriptionTier ?? 'STARTER') as 'STARTER' | 'GROWTH' | 'ENTERPRISE';
+  const now = new Date();
+  const isTrial = billingTier === 'STARTER' && now < trialEndsAt(biz.createdAt);
+  const tier: EffectivePlan['tier'] = isTrial ? 'GROWTH' : billingTier;
+  if (tier === 'STARTER') return { billingTier, tier, isTrial, features: { ops: false, whatsappNotifications: false } };
+  if (tier === 'GROWTH') return { billingTier, tier, isTrial, features: { ops: true, whatsappNotifications: true } };
+  return { billingTier, tier: 'ENTERPRISE', isTrial: false, features: { ops: true, whatsappNotifications: true } };
+}
+
 function extractCatalogSearchTerm(text: string): string {
   const cleaned = text.toLowerCase().replace(/[^a-z0-9\s]/g, ' ');
   const stop = new Set([
@@ -262,9 +283,11 @@ async function computeAtVoiceReply(
     db.select({ speaker: transcripts.speaker, text: transcripts.text })
       .from(transcripts)
       .where(eq(transcripts.callId, callDbId))
-      .orderBy(transcripts.createdAt),
+      .orderBy(desc(transcripts.createdAt))
+      .limit(20),
     db.select().from(agentConfigs).where(eq(agentConfigs.businessId, callRow.businessId)).limit(1),
-    db.select({ name: businesses.name }).from(businesses).where(eq(businesses.id, callRow.businessId)).limit(1),
+    db.select({ name: businesses.name, subscriptionTier: businesses.subscriptionTier, createdAt: businesses.createdAt })
+      .from(businesses).where(eq(businesses.id, callRow.businessId)).limit(1),
     db.select({
       faqs: knowledgeBases.faqs,
       websiteSummary: knowledgeBases.websiteSummary,
@@ -280,7 +303,7 @@ async function computeAtVoiceReply(
   await db.insert(transcripts).values({ callId: callDbId, speaker: 'caller', text: callerText });
 
   const messages: ChatMessage[] = [
-    ...history.map(t => ({
+    ...history.slice().reverse().map(t => ({
       role: (t.speaker === 'agent' ? 'assistant' : 'user') as 'user' | 'assistant',
       content: t.text,
     })),
@@ -288,13 +311,14 @@ async function computeAtVoiceReply(
   ];
 
   const urgent = isUrgent(callerText);
+  const plan = bizRow?.createdAt ? buildPlanFromBusinessRow({ subscriptionTier: bizRow.subscriptionTier ?? null, createdAt: bizRow.createdAt }) : null;
   const {
     reply,
     action,
     appointment: appt,
     order,
   } = urgent
-    ? { reply: 'Alright. I’ll get someone to help you right away.', action: 'escalate' as const, appointment: null, order: null }
+    ? { reply: 'I’ll get someone to help you right away.', action: 'escalate' as const, appointment: null, order: null }
     : await voiceChat(messages, {
       businessName: bizRow?.name ?? 'this business',
       agentName: agentRow?.name,
@@ -306,6 +330,7 @@ async function computeAtVoiceReply(
       agentTone: agentRow?.tone,
       escalationNumber: kbRow?.escalationNumber,
       fallbackMessage: agentRow?.fallbackMessage,
+      opsEnabled: plan?.features.ops ?? true,
     });
 
   await db.insert(transcripts).values({ callId: callDbId, speaker: 'agent', text: reply });
@@ -331,7 +356,7 @@ async function computeAtVoiceReply(
     }
   }
 
-  if (appt?.scheduledAt) {
+  if ((plan?.features.ops ?? true) && appt?.scheduledAt) {
     const scheduledAt = new Date(appt.scheduledAt);
     if (!Number.isNaN(scheduledAt.getTime())) {
       const [row] = await db.insert(appointments).values({
@@ -350,7 +375,7 @@ async function computeAtVoiceReply(
     }
   }
 
-  if (order?.items?.length) {
+  if ((plan?.features.ops ?? true) && order?.items?.length) {
     const orderNumber = `ORD-${Date.now().toString(36).toUpperCase()}`;
     const totalAmount = typeof order.totalAmount === 'number'
       ? Math.max(0, Math.round(order.totalAmount))
@@ -372,10 +397,7 @@ async function computeAtVoiceReply(
     await notifyBusinessOwners(callRow.businessId, 'New Order', `Order #${orderNumber} from ${order.customerName ?? order.customerPhone ?? phone}`);
   }
 
-  const audioUrl = await ttsUrl(reply, agentRow?.voiceId ?? 'amaka', baseUrl);
-  const speak = audioUrl
-    ? `<Play>${escapeXml(audioUrl)}</Play>`
-    : `<Say>${escapeXml(reply)}</Say>`;
+  const speak = `<Say>${escapeXml(reply)}</Say>`;
 
   if (action === 'escalate') {
     const reason = 'Agent escalation';
@@ -389,7 +411,7 @@ async function computeAtVoiceReply(
 
     const [settings] = await db.select({ whatsappNumber: businessSettings.whatsappNumber, whatsappVerified: businessSettings.whatsappVerified })
       .from(businessSettings).where(eq(businessSettings.businessId, callRow.businessId)).limit(1);
-    if (settings?.whatsappVerified && settings.whatsappNumber) {
+    if ((plan?.features.whatsappNotifications ?? true) && settings?.whatsappVerified && settings.whatsappNumber) {
       await sendEscalationAlert(settings.whatsappNumber, callerNumber ?? callRow.callerNumber ?? '', summary).catch(() => null);
     }
 
@@ -570,10 +592,7 @@ export async function handleAtVoiceWebhook(req: Request, res: Response) {
     }
 
     const script = `${greeting} Please speak after the beep, and stay on the line while I find an answer for you.`;
-    const greetingAudioUrl = await ttsUrl(script, agentRow?.voiceId ?? 'amaka', baseUrl);
-    const greetSpeak = greetingAudioUrl
-      ? `<Play>${escapeXml(greetingAudioUrl)}</Play>`
-      : `<Say>${escapeXml(script)}</Say>`;
+    const greetSpeak = `<Say>${escapeXml(script)}</Say>`;
     const responseXml = xml(greetSpeak + recordTurn(turnSeconds, baseUrl));
     logger.info({ callDbId, xml: responseXml.slice(0, 400) }, 'AT voice response');
     return res.send(responseXml);

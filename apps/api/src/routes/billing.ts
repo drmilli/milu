@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import crypto from 'crypto';
 import { z } from 'zod';
-import { eq, sql, gte } from 'drizzle-orm';
+import { and, eq, sql, gte } from 'drizzle-orm';
 import { db, businesses, users, calls } from '../db';
 import { authMiddleware } from '../middleware/auth';
 import { env } from '../config/env';
@@ -12,9 +12,10 @@ export const billingRouter: Router = Router();
 
 const WHOP_API_BASE = 'https://api.whop.com/api/v2';
 
-const PLAN_MAP: Record<string, 'STARTER' | 'GROWTH' | 'ENTERPRISE'> = {
+const PLAN_MAP: Record<string, 'STARTER' | 'GROWTH' | 'ENTERPRISE' | 'ONE_TIME'> = {
   // Map your Whop product/plan IDs to internal tiers
   // Replace these with your actual Whop product IDs
+  one_time: 'ONE_TIME',
   starter: 'STARTER',
   growth: 'GROWTH',
   enterprise: 'ENTERPRISE',
@@ -58,9 +59,10 @@ billingRouter.get('/plans', async (_req, res, next) => {
     if (!env.WHOP_API_KEY || !env.WHOP_COMPANY_ID) {
       return res.json({
         plans: [
-          { id: 'starter', name: 'Starter', price: 0, currency: 'NGN', features: ['500 calls/mo', '1 phone number', 'Basic analytics'] },
-          { id: 'growth', name: 'Growth', price: 29900, currency: 'NGN', features: ['5,000 calls/mo', '3 phone numbers', 'Full analytics', 'Team members'] },
-          { id: 'enterprise', name: 'Enterprise', price: 99900, currency: 'NGN', features: ['Unlimited calls', 'Unlimited numbers', 'Priority support', 'Custom voice'] },
+          { id: 'one_time', name: 'One-time', price: 20, currency: 'USD', features: ['Voice', 'AI', 'Call logs'] },
+          { id: 'starter', name: 'Starter', price: 25, currency: 'USD', features: ['200 calls/mo', '1 phone number', 'Basic analytics'] },
+          { id: 'growth', name: 'Growth', price: 45, currency: 'USD', features: ['500 calls/mo', '1 phone number', 'Full analytics', 'Team members'] },
+          { id: 'enterprise', name: 'Enterprise', price: 0, currency: 'USD', features: ['Unlimited calls', 'Unlimited numbers', 'Priority support', 'Custom voice'] },
         ],
       });
     }
@@ -144,14 +146,15 @@ billingRouter.post('/checkout', authMiddleware, async (req, res, next) => {
  *       200:
  *         description: Subscription details
  */
-const TIER_META: Record<string, { planId: string; planName: string; priceNgn: number; priceUsd: number; callLimit: number | null; memberLimit: number | null }> = {
-  STARTER:    { planId: 'starter',    planName: 'Starter',    priceNgn: 15000, priceUsd: 10, callLimit: 200,  memberLimit: 1    },
-  GROWTH:     { planId: 'growth',     planName: 'Growth',     priceNgn: 45000, priceUsd: 30, callLimit: 500,  memberLimit: null },
-  ENTERPRISE: { planId: 'enterprise', planName: 'Enterprise', priceNgn: 0,     priceUsd: 0,  callLimit: null, memberLimit: null },
+const TIER_META: Record<string, { planId: string; planName: string; priceUsd: number; callLimit: number | null; memberLimit: number | null }> = {
+  ONE_TIME:   { planId: 'one_time',   planName: 'One-time',   priceUsd: 20, callLimit: 200,  memberLimit: 1    },
+  STARTER:    { planId: 'starter',    planName: 'Starter',    priceUsd: 25, callLimit: 200,  memberLimit: 2    },
+  GROWTH:     { planId: 'growth',     planName: 'Growth',     priceUsd: 45, callLimit: 500,  memberLimit: null },
+  ENTERPRISE: { planId: 'enterprise', planName: 'Enterprise', priceUsd: 0,  callLimit: null, memberLimit: null },
 };
 
 function trialEndsAt(createdAt: Date) {
-  return new Date(createdAt.getTime() + 14 * 24 * 60 * 60 * 1000);
+  return new Date(createdAt.getTime() + 10 * 24 * 60 * 60 * 1000);
 }
 
 billingRouter.get('/subscription/:businessId', authMiddleware, async (req, res, next) => {
@@ -171,30 +174,35 @@ billingRouter.get('/subscription/:businessId', authMiddleware, async (req, res, 
     const startOfMonth = new Date(); startOfMonth.setDate(1); startOfMonth.setHours(0, 0, 0, 0);
     const [callCount, memberCount] = await Promise.all([
       db.select({ n: sql<number>`count(*)` }).from(calls)
-        .where(gte(calls.startedAt, startOfMonth)),
+        .where(and(eq(calls.businessId, req.params.businessId), gte(calls.startedAt, startOfMonth))),
       db.select({ n: sql<number>`count(*)` }).from(users)
         .where(eq(users.businessId, req.params.businessId)),
     ]);
 
     const now = new Date();
     const isTrial = tier === 'STARTER' && now < trialEndsAt(biz.createdAt);
+    const effectiveMeta = isTrial ? TIER_META['GROWTH'] : meta;
 
     // Renewal date = end of trial (trialing), else same day next month
-    const renewsAt = isTrial ? trialEndsAt(biz.createdAt) : new Date(biz.createdAt);
-    if (!isTrial) {
+    const renewsAt = isTrial
+      ? trialEndsAt(biz.createdAt)
+      : tier === 'ONE_TIME'
+        ? new Date(biz.createdAt.getTime() + 30 * 24 * 60 * 60 * 1000)
+        : new Date(biz.createdAt);
+    if (!isTrial && tier !== 'ONE_TIME') {
       while (renewsAt <= now) renewsAt.setMonth(renewsAt.getMonth() + 1);
     }
 
     return res.json({
-      planId: meta.planId,
-      planName: isTrial ? `Free Trial (${meta.planName})` : meta.planName,
+      planId: effectiveMeta.planId,
+      planName: isTrial ? 'Free Trial (All features)' : effectiveMeta.planName,
       status: biz.isActive ? (isTrial ? 'trialing' : 'active') : 'cancelled',
-      price: isTrial ? 0 : meta.priceNgn,
-      currency: 'NGN',
+      price: isTrial ? 0 : effectiveMeta.priceUsd,
+      currency: 'USD',
       renewsAt: renewsAt.toISOString(),
       usage: {
-        calls: { used: Number(callCount[0]?.n ?? 0), limit: meta.callLimit },
-        teamMembers: { used: Number(memberCount[0]?.n ?? 0), limit: meta.memberLimit },
+        calls: { used: Number(callCount[0]?.n ?? 0), limit: effectiveMeta.callLimit },
+        teamMembers: { used: Number(memberCount[0]?.n ?? 0), limit: effectiveMeta.memberLimit },
       },
     });
   } catch (err) {

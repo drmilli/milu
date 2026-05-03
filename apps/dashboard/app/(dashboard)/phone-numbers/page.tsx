@@ -29,6 +29,16 @@ type AvailableNumber = {
   currency: string;
 };
 
+type PhoneNumberRequest = {
+  id: string;
+  quantity: number;
+  amountUsd: number;
+  checkoutUrl: string;
+  note?: string | null;
+  status: string;
+  createdAt: string;
+};
+
 type Step = 'idle' | 'sending' | 'awaiting_code' | 'verifying' | 'done';
 type VirtualStep = 'idle' | 'searching' | 'selecting' | 'buying' | 'done';
 type Carrier = 'mtn' | 'airtel' | 'glo' | '9mobile';
@@ -49,6 +59,12 @@ export default function PhoneNumbersPage() {
   const [numbers, setNumbers] = useState<PhoneEntry[]>([]);
   const [loadingNums, setLoadingNums] = useState(true);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [upgradeMsg, setUpgradeMsg] = useState('');
+  const [requests, setRequests] = useState<PhoneNumberRequest[]>([]);
+  const [loadingReqs, setLoadingReqs] = useState(true);
+  const [requesting, setRequesting] = useState(false);
+  const [reqError, setReqError] = useState('');
+  const [reqNote, setReqNote] = useState('');
   const [forwardingInfo, setForwardingInfo] = useState<ForwardingInstructions | null>(null);
   const [selectedCarrier, setSelectedCarrier] = useState<Carrier>('mtn');
   const [copied, setCopied] = useState<string | null>(null);
@@ -84,14 +100,65 @@ export default function PhoneNumbersPage() {
     if (!token || !businessId) return;
     apiGet<PhoneEntry[]>(`/businesses/${businessId}/phone-numbers`, token)
       .then(nums => setNumbers(nums))
-      .catch(() => null)
+      .catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : '';
+        if (msg.toLowerCase().includes('upgrade')) setUpgradeMsg(msg);
+      })
       .finally(() => setLoadingNums(false));
   }, [token, businessId]);
 
   useEffect(() => { if (ready) load(); }, [ready, load]);
 
+  const loadRequests = useCallback(() => {
+    if (!token || !businessId) return;
+    setLoadingReqs(true);
+    apiGet<PhoneNumberRequest[]>(`/businesses/${businessId}/phone-number-requests`, token)
+      .then(setRequests)
+      .catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : '';
+        if (msg.toLowerCase().includes('upgrade')) setUpgradeMsg(msg);
+      })
+      .finally(() => setLoadingReqs(false));
+  }, [token, businessId]);
+
+  useEffect(() => { if (ready) loadRequests(); }, [ready, loadRequests]);
+
   const callLineNumbers = numbers.filter(n => n.isVirtual);
   const businessNumbers = numbers.filter(n => !n.isVirtual);
+
+  if (upgradeMsg) {
+    return (
+      <div className="p-6 lg:p-8 max-w-2xl">
+        <div className="bg-warning/10 border border-warning/25 rounded-2xl p-6">
+          <h1 className="font-heading font-bold text-2xl text-primary-dark">Upgrade required</h1>
+          <p className="text-sm text-primary-warm mt-2">{upgradeMsg}</p>
+          <a href="/billing" className="inline-flex mt-5 bg-primary text-cream-light px-4 py-2 rounded-xl text-sm font-medium hover:bg-primary-dark transition-colors">
+            Upgrade
+          </a>
+        </div>
+      </div>
+    );
+  }
+
+  async function requestAnotherNumber() {
+    if (!token || !businessId) return;
+    setReqError('');
+    setRequesting(true);
+    try {
+      const res = await apiPost<{ id: string; checkoutUrl: string; amountUsd: number; quantity: number; createdAt: string }>(
+        `/businesses/${businessId}/phone-number-requests`,
+        { quantity: 1, note: reqNote.trim() || undefined },
+        token,
+      );
+      await loadRequests();
+      if (res?.checkoutUrl) window.open(res.checkoutUrl, '_blank', 'noreferrer');
+      setReqNote('');
+    } catch (err: unknown) {
+      setReqError(err instanceof Error ? err.message : 'Failed to request number.');
+    } finally {
+      setRequesting(false);
+    }
+  }
 
   // ── Virtual number flow ──────────────────────────────────────────────────
 
@@ -226,6 +293,80 @@ export default function PhoneNumbersPage() {
       <div>
         <h1 className="font-heading font-bold text-2xl text-primary-dark">Phone Numbers</h1>
         <p className="text-sm text-primary-warm mt-0.5">Manage numbers connected to your AI agent.</p>
+      </div>
+
+      {/* Additional number request */}
+      <div className="bg-white rounded-2xl border border-cream-dark p-5 space-y-3">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <p className="text-sm font-semibold text-primary-dark">Need an additional phone number?</p>
+            <p className="text-xs text-primary-warm mt-1">
+              Additional numbers cost $3. Submitting a request notifies our admin team and opens the checkout link.
+            </p>
+          </div>
+          <button
+            onClick={requestAnotherNumber}
+            disabled={requesting}
+            className="bg-primary text-cream-light px-4 py-2 rounded-xl text-sm font-medium hover:bg-primary-dark transition-colors disabled:opacity-60 flex-shrink-0"
+          >
+            {requesting ? 'Requesting…' : 'Request ($3)'}
+          </button>
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-primary-dark mb-1.5">Note (optional)</label>
+          <input
+            className={inputCls}
+            placeholder="e.g. need Lagos number"
+            value={reqNote}
+            onChange={(e) => setReqNote(e.target.value)}
+          />
+        </div>
+        {reqError && <div className="text-sm text-danger bg-danger/10 border border-danger/20 rounded-xl px-4 py-3">{reqError}</div>}
+      </div>
+
+      {/* Request history */}
+      <div className="bg-white rounded-2xl border border-cream-dark p-5">
+        <div className="flex items-center justify-between mb-3">
+          <p className="text-sm font-semibold text-primary-dark">Request history</p>
+          <button
+            onClick={loadRequests}
+            className="text-xs text-primary hover:underline"
+            disabled={loadingReqs}
+          >
+            Refresh
+          </button>
+        </div>
+        {loadingReqs ? (
+          <p className="text-sm text-primary-warm">Loading…</p>
+        ) : requests.length === 0 ? (
+          <p className="text-sm text-primary-warm">No requests yet.</p>
+        ) : (
+          <div className="space-y-3">
+            {requests.slice(0, 10).map((r) => (
+              <div key={r.id} className="p-4 rounded-xl border border-cream-dark bg-cream-light">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-primary-dark">
+                      {r.quantity} number{r.quantity !== 1 ? 's' : ''} · ${r.amountUsd} each
+                    </p>
+                    <p className="text-xs text-primary-warm mt-1">
+                      Status: {r.status} · {new Date(r.createdAt).toLocaleString()}
+                    </p>
+                    {r.note ? <p className="text-xs text-primary-warm mt-2">{r.note}</p> : null}
+                  </div>
+                  <a
+                    href={r.checkoutUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="bg-primary text-cream-light px-3 py-2 rounded-xl text-xs font-medium hover:bg-primary-dark transition-colors flex-shrink-0"
+                  >
+                    Checkout
+                  </a>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* How calls work banner */}

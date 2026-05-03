@@ -270,15 +270,24 @@ export async function voiceChat(
     agentTone?: string | null;
     escalationNumber?: string | null;
     fallbackMessage?: string | null;
+    opsEnabled?: boolean;
   },
 ): Promise<VoiceChatResult> {
+  function stripLeadingFiller(s: string) {
+    const trimmed = s.trim();
+    const without = trimmed.replace(/^(alright|all right|okay|ok|sure|right|great|got it|i see)\b[,\s.!-]*/i, '');
+    return without.trim() || trimmed;
+  }
+
   const agentName = context.agentName || 'your agent';
   const tone = context.agentTone || 'friendly and professional';
   const lang = context.agentLanguage;
+  const opsEnabled = context.opsEnabled ?? true;
 
   const systemPrompt = [
     `You are ${agentName}, a phone customer service agent for "${context.businessName}".`,
     `Tone: ${tone}. Speak naturally as on a real phone call — 1 to 3 short sentences max. Never use bullet points, numbered lists, markdown, or asterisks.`,
+    `Do not start your reply with filler acknowledgements like "Alright", "Okay", or "Sure". Start directly with the answer or question.`,
     lang && lang !== 'en'
       ? `Primary language: ${lang}. Respond in the language the customer uses. If they mix languages (e.g. Pidgin, code-switching), match their style.`
       : `Respond in the same language or dialect the customer uses (English, Nigerian Pidgin, Yoruba, Igbo, etc.). Match their communication style naturally.`,
@@ -307,12 +316,24 @@ export async function voiceChat(
     context.fallbackMessage
       ? `Fallback response: "${context.fallbackMessage}"`
       : null,
-    `If the customer is trying to book an appointment, you must collect the booking details. Once you have them, include a JSON block exactly like this anywhere in your message (before the final action tag):`,
-    `[APPOINTMENT]{"scheduledAt":"2026-04-30T15:00:00+01:00","durationMinutes":30,"serviceType":"Haircut","customerName":"Ada","customerPhone":"+234...","notes":"..."}[/APPOINTMENT]`,
-    `Only include [APPOINTMENT] if you have a specific date/time for scheduledAt. If missing, ask a short follow-up question instead.`,
-    `If the customer is placing an order, you must collect order details. Once you have them, include a JSON block exactly like this anywhere in your message (before the final action tag):`,
-    `[ORDER]{"items":[{"name":"Burger","qty":2,"price":2500}],"currency":"NGN","deliveryAddress":"...","customerName":"Ada","customerPhone":"+234...","notes":"...","totalAmount":5000}[/ORDER]`,
-    `Only include [ORDER] if you have at least one item with qty. If missing, ask a short follow-up question instead.`,
+    !opsEnabled
+      ? `This business plan does not support creating appointments or orders. Do not offer to book appointments or take orders. If asked, take basic details and say the team will follow up.`
+      : `If the customer is trying to book an appointment, you must collect the booking details. Once you have them, include a JSON block exactly like this anywhere in your message (before the final action tag):`,
+    opsEnabled
+      ? `[APPOINTMENT]{"scheduledAt":"2026-04-30T15:00:00+01:00","durationMinutes":30,"serviceType":"Haircut","customerName":"Ada","customerPhone":"+234...","notes":"..."}[/APPOINTMENT]`
+      : null,
+    opsEnabled
+      ? `Only include [APPOINTMENT] if you have a specific date/time for scheduledAt. If missing, ask a short follow-up question instead.`
+      : null,
+    opsEnabled
+      ? `If the customer is placing an order, you must collect order details. Once you have them, include a JSON block exactly like this anywhere in your message (before the final action tag):`
+      : null,
+    opsEnabled
+      ? `[ORDER]{"items":[{"name":"Burger","qty":2,"price":2500}],"currency":"NGN","deliveryAddress":"...","customerName":"Ada","customerPhone":"+234...","notes":"...","totalAmount":5000}[/ORDER]`
+      : null,
+    opsEnabled
+      ? `Only include [ORDER] if you have at least one item with qty. If missing, ask a short follow-up question instead.`
+      : null,
     `\nEnd every reply with exactly one of these tags (no other text after it):\n[CONTINUE] — conversation should continue\n[ESCALATE] — transfer to human agent\n[END] — call is wrapping up naturally`,
   ].filter(Boolean).join('\n');
 
@@ -374,11 +395,15 @@ export async function voiceChat(
   }
 
   raw = raw.replace(/\s*\[APPOINTMENT\][\s\S]*?\[\/APPOINTMENT\]\s*/ig, '\n').replace(/\s*\[ORDER\][\s\S]*?\[\/ORDER\]\s*/ig, '\n');
+  if (!opsEnabled) {
+    appointment = null;
+    order = null;
+  }
 
   // Match action tag anywhere near end (tolerates trailing whitespace/newlines)
   const actionMatch = raw.match(/\[(CONTINUE|ESCALATE|END)\][^\w]*$/i);
   const action = (actionMatch?.[1]?.toLowerCase() ?? 'continue') as 'continue' | 'escalate' | 'end';
-  const reply = raw.replace(/\s*\[(CONTINUE|ESCALATE|END)\][^\w]*$/i, '').trim();
+  const reply = stripLeadingFiller(raw.replace(/\s*\[(CONTINUE|ESCALATE|END)\][^\w]*$/i, '').trim());
   return { reply, action, appointment, order };
 }
 

@@ -6,11 +6,12 @@ import swaggerUi from 'swagger-ui-express';
 import { env } from './config/env';
 import { logger } from './config/logger';
 import { swaggerSpec } from './swagger';
-import { apiLimiter } from './middleware/rate-limit';
+import { apiLimiter, contactLimiter } from './middleware/rate-limit';
 import { errorHandler } from './middleware/error-handler';
 import { httpLogger } from './middleware/http-logger';
 import { and, eq, lt, sql as drizzleSql } from 'drizzle-orm';
-import { db, calls } from './db';
+import { z } from 'zod';
+import { db, calls, contactSubmissions } from './db';
 import { authRouter } from './routes/auth';
 import { businessesRouter } from './routes/businesses';
 import { callsRouter } from './routes/calls';
@@ -36,6 +37,7 @@ import { webhookConfigRouter } from './routes/webhookConfig';
 import { auditLogsRouter } from './routes/auditLogs';
 import { apiKeysRouter } from './routes/apiKeys';
 import { redis, ttsStoreDelete, ttsStoreGet } from './utils/redis';
+import { sendNotification } from './services/notifications';
 
 const app: Express = express();
 const server = http.createServer(app);
@@ -137,6 +139,61 @@ app.post('/webhooks/sendchamp', handleSendchampWebhook);
 
 // Rate limiting on all API routes
 app.use('/api/v1', apiLimiter);
+
+app.post('/api/v1/contact', contactLimiter, async (req, res, next) => {
+  try {
+    const schema = z.object({
+      firstName: z.string().min(1).max(80),
+      lastName: z.string().min(1).max(80),
+      email: z.string().email().max(200),
+      businessName: z.string().max(140).optional(),
+      reason: z.enum(['demo', 'sales', 'support', 'partnership', 'press', 'other']),
+      message: z.string().min(5).max(4000),
+      pageUrl: z.string().max(500).optional(),
+    });
+    const body = schema.parse(req.body);
+
+    const ipAddress = (req.headers['x-forwarded-for'] as string | undefined)?.split(',')[0]?.trim() ?? req.ip;
+    const userAgent = (req.headers['user-agent'] as string | undefined) ?? null;
+
+    const [row] = await db.insert(contactSubmissions).values({
+      firstName: body.firstName,
+      lastName: body.lastName,
+      email: body.email,
+      businessName: body.businessName,
+      reason: body.reason,
+      message: body.message,
+      pageUrl: body.pageUrl,
+      ipAddress: ipAddress || null,
+      userAgent,
+    }).returning({ id: contactSubmissions.id, createdAt: contactSubmissions.createdAt });
+
+    const subject = `New website contact: ${body.reason.toUpperCase()} — ${body.firstName} ${body.lastName}`;
+    const lines = [
+      `Name: ${body.firstName} ${body.lastName}`,
+      `Email: ${body.email}`,
+      body.businessName ? `Business: ${body.businessName}` : null,
+      `Reason: ${body.reason}`,
+      body.pageUrl ? `Page: ${body.pageUrl}` : null,
+      ipAddress ? `IP: ${ipAddress}` : null,
+      '',
+      body.message,
+      '',
+      `Submission ID: ${row?.id ?? ''}`,
+      `Created At: ${row?.createdAt?.toISOString?.() ?? ''}`,
+    ].filter(Boolean) as string[];
+
+    await sendNotification({
+      title: subject,
+      body: lines.join('\n'),
+      channel: 'EMAIL',
+      recipient: 'info.miluai@gmail.com',
+      data: { contactSubmissionId: row?.id ?? null, source: 'website' },
+    }).catch(() => null);
+
+    return res.status(201).json({ ok: true, id: row?.id });
+  } catch (err) { next(err); }
+});
 
 // Routes
 app.use('/api/v1/auth', authRouter);

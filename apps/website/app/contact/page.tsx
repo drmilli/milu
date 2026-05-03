@@ -24,8 +24,8 @@ const channels = [
       </svg>
     ),
     label: 'WhatsApp',
-    value: '+234 800 000 0000',
-    href: 'https://wa.me/2348000000000',
+    value: '+2349157760803',
+    href: 'https://wa.me/2349157760803',
     note: 'Mon – Fri, 9am – 6pm WAT',
   },
   {
@@ -54,14 +54,48 @@ const reasons = [
 export default function ContactPage() {
   const [submitted, setSubmitted] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [form, setForm] = useState({
+    firstName: '',
+    lastName: '',
+    email: '',
+    businessName: '',
+    reason: 'demo',
+    message: '',
+  });
 
-  function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
+  async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    setError('');
     setLoading(true);
-    setTimeout(() => {
-      setLoading(false);
+    try {
+      const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000';
+      const res = await fetch(`${API_URL}/api/v1/contact`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          firstName: form.firstName.trim(),
+          lastName: form.lastName.trim(),
+          email: form.email.trim(),
+          businessName: form.businessName.trim() || undefined,
+          reason: form.reason,
+          message: form.message.trim(),
+          pageUrl: typeof window !== 'undefined' ? window.location.href : undefined,
+        }),
+      });
+
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        const msg = (body as { error?: string }).error ?? `HTTP ${res.status}`;
+        throw new Error(msg);
+      }
+
       setSubmitted(true);
-    }, 1200);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to send message.');
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
@@ -153,6 +187,11 @@ export default function ContactPage() {
                 onSubmit={handleSubmit}
                 className="bg-cream border border-cream-dark rounded-3xl p-8 space-y-5"
               >
+                {error && (
+                  <div className="bg-danger/10 border border-danger/20 text-danger rounded-2xl px-4 py-3 text-sm">
+                    {error}
+                  </div>
+                )}
                 <div className="grid sm:grid-cols-2 gap-4">
                   <div>
                     <label className="block text-sm font-medium text-primary-dark mb-1.5">First name</label>
@@ -161,6 +200,8 @@ export default function ContactPage() {
                       type="text"
                       className="w-full px-4 py-3 rounded-xl border border-cream-dark bg-cream-light text-primary-dark placeholder:text-cream-dark focus:outline-none focus:border-primary/40 focus:ring-2 focus:ring-primary/10 transition-all text-sm"
                       placeholder="Amaka"
+                      value={form.firstName}
+                      onChange={(e) => setForm(f => ({ ...f, firstName: e.target.value }))}
                     />
                   </div>
                   <div>
@@ -170,6 +211,8 @@ export default function ContactPage() {
                       type="text"
                       className="w-full px-4 py-3 rounded-xl border border-cream-dark bg-cream-light text-primary-dark placeholder:text-cream-dark focus:outline-none focus:border-primary/40 focus:ring-2 focus:ring-primary/10 transition-all text-sm"
                       placeholder="Okonkwo"
+                      value={form.lastName}
+                      onChange={(e) => setForm(f => ({ ...f, lastName: e.target.value }))}
                     />
                   </div>
                 </div>
@@ -181,6 +224,8 @@ export default function ContactPage() {
                     type="email"
                     className="w-full px-4 py-3 rounded-xl border border-cream-dark bg-cream-light text-primary-dark placeholder:text-cream-dark focus:outline-none focus:border-primary/40 focus:ring-2 focus:ring-primary/10 transition-all text-sm"
                     placeholder="amaka@yourbusiness.ng"
+                    value={form.email}
+                    onChange={(e) => setForm(f => ({ ...f, email: e.target.value }))}
                   />
                 </div>
 
@@ -190,6 +235,8 @@ export default function ContactPage() {
                     type="text"
                     className="w-full px-4 py-3 rounded-xl border border-cream-dark bg-cream-light text-primary-dark placeholder:text-cream-dark focus:outline-none focus:border-primary/40 focus:ring-2 focus:ring-primary/10 transition-all text-sm"
                     placeholder="QuickDelivery NG"
+                    value={form.businessName}
+                    onChange={(e) => setForm(f => ({ ...f, businessName: e.target.value }))}
                   />
                 </div>
 
@@ -197,6 +244,8 @@ export default function ContactPage() {
                   <label className="block text-sm font-medium text-primary-dark mb-1.5">How can we help?</label>
                   <select
                     className="w-full px-4 py-3 rounded-xl border border-cream-dark bg-cream-light text-primary-dark focus:outline-none focus:border-primary/40 focus:ring-2 focus:ring-primary/10 transition-all text-sm appearance-none"
+                    value={form.reason}
+                    onChange={(e) => setForm(f => ({ ...f, reason: e.target.value }))}
                   >
                     {reasons.map((r) => (
                       <option key={r.value} value={r.value}>{r.label}</option>
@@ -211,6 +260,8 @@ export default function ContactPage() {
                     rows={4}
                     className="w-full px-4 py-3 rounded-xl border border-cream-dark bg-cream-light text-primary-dark placeholder:text-cream-dark focus:outline-none focus:border-primary/40 focus:ring-2 focus:ring-primary/10 transition-all text-sm resize-none"
                     placeholder="Tell us a bit about your business and what you need..."
+                    value={form.message}
+                    onChange={(e) => setForm(f => ({ ...f, message: e.target.value }))}
                   />
                 </div>
 

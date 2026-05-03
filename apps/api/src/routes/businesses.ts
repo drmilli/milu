@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { eq, and, sql } from 'drizzle-orm';
-import { db, businesses, knowledgeBases, knowledgeDocuments, kbChats, phoneNumbers, users, phoneVerifications, notifications, catalogItems } from '../db';
+import { eq, and, desc, sql } from 'drizzle-orm';
+import { db, businesses, knowledgeBases, knowledgeDocuments, kbChats, phoneNumbers, users, phoneVerifications, notifications, catalogItems, phoneNumberRequests } from '../db';
 import { authMiddleware } from '../middleware/auth';
 import { sendCustomSms } from '../services/sms';
 import { searchAvailableNumbers, purchaseNumber, releaseNumber } from '../services/infobip';
@@ -15,9 +15,18 @@ import crypto from 'crypto';
 import { audit } from '../services/audit';
 import { logger } from '../config/logger';
 import { env } from '../config/env';
+import { sendNotification } from '../services/notifications';
 
 export const businessesRouter: Router = Router();
 businessesRouter.use(authMiddleware);
+
+function denyIfCoreOnly(req: any, res: any): boolean {
+  if (req.user?.role === 'OWNER' && req.plan?.tier === 'ONE_TIME') {
+    res.status(402).json({ error: 'Upgrade to access this feature.' });
+    return true;
+  }
+  return false;
+}
 
 /**
  * @openapi
@@ -288,6 +297,7 @@ businessesRouter.post('/:id/kb/chat', async (req, res, next) => {
 
 businessesRouter.get('/:id/catalog', async (req, res, next) => {
   try {
+    if (denyIfCoreOnly(req, res)) return;
     const { q, type } = z.object({
       q: z.string().optional(),
       type: z.enum(['PRODUCT', 'SERVICE']).optional(),
@@ -305,6 +315,7 @@ businessesRouter.get('/:id/catalog', async (req, res, next) => {
 
 businessesRouter.post('/:id/catalog', async (req, res, next) => {
   try {
+    if (denyIfCoreOnly(req, res)) return;
     const data = z.object({
       type: z.enum(['PRODUCT', 'SERVICE']),
       name: z.string().min(1),
@@ -335,6 +346,7 @@ businessesRouter.post('/:id/catalog', async (req, res, next) => {
 
 businessesRouter.patch('/:id/catalog/:itemId', async (req, res, next) => {
   try {
+    if (denyIfCoreOnly(req, res)) return;
     const data = z.object({
       type: z.enum(['PRODUCT', 'SERVICE']).optional(),
       name: z.string().min(1).optional(),
@@ -361,6 +373,7 @@ businessesRouter.patch('/:id/catalog/:itemId', async (req, res, next) => {
 
 businessesRouter.delete('/:id/catalog/:itemId', async (req, res, next) => {
   try {
+    if (denyIfCoreOnly(req, res)) return;
     await db.delete(catalogItems).where(and(eq(catalogItems.id, req.params.itemId), eq(catalogItems.businessId, req.params.id)));
     return res.status(204).send();
   } catch (err) { next(err); }
@@ -377,6 +390,7 @@ businessesRouter.delete('/:id/kb/chat', async (req, res, next) => {
 // GET /businesses/:id/notifications — in-app notifications for this business
 businessesRouter.get('/:id/notifications', async (req, res, next) => {
   try {
+    if (denyIfCoreOnly(req, res)) return;
     const rows = await db.select().from(notifications)
       .where(and(eq(notifications.businessId, req.params.id), sql`${notifications.readAt} is null`))
       .orderBy(sql`${notifications.createdAt} desc`)
@@ -404,6 +418,7 @@ businessesRouter.get('/:id/notifications', async (req, res, next) => {
  */
 businessesRouter.get('/:id/phone-numbers', async (req, res, next) => {
   try {
+    if (denyIfCoreOnly(req, res)) return;
     const numbers = await db.select().from(phoneNumbers).where(eq(phoneNumbers.businessId, req.params.id));
     return res.json(numbers);
   } catch (err) {
@@ -441,6 +456,7 @@ businessesRouter.get('/:id/phone-numbers', async (req, res, next) => {
  */
 businessesRouter.post('/:id/phone-numbers/send-otp', async (req, res, next) => {
   try {
+    if (denyIfCoreOnly(req, res)) return;
     const { number } = z.object({ number: z.string().min(7) }).parse(req.body);
 
     // Check not already taken
@@ -517,6 +533,7 @@ businessesRouter.post('/:id/phone-numbers/send-otp', async (req, res, next) => {
  */
 businessesRouter.post('/:id/phone-numbers/verify', async (req, res, next) => {
   try {
+    if (denyIfCoreOnly(req, res)) return;
     const { number, code, label } = z.object({
       number: z.string().min(7),
       code: z.string().length(6),
@@ -574,6 +591,7 @@ businessesRouter.post('/:id/phone-numbers/verify', async (req, res, next) => {
  */
 businessesRouter.delete('/:id/phone-numbers/:numberId', async (req, res, next) => {
   try {
+    if (denyIfCoreOnly(req, res)) return;
     const [num] = await db.select().from(phoneNumbers).where(
       and(eq(phoneNumbers.id, req.params.numberId), eq(phoneNumbers.businessId, req.params.id))
     ).limit(1);
@@ -593,6 +611,7 @@ businessesRouter.delete('/:id/phone-numbers/:numberId', async (req, res, next) =
 // GET /businesses/:id/phone-numbers/virtual/available?countryCode=NG
 businessesRouter.get('/:id/phone-numbers/virtual/available', async (req, res, next) => {
   try {
+    if (denyIfCoreOnly(req, res)) return;
     const { countryCode } = z.object({ countryCode: z.string().length(2).default('NG') }).parse(req.query);
     const numbers = await searchAvailableNumbers(countryCode);
     return res.json(numbers);
@@ -602,6 +621,7 @@ businessesRouter.get('/:id/phone-numbers/virtual/available', async (req, res, ne
 // POST /businesses/:id/phone-numbers/virtual/buy
 businessesRouter.post('/:id/phone-numbers/virtual/buy', async (req, res, next) => {
   try {
+    if (denyIfCoreOnly(req, res)) return;
     const { numberKey, label } = z.object({
       numberKey: z.string(),
       label: z.string().optional(),
@@ -631,6 +651,83 @@ businessesRouter.post('/:id/phone-numbers/virtual/buy', async (req, res, next) =
       ...phone,
       forwardingInstructions: getForwardingInstructions(purchased.number),
     });
+  } catch (err) { next(err); }
+});
+
+businessesRouter.get('/:id/phone-number-requests', async (req, res, next) => {
+  try {
+    if (denyIfCoreOnly(req, res)) return;
+    if (req.user?.role !== 'OWNER') return res.status(403).json({ error: 'Business access required' });
+    if (!req.user.businessId || req.user.businessId !== req.params.id) return res.status(403).json({ error: 'Forbidden' });
+
+    const rows = await db.select({
+      id: phoneNumberRequests.id,
+      quantity: phoneNumberRequests.quantity,
+      amountUsd: phoneNumberRequests.amountUsd,
+      checkoutUrl: phoneNumberRequests.checkoutUrl,
+      note: phoneNumberRequests.note,
+      status: phoneNumberRequests.status,
+      createdAt: phoneNumberRequests.createdAt,
+    }).from(phoneNumberRequests).where(eq(phoneNumberRequests.businessId, req.params.id)).orderBy(desc(phoneNumberRequests.createdAt));
+
+    return res.json(rows.map(r => ({
+      ...r,
+      createdAt: r.createdAt.toISOString(),
+    })));
+  } catch (err) { next(err); }
+});
+
+businessesRouter.post('/:id/phone-number-requests', async (req, res, next) => {
+  try {
+    if (denyIfCoreOnly(req, res)) return;
+    if (req.user?.role !== 'OWNER') return res.status(403).json({ error: 'Business access required' });
+    if (!req.user.businessId || req.user.businessId !== req.params.id) return res.status(403).json({ error: 'Forbidden' });
+
+    const { quantity, note } = z.object({
+      quantity: z.coerce.number().min(1).max(5).default(1),
+      note: z.string().max(500).optional(),
+    }).parse(req.body);
+
+    const CHECKOUT_URL = 'https://whop.com/checkout/plan_hIqFgC9KKJEMX';
+    const AMOUNT_USD_PER = 3;
+
+    const [biz] = await db.select({ name: businesses.name }).from(businesses).where(eq(businesses.id, req.params.id)).limit(1);
+    const [u] = await db.select({ email: users.email, firstName: users.firstName, lastName: users.lastName }).from(users).where(eq(users.id, req.user.userId)).limit(1);
+
+    const [row] = await db.insert(phoneNumberRequests).values({
+      businessId: req.params.id,
+      requestedByUserId: req.user.userId,
+      quantity,
+      amountUsd: AMOUNT_USD_PER,
+      checkoutUrl: CHECKOUT_URL,
+      note,
+    }).returning({ id: phoneNumberRequests.id, createdAt: phoneNumberRequests.createdAt });
+
+    const requesterName = [u?.firstName, u?.lastName].filter(Boolean).join(' ').trim();
+    const requester = requesterName ? `${requesterName} <${u?.email ?? ''}>` : (u?.email ?? 'Unknown');
+    const subject = `Phone number request — ${biz?.name ?? 'Business'} (${quantity}x)`;
+    const bodyLines = [
+      `Business: ${biz?.name ?? req.params.id}`,
+      `Business ID: ${req.params.id}`,
+      `Requested by: ${requester}`,
+      `Quantity: ${quantity}`,
+      `Price: $${AMOUNT_USD_PER} per number`,
+      `Checkout: ${CHECKOUT_URL}`,
+      note ? `Note: ${note}` : null,
+      `Request ID: ${row?.id ?? ''}`,
+    ].filter(Boolean) as string[];
+
+    await sendNotification({
+      title: subject,
+      body: bodyLines.join('\n'),
+      channel: 'EMAIL',
+      recipient: 'info.miluai@gmail.com',
+      data: { phoneNumberRequestId: row?.id ?? null, businessId: req.params.id },
+    }).catch(() => null);
+
+    await audit(req, 'phone_number.requested', 'phone_number_request', row?.id ?? '', { quantity, checkoutUrl: CHECKOUT_URL });
+
+    return res.status(201).json({ id: row?.id, checkoutUrl: CHECKOUT_URL, amountUsd: AMOUNT_USD_PER, quantity, createdAt: row?.createdAt?.toISOString() });
   } catch (err) { next(err); }
 });
 
@@ -666,6 +763,7 @@ function getForwardingInstructions(virtualNumber: string) {
  */
 businessesRouter.get('/:id/team', async (req, res, next) => {
   try {
+    if (denyIfCoreOnly(req, res)) return;
     const members = await db.select({
       id: users.id,
       email: users.email,
@@ -704,6 +802,7 @@ businessesRouter.get('/:id/team', async (req, res, next) => {
  */
 businessesRouter.delete('/:id/team/:userId', async (req, res, next) => {
   try {
+    if (denyIfCoreOnly(req, res)) return;
     await db.update(users)
       .set({ businessId: null })
       .where(and(eq(users.id, req.params.userId), eq(users.businessId, req.params.id)));
@@ -715,6 +814,7 @@ businessesRouter.delete('/:id/team/:userId', async (req, res, next) => {
 
 businessesRouter.post('/:id/team/:userId/resend-invite', async (req, res, next) => {
   try {
+    if (denyIfCoreOnly(req, res)) return;
     const [user] = await db.select({ id: users.id, email: users.email, businessId: users.businessId })
       .from(users)
       .where(and(eq(users.id, req.params.userId), eq(users.businessId, req.params.id)))

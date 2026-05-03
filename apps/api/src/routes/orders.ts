@@ -11,6 +11,12 @@ import { audit } from '../services/audit';
 
 export const ordersRouter: Router = Router();
 ordersRouter.use(authMiddleware);
+ordersRouter.use((req, res, next) => {
+  if (req.user?.role === 'OWNER' && req.plan && !req.plan.features.ops) {
+    return res.status(402).json({ error: 'Upgrade to Growth to access Orders.' });
+  }
+  next();
+});
 
 /**
  * @openapi

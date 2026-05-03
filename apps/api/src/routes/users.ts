@@ -2,7 +2,7 @@ import { Router } from 'express';
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 import { z } from 'zod';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, sql } from 'drizzle-orm';
 import { db, users, businesses } from '../db';
 import { authMiddleware } from '../middleware/auth';
 import { sendTeamInviteEmail } from '../utils/email';
@@ -54,6 +54,25 @@ usersRouter.post('/invite', async (req, res, next) => {
       lastName: z.string().optional(),
     });
     const { email, businessId, role, firstName, lastName } = schema.parse(req.body);
+
+    if (req.user?.role === 'OWNER' && req.plan?.tier === 'ONE_TIME') {
+      return res.status(402).json({ error: 'Upgrade to add team members.' });
+    }
+
+    if (req.user?.role === 'OWNER' && req.user.businessId && req.user.businessId !== businessId) {
+      return res.status(403).json({ error: 'You can only invite members to your own business.' });
+    }
+
+    if (req.user?.role === 'OWNER' && req.plan?.limits.teamMembers != null) {
+      const [count] = await db
+        .select({ n: sql<number>`count(*)` })
+        .from(users)
+        .where(eq(users.businessId, businessId));
+      const used = Number(count?.n ?? 0);
+      if (used >= req.plan.limits.teamMembers) {
+        return res.status(402).json({ error: 'Upgrade to Growth to add more team members.' });
+      }
+    }
 
     const existing = await db.select({ id: users.id }).from(users).where(eq(users.email, email)).limit(1);
     if (existing.length) return res.status(409).json({ error: 'Email already registered' });

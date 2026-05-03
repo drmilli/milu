@@ -84,6 +84,7 @@ function CallsPageInner() {
   const [loadingTranscript, setLoadingTranscript] = useState(false);
   const [playingUrl, setPlayingUrl] = useState<string | null>(null);
   const [loadingRecording, setLoadingRecording] = useState(false);
+  const [upgradeMsg, setUpgradeMsg] = useState('');
 
   const [filter, setFilter] = useState<'all' | 'AI' | 'HUMAN' | 'ABANDONED'>('all');
   const [search, setSearch] = useState('');
@@ -132,7 +133,9 @@ function CallsPageInner() {
     try {
       const res = await apiGet<{ url: string }>(`/calls/${selected.id}/recording`, token);
       setPlayingUrl(res.url);
-    } catch {
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : '';
+      if (msg.toLowerCase().includes('upgrade')) setUpgradeMsg(msg);
       setPlayingUrl(null);
     } finally {
       setLoadingRecording(false);
@@ -149,6 +152,24 @@ function CallsPageInner() {
 
   return (
     <div className="flex h-full">
+      {upgradeMsg && (
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-6">
+            <div className="flex items-center justify-between">
+              <h3 className="font-semibold text-primary-dark">Upgrade required</h3>
+              <button onClick={() => setUpgradeMsg('')} className="w-8 h-8 flex items-center justify-center rounded-lg text-primary-warm hover:bg-cream transition-colors">
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <p className="text-sm text-primary-warm mt-2">{upgradeMsg}</p>
+            <a href="/billing" className="inline-flex mt-5 bg-primary text-cream-light px-4 py-2 rounded-xl text-sm font-medium hover:bg-primary-dark transition-colors">
+              Upgrade
+            </a>
+          </div>
+        </div>
+      )}
       {/* ── Call list ── */}
       <div className="w-80 flex-shrink-0 border-r border-cream-dark flex flex-col bg-white">
         {/* Search + filter */}

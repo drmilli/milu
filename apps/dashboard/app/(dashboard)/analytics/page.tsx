@@ -37,24 +37,44 @@ export default function AnalyticsPage() {
   const [intents, setIntents] = useState<{ name: string; value: number }[]>([]);
   const [volume, setVolume] = useState<{ day: string; calls: number }[]>([]);
   const [loading, setLoading] = useState(true);
+  const [advancedLocked, setAdvancedLocked] = useState(false);
+  const [upgradeMsg, setUpgradeMsg] = useState('');
 
   useEffect(() => {
     if (!ready || !token) return;
     setLoading(true);
+    setAdvancedLocked(false);
     const from = new Date(Date.now() - range * 86400000).toISOString().split('T')[0];
 
-    Promise.all([
-      apiGet<Summary>(`/analytics/summary?from=${from}`, token),
-      apiGet<IntentRow[]>(`/analytics/intents`, token),
-      apiGet<DayVolume[]>(`/analytics/daily-volume?days=${range}`, token),
-    ]).then(([s, intentRows, vol]) => {
-      setSummary(s);
-      setIntents(intentRows.map(r => ({ name: fmtIntent(r.intent), value: r.count })));
-      setVolume(vol.map(r => ({
-        day: new Date(r.day).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-        calls: r.count,
-      })));
-    }).catch(() => null).finally(() => setLoading(false));
+    (async () => {
+      try {
+        const [s, vol] = await Promise.all([
+          apiGet<Summary>(`/analytics/summary?from=${from}`, token),
+          apiGet<DayVolume[]>(`/analytics/daily-volume?days=${range}`, token),
+        ]);
+        setSummary(s);
+        setVolume(vol.map(r => ({
+          day: new Date(r.day).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+          calls: r.count,
+        })));
+
+        try {
+          const intentRows = await apiGet<IntentRow[]>(`/analytics/intents`, token);
+          setIntents(intentRows.map(r => ({ name: fmtIntent(r.intent), value: r.count })));
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : '';
+          if (msg.toLowerCase().includes('upgrade')) {
+            setAdvancedLocked(true);
+            setIntents([]);
+          }
+        }
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : '';
+        if (msg.toLowerCase().includes('upgrade')) setUpgradeMsg(msg);
+      } finally {
+        setLoading(false);
+      }
+    })().catch(() => null);
   }, [ready, token, range]);
 
   const avgPerDay = summary && range > 0 ? (summary.totalCalls / range).toFixed(1) : '—';
@@ -63,6 +83,20 @@ export default function AnalyticsPage() {
   const busiestDay = volume.length
     ? volume.reduce((a, b) => (b.calls > a.calls ? b : a), volume[0]).day
     : '—';
+
+  if (upgradeMsg) {
+    return (
+      <div className="p-6 lg:p-8 max-w-2xl">
+        <div className="bg-warning/10 border border-warning/25 rounded-2xl p-6">
+          <h1 className="font-heading font-bold text-2xl text-primary-dark">Upgrade required</h1>
+          <p className="text-sm text-primary-warm mt-2">{upgradeMsg}</p>
+          <a href="/billing" className="inline-flex mt-5 bg-primary text-cream-light px-4 py-2 rounded-xl text-sm font-medium hover:bg-primary-dark transition-colors">
+            Upgrade
+          </a>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="p-6 lg:p-8 space-y-8">
@@ -107,7 +141,14 @@ export default function AnalyticsPage() {
         <div className="bg-white rounded-2xl border border-cream-dark p-6">
           <h2 className="font-semibold text-primary-dark mb-1">Top intents</h2>
           <p className="text-xs text-primary-warm mb-6">What callers are asking about</p>
-          {loading ? <Skeleton className="h-[200px] w-full" /> : intents.length === 0 ? (
+          {loading ? <Skeleton className="h-[200px] w-full" /> : advancedLocked ? (
+            <div className="h-[200px] flex flex-col items-center justify-center text-center gap-3">
+              <p className="text-sm text-primary-warm">Upgrade to Growth to unlock advanced analytics.</p>
+              <a href="/billing" className="bg-primary text-cream-light px-4 py-2 rounded-xl text-sm font-medium hover:bg-primary-dark transition-colors">
+                Upgrade
+              </a>
+            </div>
+          ) : intents.length === 0 ? (
             <div className="h-[200px] flex items-center justify-center text-sm text-primary-warm">No data yet</div>
           ) : (
             <ResponsiveContainer width="100%" height={200}>

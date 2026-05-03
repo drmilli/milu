@@ -6,6 +6,12 @@ import { authMiddleware } from '../middleware/auth';
 
 export const reportsRouter: Router = Router();
 reportsRouter.use(authMiddleware);
+reportsRouter.use((req, res, next) => {
+  if (req.user?.role === 'OWNER' && req.plan && req.plan.tier === 'ONE_TIME') {
+    return res.status(402).json({ error: 'Upgrade to access reports.' });
+  }
+  next();
+});
 
 function toCsv(headers: string[], rows: Record<string, unknown>[]): string {
   const escape = (v: unknown) => `"${String(v ?? '').replace(/"/g, '""')}"`;

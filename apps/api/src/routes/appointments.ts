@@ -11,6 +11,12 @@ import { audit } from '../services/audit';
 
 export const appointmentsRouter: Router = Router();
 appointmentsRouter.use(authMiddleware);
+appointmentsRouter.use((req, res, next) => {
+  if (req.user?.role === 'OWNER' && req.plan && !req.plan.features.ops) {
+    return res.status(402).json({ error: 'Upgrade to Growth to access Appointments.' });
+  }
+  next();
+});
 
 /**
  * @openapi

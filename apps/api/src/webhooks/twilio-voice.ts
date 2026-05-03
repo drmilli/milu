@@ -1,7 +1,7 @@
 import type { Request, Response } from 'express';
 import crypto from 'crypto';
 import twilio from 'twilio';
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, sql } from 'drizzle-orm';
 import { db, phoneNumbers, agentConfigs, businesses, calls, escalations, notifications, transcripts, knowledgeBases, knowledgeDocuments, businessSettings, contacts, orders, appointments, catalogItems } from '../db';
 import { logger } from '../config/logger';
 import { env } from '../config/env';
@@ -48,6 +48,57 @@ function mapAgentVoiceToOpenAi(voiceId: string | null | undefined): OpenAiTtsVoi
 function isUrgent(text: string) {
   const t = text.toLowerCase();
   return /\b(urgent|emergency|asap|immediately|right now|right away)\b/.test(t);
+}
+
+type EffectivePlan = {
+  billingTier: 'STARTER' | 'GROWTH' | 'ENTERPRISE';
+  tier: 'STARTER' | 'GROWTH' | 'ENTERPRISE';
+  isTrial: boolean;
+  features: {
+    ops: boolean;
+    callRecording: boolean;
+    whatsappNotifications: boolean;
+  };
+  limits: {
+    callsPerMonth: number | null;
+  };
+};
+
+function trialEndsAt(createdAt: Date) {
+  return new Date(createdAt.getTime() + 10 * 24 * 60 * 60 * 1000);
+}
+
+function buildPlanFromBusinessRow(biz: { subscriptionTier: string | null; createdAt: Date }): EffectivePlan {
+  const billingTier = (biz.subscriptionTier ?? 'STARTER') as 'STARTER' | 'GROWTH' | 'ENTERPRISE';
+  const now = new Date();
+  const isTrial = billingTier === 'STARTER' && now < trialEndsAt(biz.createdAt);
+  const tier: EffectivePlan['tier'] = isTrial ? 'GROWTH' : billingTier;
+
+  if (tier === 'STARTER') {
+    return {
+      billingTier,
+      tier,
+      isTrial,
+      features: { ops: false, callRecording: false, whatsappNotifications: false },
+      limits: { callsPerMonth: 200 },
+    };
+  }
+  if (tier === 'GROWTH') {
+    return {
+      billingTier,
+      tier,
+      isTrial,
+      features: { ops: true, callRecording: true, whatsappNotifications: true },
+      limits: { callsPerMonth: 500 },
+    };
+  }
+  return {
+    billingTier,
+    tier: 'ENTERPRISE',
+    isTrial: false,
+    features: { ops: true, callRecording: true, whatsappNotifications: true },
+    limits: { callsPerMonth: null },
+  };
 }
 
 function getTwilioClient() {
@@ -284,9 +335,9 @@ async function twilioCachePopPersistent(callId: string): Promise<string | null> 
   return twilioCachePop(callId);
 }
 
-function gatherTurn(callId: string, language: string, baseUrl: string, timeout = 3) {
+function gatherTurn(callId: string, language: string, baseUrl: string, timeout = 2) {
   const action = `${baseUrl}/webhooks/twilio/voice/gather?callId=${encodeURIComponent(callId)}`;
-  return `<Gather input="speech" action="${action}" method="POST" timeout="${timeout}" speechTimeout="auto" language="${language}"></Gather>`;
+  return `<Gather input="speech" action="${action}" method="POST" timeout="${timeout}" speechTimeout="1" language="${language}"></Gather>`;
 }
 
 function redirectToRespond(callId: string, baseUrl: string, attempt: number) {
@@ -306,9 +357,11 @@ async function computeTwilioTurn(callId: string, speechResult: string, baseUrl: 
     db.select({ speaker: transcripts.speaker, text: transcripts.text })
       .from(transcripts)
       .where(eq(transcripts.callId, callId))
-      .orderBy(transcripts.createdAt),
+      .orderBy(desc(transcripts.createdAt))
+      .limit(20),
     db.select().from(agentConfigs).where(eq(agentConfigs.businessId, callRow.businessId)).limit(1),
-    db.select({ name: businesses.name }).from(businesses).where(eq(businesses.id, callRow.businessId)).limit(1),
+    db.select({ name: businesses.name, subscriptionTier: businesses.subscriptionTier, createdAt: businesses.createdAt })
+      .from(businesses).where(eq(businesses.id, callRow.businessId)).limit(1),
     db.select({ faqs: knowledgeBases.faqs, websiteSummary: knowledgeBases.websiteSummary, escalationNumber: knowledgeBases.escalationNumber })
       .from(knowledgeBases).where(eq(knowledgeBases.businessId, callRow.businessId)).limit(1),
     db.select({ summary: knowledgeDocuments.summary })
@@ -317,7 +370,7 @@ async function computeTwilioTurn(callId: string, speechResult: string, baseUrl: 
   ]);
 
   const messages: ChatMessage[] = [
-    ...history.map(t => ({
+    ...history.slice().reverse().map(t => ({
       role: (t.speaker === 'agent' ? 'assistant' : 'user') as 'user' | 'assistant',
       content: t.text,
     })),
@@ -325,13 +378,14 @@ async function computeTwilioTurn(callId: string, speechResult: string, baseUrl: 
   ];
 
   const urgent = isUrgent(speechResult);
+  const plan = bizRow?.createdAt ? buildPlanFromBusinessRow({ subscriptionTier: bizRow.subscriptionTier ?? null, createdAt: bizRow.createdAt }) : null;
   const {
     reply,
     action,
     appointment: appt,
     order,
   } = urgent
-    ? { reply: 'Alright. I’ll get someone to help you right away.', action: 'escalate' as const, appointment: null, order: null }
+    ? { reply: 'I’ll get someone to help you right away.', action: 'escalate' as const, appointment: null, order: null }
     : await voiceChat(messages, {
       businessName: bizRow?.name ?? 'this business',
       agentName: agentRow?.name,
@@ -343,6 +397,7 @@ async function computeTwilioTurn(callId: string, speechResult: string, baseUrl: 
       agentTone: agentRow?.tone,
       escalationNumber: kbRow?.escalationNumber,
       fallbackMessage: agentRow?.fallbackMessage,
+      opsEnabled: plan?.features.ops ?? true,
     });
 
   await db.insert(transcripts).values({ callId, speaker: 'agent', text: reply });
@@ -368,7 +423,7 @@ async function computeTwilioTurn(callId: string, speechResult: string, baseUrl: 
     }
   }
 
-  if (appt?.scheduledAt) {
+  if ((plan?.features.ops ?? true) && appt?.scheduledAt) {
     const scheduledAt = new Date(appt.scheduledAt);
     if (!Number.isNaN(scheduledAt.getTime())) {
       const [row] = await db.insert(appointments).values({
@@ -387,7 +442,7 @@ async function computeTwilioTurn(callId: string, speechResult: string, baseUrl: 
     }
   }
 
-  if (order?.items?.length) {
+  if ((plan?.features.ops ?? true) && order?.items?.length) {
     const orderNumber = `ORD-${Date.now().toString(36).toUpperCase()}`;
     const totalAmount = typeof order.totalAmount === 'number'
       ? Math.max(0, Math.round(order.totalAmount))
@@ -412,26 +467,17 @@ async function computeTwilioTurn(callId: string, speechResult: string, baseUrl: 
   if (action === 'escalate') {
     await handleEscalation(callId, callRow.businessId, callRow.callerNumber ?? '', speechResult);
     await db.update(calls).set({ status: 'COMPLETED', resolution: 'HUMAN', endedAt: new Date() }).where(eq(calls.id, callId));
-    const audioUrl = await ttsUrl(reply, agentRow?.voiceId ?? 'amaka', baseUrl);
-    const speak = audioUrl
-      ? `<Play>${escapeXml(audioUrl)}</Play>`
-      : `<Say voice="alice" language="${language}">${escapeXml(reply)}</Say>`;
+    const speak = `<Say voice="alice" language="${language}">${escapeXml(reply)}</Say>`;
     return twiml(`${speak}<Hangup/>`);
   }
 
   if (action === 'end') {
     await db.update(calls).set({ status: 'COMPLETED', resolution: 'AI', endedAt: new Date() }).where(eq(calls.id, callId));
-    const audioUrl = await ttsUrl(reply, agentRow?.voiceId ?? 'amaka', baseUrl);
-    const speak = audioUrl
-      ? `<Play>${escapeXml(audioUrl)}</Play>`
-      : `<Say voice="alice" language="${language}">${escapeXml(reply)}</Say>`;
+    const speak = `<Say voice="alice" language="${language}">${escapeXml(reply)}</Say>`;
     return twiml(`${speak}<Hangup/>`);
   }
 
-  const audioUrl = await ttsUrl(reply, agentRow?.voiceId ?? 'amaka', baseUrl);
-  const speak = audioUrl
-    ? `<Play>${escapeXml(audioUrl)}</Play>`
-    : `<Say voice="alice" language="${language}">${escapeXml(reply)}</Say>`;
+  const speak = `<Say voice="alice" language="${language}">${escapeXml(reply)}</Say>`;
   return twiml(speak + gatherTurn(callId, language, baseUrl));
 }
 
@@ -468,8 +514,22 @@ export async function handleTwilioVoiceWebhook(req: Request, res: Response) {
 
     const [[agentRow], [bizRow]] = await Promise.all([
       db.select().from(agentConfigs).where(eq(agentConfigs.businessId, businessId)).limit(1),
-      db.select({ name: businesses.name }).from(businesses).where(eq(businesses.id, businessId)).limit(1),
+      db.select({ name: businesses.name, subscriptionTier: businesses.subscriptionTier, createdAt: businesses.createdAt })
+        .from(businesses).where(eq(businesses.id, businessId)).limit(1),
     ]);
+
+    if (bizRow?.createdAt) {
+      const plan = buildPlanFromBusinessRow({ subscriptionTier: bizRow.subscriptionTier ?? null, createdAt: bizRow.createdAt });
+      if (plan.limits.callsPerMonth != null) {
+        const startOfMonth = new Date(); startOfMonth.setDate(1); startOfMonth.setHours(0, 0, 0, 0);
+        const [count] = await db.select({ n: sql<number>`count(*)` }).from(calls)
+          .where(and(eq(calls.businessId, businessId), gte(calls.startedAt, startOfMonth)));
+        if (Number(count?.n ?? 0) >= plan.limits.callsPerMonth) {
+          const msg = 'Sorry, this business has reached its monthly call limit. Please call again later.';
+          return res.send(twiml(`<Say voice="alice">${escapeXml(msg)}</Say><Hangup/>`));
+        }
+      }
+    }
 
     const greeting = agentRow?.greeting ?? `Hello, thank you for calling ${bizRow?.name ?? 'us'}. How can I help you today?`;
     const businessHoursOnly = agentRow?.businessHoursOnly ?? false;
@@ -491,16 +551,15 @@ export async function handleTwilioVoiceWebhook(req: Request, res: Response) {
     logger.info({ businessId, fromNumber, toNumber, callSid, callId }, 'Inbound Twilio call answered');
 
     const enableRecording = agentRow?.enableRecording ?? true;
-    const record = enableRecording
+    const plan = bizRow?.createdAt ? buildPlanFromBusinessRow({ subscriptionTier: bizRow.subscriptionTier ?? null, createdAt: bizRow.createdAt }) : null;
+    const canRecord = (plan?.features.callRecording ?? true) && enableRecording;
+    const record = canRecord
       ? `<Start><Record recordingStatusCallback="${escapeXml(`${baseUrl}/webhooks/twilio/voice/recording?callId=${encodeURIComponent(callId)}`)}" recordingStatusCallbackMethod="POST" recordingChannels="dual" /></Start>`
       : '';
 
-    const audioUrl = await ttsUrl(greeting, agentRow?.voiceId ?? 'amaka', baseUrl);
-    const speak = audioUrl
-      ? `<Play>${escapeXml(audioUrl)}</Play>`
-      : `<Say voice="alice" language="${language}">${escapeXml(greeting)}</Say>`;
+    const speak = `<Say voice="alice" language="${language}">${escapeXml(greeting)}</Say>`;
 
-    const xml = twiml(record + speak + gatherTurn(callId, language, baseUrl));
+    const xml = twiml(record + speak + gatherTurn(callId, language, baseUrl, 2));
     return res.send(xml);
   } catch (err) {
     logger.error({ err, toNumber, fromNumber }, 'Error handling Twilio voice webhook');
@@ -528,18 +587,23 @@ export async function handleTwilioVoiceGather(req: Request, res: Response) {
   try {
     await db.insert(transcripts).values({ callId, speaker: 'caller', text: speechResult });
 
-    computeTwilioTurn(callId, speechResult, baseUrl)
-      .then((xml) => twilioCacheSetPersistent(callId, xml))
-      .catch(() => twilioCacheSetPersistent(callId, retry));
+    const compute = computeTwilioTurn(callId, speechResult, baseUrl)
+      .then(async (xml) => {
+        await twilioCacheSetPersistent(callId, xml);
+        return xml;
+      })
+      .catch(async () => {
+        await twilioCacheSetPersistent(callId, retry);
+        return '';
+      });
 
-    const thinkingText = isCatalogQuestion(speechResult) ? 'Hold on, let me check.' : 'Alright.';
-    const thinking = twiml(
-      `<Say voice="alice" language="${language}">${escapeXml(thinkingText)}</Say>` +
-      '<Pause length="1"/>' +
-      redirectToRespond(callId, baseUrl, 0),
-    );
+    const quick = await Promise.race<string | null>([
+      compute,
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 3500)),
+    ]);
 
-    return res.send(thinking);
+    if (quick) return res.send(quick);
+    return res.send(twiml('<Pause length="1"/>' + redirectToRespond(callId, baseUrl, 0)));
   } catch (err) {
     logger.error({ err, callId }, 'Error handling Twilio voice gather');
     return res.send(retry);
@@ -570,13 +634,20 @@ export async function handleTwilioVoiceRespond(req: Request, res: Response) {
 }
 
 async function handleEscalation(callId: string, businessId: string, callerNumber: string, summary: string) {
+  const [biz] = await db
+    .select({ subscriptionTier: businesses.subscriptionTier, createdAt: businesses.createdAt })
+    .from(businesses)
+    .where(eq(businesses.id, businessId))
+    .limit(1);
+  const plan = biz?.createdAt ? buildPlanFromBusinessRow({ subscriptionTier: biz.subscriptionTier ?? null, createdAt: biz.createdAt }) : null;
+
   const [existing] = await db.select({ id: escalations.id }).from(escalations).where(eq(escalations.callId, callId)).limit(1);
   if (!existing) {
     await db.insert(escalations).values({ businessId, callId, reason: 'Agent escalation', summary: summary.slice(0, 600) });
   }
   const [settings] = await db.select({ whatsappNumber: businessSettings.whatsappNumber, whatsappVerified: businessSettings.whatsappVerified })
     .from(businessSettings).where(eq(businessSettings.businessId, businessId)).limit(1);
-  if (settings?.whatsappVerified && settings.whatsappNumber) {
+  if ((plan?.features.whatsappNotifications ?? true) && settings?.whatsappVerified && settings.whatsappNumber) {
     await sendEscalationAlert(settings.whatsappNumber, callerNumber, summary).catch(() => null);
   }
   await notifyBusinessOwners(businessId, 'Call Escalated', `Caller ${callerNumber} needs your attention. ${summary}`);
@@ -602,12 +673,20 @@ export async function handleTwilioVoiceEnd(req: Request, res: Response) {
     if (idToUpdate && callSid) {
       const client = getTwilioClient();
       if (client) {
-        const recordings = await client.recordings.list({ callSid, limit: 1 }).catch(() => []);
-        const recordingSid = recordings?.[0]?.sid;
-        const mediaUrl = recordingSid ? twilioRecordingMediaUrl(recordingSid) : null;
-        if (mediaUrl) {
-          await db.update(calls).set({ recordingUrl: mediaUrl }).where(and(eq(calls.id, idToUpdate), sql`${calls.recordingUrl} is null`));
-          logger.info({ callId: idToUpdate, recordingSid }, 'Twilio call recording saved');
+        const [row] = await db.select({ businessId: calls.businessId }).from(calls).where(eq(calls.id, idToUpdate)).limit(1);
+        if (row?.businessId) {
+          const [biz] = await db.select({ subscriptionTier: businesses.subscriptionTier, createdAt: businesses.createdAt })
+            .from(businesses).where(eq(businesses.id, row.businessId)).limit(1);
+          const plan = biz?.createdAt ? buildPlanFromBusinessRow({ subscriptionTier: biz.subscriptionTier ?? null, createdAt: biz.createdAt }) : null;
+          if (plan?.features.callRecording ?? true) {
+            const recordings = await client.recordings.list({ callSid, limit: 1 }).catch(() => []);
+            const recordingSid = recordings?.[0]?.sid;
+            const mediaUrl = recordingSid ? twilioRecordingMediaUrl(recordingSid) : null;
+            if (mediaUrl) {
+              await db.update(calls).set({ recordingUrl: mediaUrl }).where(and(eq(calls.id, idToUpdate), sql`${calls.recordingUrl} is null`));
+              logger.info({ callId: idToUpdate, recordingSid }, 'Twilio call recording saved');
+            }
+          }
         }
       }
     }
@@ -633,6 +712,14 @@ export async function handleTwilioVoiceRecording(req: Request, res: Response) {
   if (!mediaUrl) return;
 
   try {
+    const [row] = await db.select({ businessId: calls.businessId }).from(calls).where(eq(calls.id, callId)).limit(1);
+    if (row?.businessId) {
+      const [biz] = await db.select({ subscriptionTier: businesses.subscriptionTier, createdAt: businesses.createdAt })
+        .from(businesses).where(eq(businesses.id, row.businessId)).limit(1);
+      const plan = biz?.createdAt ? buildPlanFromBusinessRow({ subscriptionTier: biz.subscriptionTier ?? null, createdAt: biz.createdAt }) : null;
+      if (plan && !plan.features.callRecording) return;
+    }
+
     const bytes = await fetchTwilioRecordingBytes(mediaUrl);
     if (!bytes) return;
 

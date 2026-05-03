@@ -1,5 +1,5 @@
 import type { Request, Response } from 'express';
-import { eq } from 'drizzle-orm';
+import { eq, desc } from 'drizzle-orm';
 import { db, phoneNumbers, agentConfigs, businesses, calls, knowledgeBases, knowledgeDocuments, transcripts } from '../db';
 import { logger } from '../config/logger';
 import { env } from '../config/env';
@@ -136,9 +136,11 @@ export async function handleInfobipVoiceInput(req: Request, res: Response) {
       db.select({ speaker: transcripts.speaker, text: transcripts.text })
         .from(transcripts)
         .where(eq(transcripts.callId, callDbId))
-        .orderBy(transcripts.createdAt),
+        .orderBy(desc(transcripts.createdAt))
+        .limit(20),
       db.select().from(agentConfigs).where(eq(agentConfigs.businessId, callRow.businessId)).limit(1),
-      db.select({ name: businesses.name }).from(businesses).where(eq(businesses.id, callRow.businessId)).limit(1),
+      db.select({ name: businesses.name, subscriptionTier: businesses.subscriptionTier, createdAt: businesses.createdAt })
+        .from(businesses).where(eq(businesses.id, callRow.businessId)).limit(1),
       db.select({
         faqs: knowledgeBases.faqs,
         websiteSummary: knowledgeBases.websiteSummary,
@@ -153,12 +155,16 @@ export async function handleInfobipVoiceInput(req: Request, res: Response) {
     await db.insert(transcripts).values({ callId: callDbId, speaker: 'caller', text: callerText });
 
     const messages: ChatMessage[] = [
-      ...history.map(t => ({
+      ...history.slice().reverse().map(t => ({
         role: (t.speaker === 'agent' ? 'assistant' : 'user') as 'user' | 'assistant',
         content: t.text,
       })),
       { role: 'user' as const, content: callerText },
     ];
+
+    const billingTier = (bizRow?.subscriptionTier ?? 'STARTER') as 'STARTER' | 'GROWTH' | 'ENTERPRISE';
+    const isTrial = billingTier === 'STARTER' && !!bizRow?.createdAt && new Date() < new Date(bizRow.createdAt.getTime() + 10 * 24 * 60 * 60 * 1000);
+    const opsEnabled = isTrial || billingTier !== 'STARTER';
 
     const { reply, action } = await voiceChat(messages, {
       businessName: bizRow?.name ?? 'this business',
@@ -167,6 +173,7 @@ export async function handleInfobipVoiceInput(req: Request, res: Response) {
       docSummaries: kbDocs.map(d => d.summary ?? '').filter(Boolean),
       agentTone: agentRow?.tone,
       escalationNumber: kbRow?.escalationNumber,
+      opsEnabled,
     });
 
     logger.info({ callDbId, action, reply: reply.slice(0, 120) }, 'AI voice reply');

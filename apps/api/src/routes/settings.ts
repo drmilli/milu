@@ -10,6 +10,12 @@ import { env } from '../config/env';
 
 export const settingsRouter: Router = Router();
 settingsRouter.use(authMiddleware);
+settingsRouter.use((req, res, next) => {
+  if (req.user?.role === 'OWNER' && req.plan && req.plan.tier === 'ONE_TIME') {
+    return res.status(402).json({ error: 'Upgrade to access settings.' });
+  }
+  next();
+});
 
 function maskPhone(value: string) {
   const last4 = value.slice(-4);

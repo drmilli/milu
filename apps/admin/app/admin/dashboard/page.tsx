@@ -32,6 +32,28 @@ interface RecentSignup {
   joinedAt: string;
 }
 
+interface ContactSubmission {
+  id: string;
+  name: string;
+  email: string;
+  businessName?: string | null;
+  reason: string;
+  message: string;
+  createdAt: string;
+}
+
+interface PhoneNumberRequest {
+  id: string;
+  businessId: string;
+  businessName: string;
+  quantity: number;
+  amountUsd: number;
+  checkoutUrl: string;
+  note?: string | null;
+  status: string;
+  createdAt: string;
+}
+
 const planColors: Record<string, string> = {
   Starter: 'bg-primary/10 text-primary',
   Growth: 'bg-success/10 text-success',
@@ -63,6 +85,8 @@ export default function AdminDashboardPage() {
   const [revenue, setRevenue] = useState<RevenuePoint[]>([]);
   const [callVolume, setCallVolume] = useState<CallVolumePoint[]>([]);
   const [recentSignups, setRecentSignups] = useState<RecentSignup[]>([]);
+  const [recentContacts, setRecentContacts] = useState<ContactSubmission[]>([]);
+  const [recentNumberRequests, setRecentNumberRequests] = useState<PhoneNumberRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -75,13 +99,17 @@ export default function AdminDashboardPage() {
       adminGet<RevenuePoint[]>('/admin/analytics/revenue', token),
       adminGet<CallVolumePoint[]>('/admin/analytics/call-volume', token),
       adminGet<RecentSignup[]>('/admin/businesses/recent', token),
+      adminGet<ContactSubmission[]>('/admin/contact-submissions/recent?limit=8', token),
+      adminGet<PhoneNumberRequest[]>('/admin/phone-number-requests/recent?limit=8', token),
     ]).then((results) => {
-      const [statsRes, revRes, volRes, signupsRes] = results;
+      const [statsRes, revRes, volRes, signupsRes, contactsRes, numberReqRes] = results;
 
       if (statsRes.status === 'fulfilled') setStats(statsRes.value);
       if (revRes.status === 'fulfilled') setRevenue(revRes.value);
       if (volRes.status === 'fulfilled') setCallVolume(volRes.value);
       if (signupsRes.status === 'fulfilled') setRecentSignups(signupsRes.value);
+      if (contactsRes.status === 'fulfilled') setRecentContacts(contactsRes.value);
+      if (numberReqRes.status === 'fulfilled') setRecentNumberRequests(numberReqRes.value);
 
       const failed = results.filter(r => r.status === 'rejected').length;
       if (failed) setError('Some dashboard data failed to load. Check API URL, admin token, and server logs.');
@@ -203,6 +231,103 @@ export default function AdminDashboardPage() {
                 <div className="flex items-center gap-3">
                   <span className={`text-xs font-medium px-2.5 py-0.5 rounded-full ${planColors[b.plan] ?? 'bg-cream-dark text-primary-warm'}`}>{b.plan}</span>
                   <span className="text-xs text-primary-warm">{timeAgo(b.joinedAt)}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Contact submissions */}
+      <div className="bg-white rounded-2xl border border-cream-dark">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-cream-dark">
+          <h2 className="text-sm font-semibold text-primary-dark">Website Contact</h2>
+          <span className="text-xs text-primary-warm">Latest</span>
+        </div>
+        {loading ? (
+          <div className="divide-y divide-cream-dark">
+            {[1,2,3].map(i => (
+              <div key={i} className="px-6 py-3.5 animate-pulse">
+                <div className="h-4 bg-cream rounded w-56 mb-2" />
+                <div className="h-3 bg-cream rounded w-40" />
+              </div>
+            ))}
+          </div>
+        ) : recentContacts.length === 0 ? (
+          <div className="px-6 py-6 text-sm text-primary-warm">No messages yet.</div>
+        ) : (
+          <div className="divide-y divide-cream-dark">
+            {recentContacts.map((c) => (
+              <div key={c.id} className="px-6 py-4">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-primary-dark truncate">
+                      {c.name} {c.businessName ? <span className="text-primary-warm font-normal">· {c.businessName}</span> : null}
+                    </p>
+                    <a href={`mailto:${c.email}`} className="text-xs text-primary hover:underline">{c.email}</a>
+                    <p className="text-xs text-primary-warm mt-1">
+                      {c.reason.toUpperCase()} · {timeAgo(c.createdAt)}
+                    </p>
+                    <p className="text-sm text-primary-warm mt-2 leading-relaxed">
+                      {c.message.length > 180 ? c.message.slice(0, 180) + '…' : c.message}
+                    </p>
+                  </div>
+                  <a
+                    href={`mailto:${c.email}?subject=${encodeURIComponent('Re: Milu inquiry')}`}
+                    className="flex-shrink-0 bg-primary text-cream-light px-3 py-2 rounded-xl text-xs font-medium hover:bg-primary-dark transition-colors"
+                  >
+                    Reply
+                  </a>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Phone number requests */}
+      <div className="bg-white rounded-2xl border border-cream-dark">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-cream-dark">
+          <h2 className="text-sm font-semibold text-primary-dark">Phone Number Requests</h2>
+          <span className="text-xs text-primary-warm">Latest</span>
+        </div>
+        {loading ? (
+          <div className="divide-y divide-cream-dark">
+            {[1,2,3].map(i => (
+              <div key={i} className="px-6 py-3.5 animate-pulse">
+                <div className="h-4 bg-cream rounded w-56 mb-2" />
+                <div className="h-3 bg-cream rounded w-40" />
+              </div>
+            ))}
+          </div>
+        ) : recentNumberRequests.length === 0 ? (
+          <div className="px-6 py-6 text-sm text-primary-warm">No requests yet.</div>
+        ) : (
+          <div className="divide-y divide-cream-dark">
+            {recentNumberRequests.map((r) => (
+              <div key={r.id} className="px-6 py-4">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-primary-dark truncate">
+                      {r.businessName} <span className="text-primary-warm font-normal">· {r.quantity} number{r.quantity !== 1 ? 's' : ''}</span>
+                    </p>
+                    <p className="text-xs text-primary-warm mt-1">
+                      ${r.amountUsd} each · {r.status} · {timeAgo(r.createdAt)}
+                    </p>
+                    {r.note ? (
+                      <p className="text-sm text-primary-warm mt-2 leading-relaxed">
+                        {r.note.length > 180 ? r.note.slice(0, 180) + '…' : r.note}
+                      </p>
+                    ) : null}
+                  </div>
+                  <a
+                    href={r.checkoutUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex-shrink-0 bg-primary text-cream-light px-3 py-2 rounded-xl text-xs font-medium hover:bg-primary-dark transition-colors"
+                  >
+                    Checkout
+                  </a>
                 </div>
               </div>
             ))}

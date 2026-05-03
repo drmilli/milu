@@ -217,6 +217,7 @@ export default function OrdersPage() {
 
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
+  const [upgradeMsg, setUpgradeMsg] = useState('');
   const [filter, setFilter] = useState<'all' | Status>('all');
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState<Order | null>(null);
@@ -226,7 +227,10 @@ export default function OrdersPage() {
     if (!token) return;
     apiGet<{ orders: ApiOrder[] }>('/orders', token)
       .then(res => setOrders((res.orders ?? []).map(fromApiOrder)))
-      .catch(() => null)
+      .catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : '';
+        if (msg.toLowerCase().includes('upgrade')) setUpgradeMsg(msg);
+      })
       .finally(() => setLoading(false));
   }, [token]);
 
@@ -263,6 +267,20 @@ export default function OrdersPage() {
   }
 
   const revenue = orders.filter(o => o.status !== 'cancelled').reduce((s, o) => s + o.total, 0);
+
+  if (upgradeMsg) {
+    return (
+      <div className="p-6 lg:p-8 max-w-2xl">
+        <div className="bg-warning/10 border border-warning/25 rounded-2xl p-6">
+          <h1 className="font-heading font-bold text-2xl text-primary-dark">Upgrade required</h1>
+          <p className="text-sm text-primary-warm mt-2">{upgradeMsg}</p>
+          <a href="/billing" className="inline-flex mt-5 bg-primary text-cream-light px-4 py-2 rounded-xl text-sm font-medium hover:bg-primary-dark transition-colors">
+            Upgrade
+          </a>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-full">

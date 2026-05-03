@@ -219,6 +219,7 @@ export default function TeamPage() {
   const [members, setMembers] = useState<Member[]>([]);
   const [loading, setLoading] = useState(true);
   const [opError, setOpError] = useState('');
+  const [upgradeMsg, setUpgradeMsg] = useState('');
 
   const [showAdd, setShowAdd] = useState(false);
   const [addForm, setAddForm] = useState({ firstName: '', lastName: '', email: '', role: 'ADMIN' as Member['role'] });
@@ -237,11 +238,28 @@ export default function TeamPage() {
     if (!token || !businessId) return;
     apiGet<Member[]>(`/businesses/${businessId}/team`, token)
       .then(setMembers)
-      .catch(() => null)
+      .catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : '';
+        if (msg.toLowerCase().includes('upgrade')) setUpgradeMsg(msg);
+      })
       .finally(() => setLoading(false));
   }, [token, businessId]);
 
   useEffect(() => { if (ready) load(); }, [ready, load]);
+
+  if (upgradeMsg) {
+    return (
+      <div className="p-6 lg:p-8 max-w-2xl">
+        <div className="bg-warning/10 border border-warning/25 rounded-2xl p-6">
+          <h1 className="font-heading font-bold text-2xl text-primary-dark">Upgrade required</h1>
+          <p className="text-sm text-primary-warm mt-2">{upgradeMsg}</p>
+          <a href="/billing" className="inline-flex mt-5 bg-primary text-cream-light px-4 py-2 rounded-xl text-sm font-medium hover:bg-primary-dark transition-colors">
+            Upgrade
+          </a>
+        </div>
+      </div>
+    );
+  }
 
   async function inviteMember() {
     if (!addForm.email.trim()) return;

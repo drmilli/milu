@@ -3,7 +3,7 @@ import { relations } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 
 // ─── Enums ────────────────────────────────────────────────────────────────────
-export const subscriptionTierEnum = pgEnum('subscription_tier', ['STARTER', 'GROWTH', 'ENTERPRISE']);
+export const subscriptionTierEnum = pgEnum('subscription_tier', ['STARTER', 'GROWTH', 'ENTERPRISE', 'ONE_TIME']);
 export const callStatusEnum = pgEnum('call_status', ['ACTIVE', 'COMPLETED', 'FAILED']);
 export const resolutionEnum = pgEnum('resolution_type', ['AI', 'HUMAN', 'ABANDONED']);
 export const intentEnum = pgEnum('intent_type', ['FAQ', 'BOOKING', 'ORDER_STATUS', 'COMPLAINT', 'ESCALATE', 'UNKNOWN']);
@@ -312,6 +312,33 @@ export const phoneVerifications = pgTable('phone_verifications', {
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 });
 
+export const contactSubmissions = pgTable('contact_submissions', {
+  id: text('id').primaryKey().$defaultFn(() => randomUUID()),
+  firstName: text('first_name').notNull(),
+  lastName: text('last_name').notNull(),
+  email: text('email').notNull(),
+  businessName: text('business_name'),
+  reason: text('reason').notNull(),
+  message: text('message').notNull(),
+  pageUrl: text('page_url'),
+  ipAddress: text('ip_address'),
+  userAgent: text('user_agent'),
+  status: text('status').default('NEW').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+export const phoneNumberRequests = pgTable('phone_number_requests', {
+  id: text('id').primaryKey().$defaultFn(() => randomUUID()),
+  businessId: text('business_id').notNull().references(() => businesses.id, { onDelete: 'cascade' }),
+  requestedByUserId: text('requested_by_user_id').references(() => users.id, { onDelete: 'set null' }),
+  quantity: integer('quantity').default(1).notNull(),
+  amountUsd: integer('amount_usd').default(3).notNull(),
+  checkoutUrl: text('checkout_url').notNull(),
+  note: text('note'),
+  status: text('status').default('NEW').notNull(), // NEW | IN_REVIEW | FULFILLED | REJECTED
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
 // ─── Relations ────────────────────────────────────────────────────────────────
 export const businessesRelations = relations(businesses, ({ many, one }) => ({
   phoneNumbers: many(phoneNumbers),
@@ -326,6 +353,7 @@ export const businessesRelations = relations(businesses, ({ many, one }) => ({
   catalogItems: many(catalogItems),
   escalations: many(escalations),
   webhookConfigs: many(webhookConfigs),
+  phoneNumberRequests: many(phoneNumberRequests),
 }));
 
 export const usersRelations = relations(users, ({ one }) => ({
@@ -386,3 +414,5 @@ export type AuditLog = typeof auditLogs.$inferSelect;
 export type ApiKey = typeof apiKeys.$inferSelect;
 export type BusinessSettings = typeof businessSettings.$inferSelect;
 export type PhoneVerification = typeof phoneVerifications.$inferSelect;
+export type ContactSubmission = typeof contactSubmissions.$inferSelect;
+export type PhoneNumberRequest = typeof phoneNumberRequests.$inferSelect;

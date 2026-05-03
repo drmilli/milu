@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { eq, desc, ilike, and, or, sql, gte, inArray, lt } from 'drizzle-orm';
 import bcrypt from 'bcryptjs';
 import twilio from 'twilio';
-import { db, businesses, users, calls, escalations, phoneNumbers, agentConfigs, notifications, catalogItems } from '../db';
+import { db, businesses, users, calls, escalations, phoneNumbers, agentConfigs, notifications, catalogItems, contactSubmissions, phoneNumberRequests } from '../db';
 import { logger } from '../config/logger';
 import { adminGuard } from '../middleware/admin-guard';
 import { signAdminToken, verifyAdminToken } from '../utils/jwt';
@@ -103,7 +103,7 @@ adminRouter.get('/stats', async (_req, res, next) => {
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
     const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
     const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const trialThreshold = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000);
+    const trialThreshold = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000);
 
     const [
       bizCount, activeBiz, newBizThisMonth,
@@ -220,7 +220,7 @@ adminRouter.get('/businesses', async (req, res, next) => {
       ]);
       const owner = ownerRows[0];
       const planMrr: Record<string, number> = { STARTER: 15000, GROWTH: 45000, ENTERPRISE: 0 };
-      const isTrial = b.subscriptionTier === 'STARTER' && (Date.now() - new Date(b.createdAt).getTime()) < 14 * 24 * 60 * 60 * 1000;
+      const isTrial = b.subscriptionTier === 'STARTER' && (Date.now() - new Date(b.createdAt).getTime()) < 10 * 24 * 60 * 60 * 1000;
       return {
         id: b.id,
         name: b.name,
@@ -269,6 +269,179 @@ adminRouter.get('/businesses/recent', async (_req, res, next) => {
         ? `${r.ownerFirstName} ${r.ownerLastName ?? ''}`.trim()
         : (r.ownerEmail ?? 'Unknown'),
     })));
+  } catch (err) { next(err); }
+});
+
+adminRouter.get('/contact-submissions/recent', async (req, res, next) => {
+  try {
+    const { limit } = z.object({ limit: z.coerce.number().min(1).max(50).default(10) }).parse(req.query);
+    const rows = await db.select({
+      id: contactSubmissions.id,
+      firstName: contactSubmissions.firstName,
+      lastName: contactSubmissions.lastName,
+      email: contactSubmissions.email,
+      businessName: contactSubmissions.businessName,
+      reason: contactSubmissions.reason,
+      message: contactSubmissions.message,
+      status: contactSubmissions.status,
+      createdAt: contactSubmissions.createdAt,
+    }).from(contactSubmissions).orderBy(desc(contactSubmissions.createdAt)).limit(limit);
+
+    return res.json(rows.map(r => ({
+      id: r.id,
+      name: `${r.firstName} ${r.lastName}`.trim(),
+      email: r.email,
+      businessName: r.businessName,
+      reason: r.reason,
+      message: r.message,
+      status: r.status,
+      createdAt: r.createdAt.toISOString(),
+    })));
+  } catch (err) { next(err); }
+});
+
+adminRouter.get('/contact-submissions', async (req, res, next) => {
+  try {
+    const { page, limit, q } = z.object({
+      page: z.coerce.number().min(1).default(1),
+      limit: z.coerce.number().min(1).max(100).default(30),
+      q: z.string().optional(),
+    }).parse(req.query);
+
+    const where = q
+      ? or(
+        ilike(contactSubmissions.email, `%${q}%`),
+        ilike(contactSubmissions.firstName, `%${q}%`),
+        ilike(contactSubmissions.lastName, `%${q}%`),
+        ilike(contactSubmissions.businessName, `%${q}%`),
+        ilike(contactSubmissions.message, `%${q}%`),
+      )
+      : undefined;
+
+    const [rows, countResult] = await Promise.all([
+      db.select().from(contactSubmissions).where(where).orderBy(desc(contactSubmissions.createdAt)).limit(limit).offset((page - 1) * limit),
+      db.select({ n: sql<number>`count(*)` }).from(contactSubmissions).where(where),
+    ]);
+
+    return res.json({
+      page,
+      limit,
+      total: Number(countResult[0]?.n ?? 0),
+      items: rows.map(r => ({
+        id: r.id,
+        name: `${r.firstName} ${r.lastName}`.trim(),
+        email: r.email,
+        businessName: r.businessName,
+        reason: r.reason,
+        message: r.message,
+        status: r.status,
+        createdAt: r.createdAt.toISOString(),
+      })),
+    });
+  } catch (err) { next(err); }
+});
+
+adminRouter.get('/phone-number-requests/recent', async (req, res, next) => {
+  try {
+    const { limit } = z.object({ limit: z.coerce.number().min(1).max(50).default(10) }).parse(req.query);
+    const rows = await db.select({
+      id: phoneNumberRequests.id,
+      businessId: phoneNumberRequests.businessId,
+      businessName: businesses.name,
+      quantity: phoneNumberRequests.quantity,
+      amountUsd: phoneNumberRequests.amountUsd,
+      checkoutUrl: phoneNumberRequests.checkoutUrl,
+      note: phoneNumberRequests.note,
+      status: phoneNumberRequests.status,
+      createdAt: phoneNumberRequests.createdAt,
+    })
+      .from(phoneNumberRequests)
+      .leftJoin(businesses, eq(businesses.id, phoneNumberRequests.businessId))
+      .orderBy(desc(phoneNumberRequests.createdAt))
+      .limit(limit);
+
+    return res.json(rows.map(r => ({
+      id: r.id,
+      businessId: r.businessId,
+      businessName: r.businessName ?? 'Unknown',
+      quantity: r.quantity,
+      amountUsd: r.amountUsd,
+      checkoutUrl: r.checkoutUrl,
+      note: r.note,
+      status: r.status,
+      createdAt: r.createdAt.toISOString(),
+    })));
+  } catch (err) { next(err); }
+});
+
+adminRouter.get('/phone-number-requests', async (req, res, next) => {
+  try {
+    const { page, limit, q, status } = z.object({
+      page: z.coerce.number().min(1).default(1),
+      limit: z.coerce.number().min(1).max(100).default(30),
+      q: z.string().optional(),
+      status: z.string().optional(),
+    }).parse(req.query);
+
+    const conditions: any[] = [];
+    if (status) conditions.push(eq(phoneNumberRequests.status, status));
+    if (q) {
+      conditions.push(or(
+        ilike(businesses.name, `%${q}%`),
+        ilike(phoneNumberRequests.note, `%${q}%`),
+      ));
+    }
+    const where = conditions.length ? and(...conditions) : undefined;
+
+    const [rows, countResult] = await Promise.all([
+      db.select({
+        id: phoneNumberRequests.id,
+        businessId: phoneNumberRequests.businessId,
+        businessName: businesses.name,
+        quantity: phoneNumberRequests.quantity,
+        amountUsd: phoneNumberRequests.amountUsd,
+        checkoutUrl: phoneNumberRequests.checkoutUrl,
+        note: phoneNumberRequests.note,
+        status: phoneNumberRequests.status,
+        createdAt: phoneNumberRequests.createdAt,
+      })
+        .from(phoneNumberRequests)
+        .leftJoin(businesses, eq(businesses.id, phoneNumberRequests.businessId))
+        .where(where)
+        .orderBy(desc(phoneNumberRequests.createdAt))
+        .limit(limit)
+        .offset((page - 1) * limit),
+      db.select({ n: sql<number>`count(*)` })
+        .from(phoneNumberRequests)
+        .leftJoin(businesses, eq(businesses.id, phoneNumberRequests.businessId))
+        .where(where),
+    ]);
+
+    return res.json({
+      page,
+      limit,
+      total: Number(countResult[0]?.n ?? 0),
+      items: rows.map(r => ({
+        id: r.id,
+        businessId: r.businessId,
+        businessName: r.businessName ?? 'Unknown',
+        quantity: r.quantity,
+        amountUsd: r.amountUsd,
+        checkoutUrl: r.checkoutUrl,
+        note: r.note,
+        status: r.status,
+        createdAt: r.createdAt.toISOString(),
+      })),
+    });
+  } catch (err) { next(err); }
+});
+
+adminRouter.patch('/phone-number-requests/:id', async (req, res, next) => {
+  try {
+    const { status } = z.object({ status: z.enum(['NEW', 'IN_REVIEW', 'FULFILLED', 'REJECTED']) }).parse(req.body);
+    const [updated] = await db.update(phoneNumberRequests).set({ status }).where(eq(phoneNumberRequests.id, req.params.id)).returning();
+    if (!updated) return res.status(404).json({ error: 'Request not found' });
+    return res.json({ ok: true });
   } catch (err) { next(err); }
 });
 
