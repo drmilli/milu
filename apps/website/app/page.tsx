@@ -25,7 +25,7 @@ const jsonLd = {
         'AI voice customer service platform for African businesses. Answers calls 24/7, handles FAQs, books appointments, and escalates to humans when needed.',
       foundingLocation: { '@type': 'Place', name: 'Nigeria' },
       areaServed: 'Africa',
-      sameAs: ['https://twitter.com/miluai'],
+      sameAs: ['https://twitter.com/miluAi16078'],
       contactPoint: {
         '@type': 'ContactPoint',
         email: 'hello@miluai.app',
@@ -52,8 +52,8 @@ const jsonLd = {
       operatingSystem: 'Web',
       url: siteUrl,
       offers: [
-        { '@type': 'Offer', name: 'Starter', price: '15000', priceCurrency: 'NGN', billingIncrement: 'P1M' },
-        { '@type': 'Offer', name: 'Growth', price: '45000', priceCurrency: 'NGN', billingIncrement: 'P1M' },
+        { '@type': 'Offer', name: 'Starter', price: '25', priceCurrency: 'USD', billingIncrement: 'P1M' },
+        { '@type': 'Offer', name: 'Growth', price: '45', priceCurrency: 'USD', billingIncrement: 'P1M' },
       ],
       description:
         'AI voice agent that answers your business phone calls 24/7 — built for African businesses on Africa\'s Talking infrastructure.',

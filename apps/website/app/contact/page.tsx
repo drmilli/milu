@@ -36,7 +36,7 @@ const channels = [
       </svg>
     ),
     label: 'Office',
-    value: 'Lagos, Nigeria',
+    value: 'Abuja, Nigeria',
     href: null,
     note: 'Remote-first team',
   },

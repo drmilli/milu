@@ -4,7 +4,7 @@ import { dashboardUrl } from '../../lib/config';
 const plans = [
   {
     name: 'Starter',
-    price: '₦15,000',
+    price: '$25',
     period: '/month',
     description: 'Perfect for small businesses getting started.',
     features: ['200 calls/month', 'FAQ handling', 'Basic analytics', 'Email support'],
@@ -13,7 +13,7 @@ const plans = [
   },
   {
     name: 'Growth',
-    price: '₦45,000',
+    price: '$45',
     period: '/month',
     description: 'For growing businesses that need more power.',
     features: ['1,000 calls/month', 'Booking + escalation', 'Full analytics', 'WhatsApp alerts', 'Priority support'],
