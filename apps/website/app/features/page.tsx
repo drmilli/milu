@@ -4,11 +4,11 @@ import { dashboardUrl } from '../../lib/config';
 
 export const metadata: Metadata = {
   title: 'Features',
-  description: 'Everything your business phone line needs — AI-powered, built for Africa. Real-time voice AI, multilingual support, appointment booking, and call analytics.',
+  description: 'Everything your business phone line needs — AI-powered, built for Africa. Voice AI, knowledge base, call logs & transcripts, team access, phone numbers, and admin tools.',
   alternates: { canonical: '/features' },
   openGraph: {
     title: 'Milu Features — AI Voice Built for African Businesses',
-    description: 'Real-time AI responses, natural voice, multilingual support, appointment booking, and full call analytics. Built for Africa.',
+    description: 'Voice AI, knowledge base, call logs & transcripts, team access, phone numbers, and admin tools. Built for Africa.',
   },
 };
 
@@ -44,6 +44,16 @@ const features = [
     description: 'Handles English today. Yoruba, Hausa, and Igbo coming soon — built for the African market.',
   },
   {
+    category: 'Voice AI',
+    icon: (
+      <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L6.832 19.82a4.5 4.5 0 01-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 011.13-1.897L16.863 4.487zm0 0L19.5 7.125" />
+      </svg>
+    ),
+    title: 'Custom greeting & tone',
+    description: 'Set the greeting, tone, and fallback message so the agent sounds like your brand.',
+  },
+  {
     category: 'Business tools',
     icon: (
       <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
@@ -52,6 +62,16 @@ const features = [
     ),
     title: 'Custom knowledge base',
     description: 'Add your FAQs, hours, pricing, and policies. The agent answers from your content — never makes things up.',
+  },
+  {
+    category: 'Business tools',
+    icon: (
+      <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M20.25 7.5l-8.25 4.5-8.25-4.5m16.5 0l-8.25-4.5-8.25 4.5m16.5 0v9l-8.25 4.5-8.25-4.5v-9" />
+      </svg>
+    ),
+    title: 'Products & services catalog',
+    description: 'Add your products and services so the agent can answer “how much is it?” and “what do you offer?” accurately.',
   },
   {
     category: 'Business tools',
@@ -67,11 +87,31 @@ const features = [
     category: 'Business tools',
     icon: (
       <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M3 3h1.5m0 0H21m-16.5 0v18m16.5-18v18M9 7.5h6M9 12h6M9 16.5h6" />
+      </svg>
+    ),
+    title: 'Orders & requests',
+    description: 'Capture customer requests during calls (like orders and service requests) so your team can follow up quickly.',
+  },
+  {
+    category: 'Business tools',
+    icon: (
+      <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
         <path strokeLinecap="round" strokeLinejoin="round" d="M15.59 14.37a6 6 0 01-5.84 7.38v-4.8m5.84-2.58a14.98 14.98 0 006.16-12.12A14.98 14.98 0 009.631 8.41m5.96 5.96a14.926 14.926 0 01-5.841 2.58m-.119-8.54a6 6 0 00-7.381 5.84h4.8m2.581-5.84a14.927 14.927 0 00-2.58 5.84m2.699 2.7c-.103.021-.207.041-.311.06a15.09 15.09 0 01-2.448-2.448 14.9 14.9 0 01.06-.312m-2.24 2.39a4.493 4.493 0 00-1.757 4.306 4.493 4.493 0 004.306-1.758M16.5 9a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0z" />
       </svg>
     ),
     title: 'Smart escalation',
     description: 'When a caller needs a human, Milu transfers the call and sends you a WhatsApp summary instantly.',
+  },
+  {
+    category: 'Dashboard',
+    icon: (
+      <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M7.5 14.25v2.25m3-4.5v4.5m3-6.75v6.75m3-9v9M3.75 19.5h16.5" />
+      </svg>
+    ),
+    title: 'Call logs dashboard',
+    description: 'See every call, status, duration, and resolution. Review conversations and track follow-ups.',
   },
   {
     category: 'Analytics',
@@ -94,6 +134,66 @@ const features = [
     description: 'Every call is transcribed turn-by-turn and stored. Search and review any conversation at any time.',
   },
   {
+    category: 'Dashboard',
+    icon: (
+      <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 7.5h16.5M3.75 12h16.5M3.75 16.5h16.5" />
+      </svg>
+    ),
+    title: 'Reports',
+    description: 'Generate simple reports for your team so you can review performance and follow-ups.',
+  },
+  {
+    category: 'Dashboard',
+    icon: (
+      <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M17.25 6.75a4.5 4.5 0 01-9 0 4.5 4.5 0 019 0zM3.75 20.25a8.25 8.25 0 0116.5 0" />
+      </svg>
+    ),
+    title: 'Team access & roles',
+    description: 'Invite team members and manage access so the right people can review calls and handle follow-ups.',
+  },
+  {
+    category: 'Dashboard',
+    icon: (
+      <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
+      </svg>
+    ),
+    title: 'Billing & plan management',
+    description: 'See usage, invoices, and manage your plan directly from your dashboard.',
+  },
+  {
+    category: 'Dashboard',
+    icon: (
+      <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M12 3.75c-2.485 0-4.5 2.015-4.5 4.5v3a3 3 0 00-3 3v2.25A3 3 0 007.5 21h9a3 3 0 003-3v-2.25a3 3 0 00-3-3v-3c0-2.485-2.015-4.5-4.5-4.5z" />
+      </svg>
+    ),
+    title: 'Phone number management',
+    description: 'Connect your number, manage verified numbers, and request additional numbers when you need them.',
+  },
+  {
+    category: 'Admin',
+    icon: (
+      <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+      </svg>
+    ),
+    title: 'Admin dashboard',
+    description: 'Admins can review businesses, monitor activity, and handle incoming requests from customers.',
+  },
+  {
+    category: 'Admin',
+    icon: (
+      <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M7.5 8.25h9m-9 3H12m-9 3h9M3.75 6h16.5A1.5 1.5 0 0121.75 7.5v9A1.5 1.5 0 0120.25 18H3.75A1.5 1.5 0 012.25 16.5v-9A1.5 1.5 0 013.75 6z" />
+      </svg>
+    ),
+    title: 'Request inbox',
+    description: 'Admins receive phone-number requests and website contact submissions, with email notifications.',
+  },
+  {
     category: 'Infrastructure',
     icon: (
       <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
@@ -103,9 +203,19 @@ const features = [
     title: "Africa's Talking integration",
     description: 'Uses local telephony infrastructure — no international SIP, no expensive VOIP setup. Works with your existing number.',
   },
+  {
+    category: 'Infrastructure',
+    icon: (
+      <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 00-9 0v3.75m-.75 0h10.5a2.25 2.25 0 012.25 2.25v6.75A2.25 2.25 0 0117.25 21H6.75A2.25 2.25 0 014.5 19.5v-6.75A2.25 2.25 0 016.75 10.5z" />
+      </svg>
+    ),
+    title: 'Role-based access',
+    description: 'Keep business data separated by account and control what team members can access.',
+  },
 ];
 
-const categories = ['Voice AI', 'Business tools', 'Analytics', 'Infrastructure'];
+const categories = ['Voice AI', 'Business tools', 'Dashboard', 'Analytics', 'Admin', 'Infrastructure'];
 
 export default function FeaturesPage() {
   return (

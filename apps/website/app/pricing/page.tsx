@@ -8,7 +8,7 @@ export const metadata: Metadata = {
   alternates: { canonical: '/pricing' },
   openGraph: {
     title: 'Milu Pricing — Plans Starting at ₦15,000/month',
-    description: 'Simple pricing for African businesses of all sizes. 14-day free trial, no credit card required.',
+    description: 'Simple pricing for African businesses of all sizes. 10-day free trial, no credit card required.',
   },
 };
 

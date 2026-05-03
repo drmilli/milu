@@ -40,7 +40,7 @@ export function Pricing() {
           <h2 className="font-heading font-bold text-4xl md:text-5xl text-primary-dark">
             Simple, transparent pricing
           </h2>
-          <p className="mt-4 text-primary-warm">14-day free trial on all plans. No credit card required.</p>
+          <p className="mt-4 text-primary-warm">10-day free trial on all plans. No credit card required.</p>
         </AnimateIn>
 
         <StaggerContainer className="grid md:grid-cols-3 gap-6 items-start" staggerDelay={0.12}>
