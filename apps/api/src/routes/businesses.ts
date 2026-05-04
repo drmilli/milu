@@ -674,7 +674,10 @@ businessesRouter.get('/:id/phone-number-requests', async (req, res, next) => {
       ...r,
       createdAt: r.createdAt.toISOString(),
     })));
-  } catch (err) { next(err); }
+  } catch (err) {
+    if ((err as any)?.code === '42P01' || (err as any)?.code === '42704') return res.json([]);
+    next(err);
+  }
 });
 
 businessesRouter.post('/:id/phone-number-requests', async (req, res, next) => {
@@ -694,14 +697,23 @@ businessesRouter.post('/:id/phone-number-requests', async (req, res, next) => {
     const [biz] = await db.select({ name: businesses.name }).from(businesses).where(eq(businesses.id, req.params.id)).limit(1);
     const [u] = await db.select({ email: users.email, firstName: users.firstName, lastName: users.lastName }).from(users).where(eq(users.id, req.user.userId)).limit(1);
 
-    const [row] = await db.insert(phoneNumberRequests).values({
-      businessId: req.params.id,
-      requestedByUserId: req.user.userId,
-      quantity,
-      amountUsd: AMOUNT_USD_PER,
-      checkoutUrl: CHECKOUT_URL,
-      note,
-    }).returning({ id: phoneNumberRequests.id, createdAt: phoneNumberRequests.createdAt });
+    let row: { id: string; createdAt: Date } | undefined;
+    try {
+      [row] = await db.insert(phoneNumberRequests).values({
+        businessId: req.params.id,
+        requestedByUserId: req.user.userId,
+        quantity,
+        amountUsd: AMOUNT_USD_PER,
+        checkoutUrl: CHECKOUT_URL,
+        note,
+      }).returning({ id: phoneNumberRequests.id, createdAt: phoneNumberRequests.createdAt });
+    } catch (err) {
+      if ((err as any)?.code === '42P01' || (err as any)?.code === '42704') {
+        row = { id: crypto.randomUUID(), createdAt: new Date() };
+      } else {
+        throw err;
+      }
+    }
 
     const requesterName = [u?.firstName, u?.lastName].filter(Boolean).join(' ').trim();
     const requester = requesterName ? `${requesterName} <${u?.email ?? ''}>` : (u?.email ?? 'Unknown');

@@ -13,13 +13,14 @@ export const billingRouter: Router = Router();
 const WHOP_API_BASE = 'https://api.whop.com/api/v2';
 
 const PLAN_MAP: Record<string, 'STARTER' | 'GROWTH' | 'ENTERPRISE' | 'ONE_TIME'> = {
-  // Map your Whop product/plan IDs to internal tiers
-  // Replace these with your actual Whop product IDs
-  one_time: 'ONE_TIME',
-  starter: 'STARTER',
-  growth: 'GROWTH',
-  enterprise: 'ENTERPRISE',
+  plan_wvq0cvpguvcnm: 'ONE_TIME',
+  plan_np7nmd2igcr6r: 'STARTER',
+  plan_2kpowliqeudfl: 'GROWTH',
 };
+
+const ADD_ON_PLAN_IDS = new Set([
+  'plan_hiqfgc9kkjemx', // additional phone number ($3)
+]);
 
 async function whopRequest<T = Record<string, unknown>>(path: string, options: RequestInit = {}): Promise<T> {
   const res = await fetch(`${WHOP_API_BASE}${path}`, {
@@ -305,7 +306,13 @@ export async function handleWhopWebhook(req: import('express').Request, res: imp
         const meta = (event.data.metadata ?? {}) as Record<string, string>;
         const businessId = meta.businessId;
         const planId = (event.data.plan_id ?? event.data.product_id ?? '') as string;
-        const tier = PLAN_MAP[planId.toLowerCase()] ?? 'STARTER';
+        const planKey = planId.toLowerCase();
+        if (ADD_ON_PLAN_IDS.has(planKey)) break;
+        const tier = PLAN_MAP[planKey];
+        if (!tier) {
+          logger.warn({ planId, businessId, action: event.action }, 'Whop webhook: unknown plan id (ignored)');
+          break;
+        }
 
         if (businessId) {
           await db.update(businesses)

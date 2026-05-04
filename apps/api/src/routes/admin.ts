@@ -12,6 +12,11 @@ import { env } from '../config/env';
 import { sendTestEmail, sendVerificationEmail, sendPasswordResetEmail, sendTeamInviteEmail, sendSubscriptionConfirmEmail, sendSubscriptionCancelledEmail, sendPhoneNumberAssignedEmail } from '../utils/email';
 import { sendEscalationAlert, sendOrderConfirmation, sendAppointmentReminder, sendCallbackRequest, sendMissedCallAlert, sendWeeklySummary, sendWhatsAppText } from '../services/whatsapp';
 
+function isMissingDbObject(err: unknown) {
+  const code = (err as any)?.code as string | undefined;
+  return code === '42P01' || code === '42704';
+}
+
 function getTwilioClient() {
   if (!env.TWILIO_ACCOUNT_SID || !env.TWILIO_AUTH_TOKEN) return null;
   return twilio(env.TWILIO_ACCOUNT_SID, env.TWILIO_AUTH_TOKEN);
@@ -219,7 +224,7 @@ adminRouter.get('/businesses', async (req, res, next) => {
         db.select({ n: sql<number>`count(*)` }).from(calls).where(eq(calls.businessId, b.id)),
       ]);
       const owner = ownerRows[0];
-      const planMrr: Record<string, number> = { STARTER: 15000, GROWTH: 45000, ENTERPRISE: 0 };
+      const planMrr: Record<string, number> = { STARTER: 25, GROWTH: 45, ONE_TIME: 0, ENTERPRISE: 0 };
       const isTrial = b.subscriptionTier === 'STARTER' && (Date.now() - new Date(b.createdAt).getTime()) < 10 * 24 * 60 * 60 * 1000;
       return {
         id: b.id,
@@ -227,7 +232,7 @@ adminRouter.get('/businesses', async (req, res, next) => {
         industry: b.industry ?? '',
         owner: owner ? [owner.firstName, owner.lastName].filter(Boolean).join(' ') || owner.email : 'Unknown',
         email: owner?.email ?? '',
-        plan: isTrial ? 'Trial' : b.subscriptionTier === 'STARTER' ? 'Starter' : b.subscriptionTier === 'GROWTH' ? 'Growth' : 'Enterprise',
+        plan: isTrial ? 'Trial' : b.subscriptionTier === 'ONE_TIME' ? 'One-time' : b.subscriptionTier === 'STARTER' ? 'Starter' : b.subscriptionTier === 'GROWTH' ? 'Growth' : 'Enterprise',
         status: b.isActive ? 'active' : 'suspended',
         calls: Number(callCountRows[0]?.n ?? 0),
         mrr: isTrial ? 0 : planMrr[b.subscriptionTier] ?? 0,
@@ -263,7 +268,15 @@ adminRouter.get('/businesses/recent', async (_req, res, next) => {
     return res.json(rows.map(r => ({
       id: r.id,
       name: r.name,
-      plan: r.plan,
+      plan: (r.plan === 'STARTER' && (Date.now() - new Date(r.createdAt).getTime()) < 10 * 24 * 60 * 60 * 1000)
+        ? 'Trial'
+        : r.plan === 'ONE_TIME'
+          ? 'One-time'
+          : r.plan === 'STARTER'
+            ? 'Starter'
+            : r.plan === 'GROWTH'
+              ? 'Growth'
+              : 'Enterprise',
       joinedAt: r.createdAt,
       owner: r.ownerFirstName
         ? `${r.ownerFirstName} ${r.ownerLastName ?? ''}`.trim()
@@ -297,7 +310,13 @@ adminRouter.get('/contact-submissions/recent', async (req, res, next) => {
       status: r.status,
       createdAt: r.createdAt.toISOString(),
     })));
-  } catch (err) { next(err); }
+  } catch (err) {
+    if (isMissingDbObject(err)) {
+      logger.warn({ err }, 'contact_submissions table missing (migration not applied yet)');
+      return res.json([]);
+    }
+    next(err);
+  }
 });
 
 adminRouter.get('/contact-submissions', async (req, res, next) => {
@@ -338,7 +357,13 @@ adminRouter.get('/contact-submissions', async (req, res, next) => {
         createdAt: r.createdAt.toISOString(),
       })),
     });
-  } catch (err) { next(err); }
+  } catch (err) {
+    if (isMissingDbObject(err)) {
+      logger.warn({ err }, 'contact_submissions table missing (migration not applied yet)');
+      return res.json({ page: 1, limit: 30, total: 0, items: [] });
+    }
+    next(err);
+  }
 });
 
 adminRouter.get('/phone-number-requests/recent', async (req, res, next) => {
@@ -371,7 +396,13 @@ adminRouter.get('/phone-number-requests/recent', async (req, res, next) => {
       status: r.status,
       createdAt: r.createdAt.toISOString(),
     })));
-  } catch (err) { next(err); }
+  } catch (err) {
+    if (isMissingDbObject(err)) {
+      logger.warn({ err }, 'phone_number_requests table missing (migration not applied yet)');
+      return res.json([]);
+    }
+    next(err);
+  }
 });
 
 adminRouter.get('/phone-number-requests', async (req, res, next) => {
@@ -433,7 +464,13 @@ adminRouter.get('/phone-number-requests', async (req, res, next) => {
         createdAt: r.createdAt.toISOString(),
       })),
     });
-  } catch (err) { next(err); }
+  } catch (err) {
+    if (isMissingDbObject(err)) {
+      logger.warn({ err }, 'phone_number_requests table missing (migration not applied yet)');
+      return res.json({ page: 1, limit: 30, total: 0, items: [] });
+    }
+    next(err);
+  }
 });
 
 adminRouter.patch('/phone-number-requests/:id', async (req, res, next) => {
@@ -485,8 +522,9 @@ adminRouter.get('/businesses/:id', async (req, res, next) => {
     const owner = members.find(m => m.role === 'OWNER');
     const total = Number(callTotal[0]?.n ?? 0);
     const aiResolved = recentCalls.filter(c => c.resolution === 'AI').length;
-    const planMrr: Record<string, number> = { STARTER: 15000, GROWTH: 45000, ENTERPRISE: 0 };
+    const planMrr: Record<string, number> = { STARTER: 25, GROWTH: 45, ONE_TIME: 0, ENTERPRISE: 0 };
     const agent = agentRow[0];
+    const isTrial = biz.subscriptionTier === 'STARTER' && (Date.now() - new Date(biz.createdAt).getTime()) < 10 * 24 * 60 * 60 * 1000;
 
     return res.json({
       id: biz.id,
@@ -495,10 +533,10 @@ adminRouter.get('/businesses/:id', async (req, res, next) => {
       owner: owner ? [owner.firstName, owner.lastName].filter(Boolean).join(' ') || owner.email : 'Unknown',
       email: owner?.email ?? '',
       phone: undefined,
-      plan: biz.subscriptionTier === 'STARTER' ? 'Starter' : biz.subscriptionTier === 'GROWTH' ? 'Growth' : 'Enterprise',
+      plan: isTrial ? 'Trial' : biz.subscriptionTier === 'ONE_TIME' ? 'One-time' : biz.subscriptionTier === 'STARTER' ? 'Starter' : biz.subscriptionTier === 'GROWTH' ? 'Growth' : 'Enterprise',
       status: biz.isActive ? 'active' : 'suspended',
       joined: biz.createdAt.toISOString(),
-      mrr: planMrr[biz.subscriptionTier] ?? 0,
+      mrr: isTrial ? 0 : planMrr[biz.subscriptionTier] ?? 0,
       callsThisMonth: Number(callMonth[0]?.n ?? 0),
       callsTotal: total,
       resolutionRate: total > 0 ? Math.round((aiResolved / Math.min(total, 10)) * 100) : 0,
@@ -911,28 +949,34 @@ adminRouter.get('/analytics/call-volume', async (_req, res, next) => {
 // ─── GET /admin/billing/overview ──────────────────────────────────────────────
 adminRouter.get('/billing/overview', async (_req, res, next) => {
   try {
-    const [totalBiz, planRows] = await Promise.all([
+    const trialThreshold = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000);
+    const [totalBiz, planRows, trialCountRows] = await Promise.all([
       db.select({ n: sql<number>`count(*)` }).from(businesses),
       db.select({ tier: businesses.subscriptionTier, count: sql<number>`count(*)` })
         .from(businesses).groupBy(businesses.subscriptionTier),
+      db.select({ n: sql<number>`count(*)` })
+        .from(businesses)
+        .where(and(eq(businesses.subscriptionTier, 'STARTER'), gte(businesses.createdAt, trialThreshold))),
     ]);
 
     const planMap: Record<string, number> = {};
     for (const r of planRows) planMap[r.tier] = Number(r.count);
 
-    const starterMrr = (planMap['STARTER'] ?? 0) * 15000;
-    const growthMrr = (planMap['GROWTH'] ?? 0) * 45000;
+    const starterMrr = (planMap['STARTER'] ?? 0) * 25;
+    const growthMrr = (planMap['GROWTH'] ?? 0) * 45;
     const mrr = starterMrr + growthMrr;
+    const trialsCount = Number(trialCountRows[0]?.n ?? 0);
 
     return res.json({
       mrr,
       arr: mrr * 12,
       activeSubscriptions: Number(totalBiz[0].n),
-      trialsCount: planMap['STARTER'] ?? 0,
+      trialsCount,
       trialConversionRate: 0,
       planDistribution: [
         { name: 'Starter', value: planMap['STARTER'] ?? 0, color: '#6366f1' },
         { name: 'Growth', value: planMap['GROWTH'] ?? 0, color: '#22c55e' },
+        { name: 'One-time', value: planMap['ONE_TIME'] ?? 0, color: '#0ea5e9' },
         { name: 'Enterprise', value: planMap['ENTERPRISE'] ?? 0, color: '#f59e0b' },
       ],
     });
@@ -957,10 +1001,12 @@ adminRouter.get('/billing/subscriptions', async (_req, res, next) => {
     return res.json(rows.map(r => ({
       id: r.id,
       business: r.name,
-      plan: r.plan === 'STARTER' ? 'Starter' : r.plan === 'GROWTH' ? 'Growth' : 'Enterprise',
+      plan: r.plan === 'ONE_TIME' ? 'One-time' : r.plan === 'STARTER' ? 'Starter' : r.plan === 'GROWTH' ? 'Growth' : 'Enterprise',
       status: r.isActive ? 'active' : 'cancelled',
-      mrr: r.plan === 'STARTER' ? 15000 : r.plan === 'GROWTH' ? 45000 : 0,
-      nextBillingAt: new Date(new Date(r.createdAt).setMonth(new Date(r.createdAt).getMonth() + 1)).toISOString(),
+      mrr: r.plan === 'STARTER' ? 25 : r.plan === 'GROWTH' ? 45 : 0,
+      nextBillingAt: r.plan === 'ONE_TIME'
+        ? new Date(new Date(r.createdAt).getTime() + 30 * 24 * 60 * 60 * 1000).toISOString()
+        : new Date(new Date(r.createdAt).setMonth(new Date(r.createdAt).getMonth() + 1)).toISOString(),
     })));
   } catch (err) { next(err); }
 });
@@ -972,7 +1018,7 @@ adminRouter.get('/settings', (_req, res) => {
     twilioPhoneNumber: env.TWILIO_PHONE_NUMBER ?? '',
     defaultVoice: env.ELEVENLABS_VOICE_ID ?? 'default',
     maxCallsPerBiz: 1000,
-    trialDays: 14,
+    trialDays: 10,
     webhookSecret: env.WHOP_WEBHOOK_SECRET ?? '',
     maintenanceMode: false,
     // Legacy AT fields returned as empty (Twilio is primary provider)
