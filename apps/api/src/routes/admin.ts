@@ -1001,12 +1001,32 @@ adminRouter.get('/billing/subscriptions', async (_req, res, next) => {
     return res.json(rows.map(r => ({
       id: r.id,
       business: r.name,
-      plan: r.plan === 'ONE_TIME' ? 'One-time' : r.plan === 'STARTER' ? 'Starter' : r.plan === 'GROWTH' ? 'Growth' : 'Enterprise',
-      status: r.isActive ? 'active' : 'cancelled',
-      mrr: r.plan === 'STARTER' ? 25 : r.plan === 'GROWTH' ? 45 : 0,
-      nextBillingAt: r.plan === 'ONE_TIME'
-        ? new Date(new Date(r.createdAt).getTime() + 30 * 24 * 60 * 60 * 1000).toISOString()
-        : new Date(new Date(r.createdAt).setMonth(new Date(r.createdAt).getMonth() + 1)).toISOString(),
+      plan: (r.plan === 'STARTER' && (Date.now() - new Date(r.createdAt).getTime()) < 10 * 24 * 60 * 60 * 1000)
+        ? 'Trial'
+        : r.plan === 'ONE_TIME'
+          ? 'One-time'
+          : r.plan === 'STARTER'
+            ? 'Starter'
+            : r.plan === 'GROWTH'
+              ? 'Growth'
+              : 'Enterprise',
+      status: (r.plan === 'STARTER' && (Date.now() - new Date(r.createdAt).getTime()) < 10 * 24 * 60 * 60 * 1000)
+        ? 'trial'
+        : r.isActive
+          ? 'active'
+          : 'cancelled',
+      mrr: (r.plan === 'STARTER' && (Date.now() - new Date(r.createdAt).getTime()) < 10 * 24 * 60 * 60 * 1000)
+        ? 0
+        : r.plan === 'STARTER'
+          ? 25
+          : r.plan === 'GROWTH'
+            ? 45
+            : 0,
+      nextBillingAt: (r.plan === 'STARTER' && (Date.now() - new Date(r.createdAt).getTime()) < 10 * 24 * 60 * 60 * 1000)
+        ? new Date(new Date(r.createdAt).getTime() + 10 * 24 * 60 * 60 * 1000).toISOString()
+        : r.plan === 'ONE_TIME'
+          ? new Date(new Date(r.createdAt).getTime() + 30 * 24 * 60 * 60 * 1000).toISOString()
+          : new Date(new Date(r.createdAt).setMonth(new Date(r.createdAt).getMonth() + 1)).toISOString(),
     })));
   } catch (err) { next(err); }
 });

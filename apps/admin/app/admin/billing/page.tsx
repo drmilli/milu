@@ -24,8 +24,10 @@ interface Sub {
 }
 
 const planColors: Record<string, string> = {
+  Trial: 'bg-primary/10 text-primary',
   Starter: 'bg-primary/10 text-primary',
   Growth: 'bg-success/10 text-success',
+  'One-time': 'bg-sky-500/10 text-sky-600',
   Enterprise: 'bg-warning/10 text-warning',
 };
 
@@ -37,9 +39,9 @@ const statusColors: Record<string, string> = {
 };
 
 function fmtMrr(n: number) {
-  if (n >= 1_000_000) return `₦${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `₦${(n / 1_000).toFixed(0)}k`;
-  return `₦${n.toLocaleString()}`;
+  if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `$${(n / 1_000).toFixed(0)}k`;
+  return `$${n.toLocaleString('en-US')}`;
 }
 
 function Skeleton({ className }: { className: string }) {
@@ -139,6 +141,8 @@ export default function BillingPage() {
             <select value={planFilter} onChange={e => setPlanFilter(e.target.value)}
               className="px-3 py-2 rounded-xl border border-cream-dark bg-white text-xs text-primary-dark focus:outline-none cursor-pointer">
               <option value="all">All plans</option>
+              <option value="Trial">Trial</option>
+              <option value="One-time">One-time</option>
               <option value="Starter">Starter</option>
               <option value="Growth">Growth</option>
               <option value="Enterprise">Enterprise</option>
