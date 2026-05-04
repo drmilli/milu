@@ -174,26 +174,6 @@ const features = [
     description: 'Connect your number, manage verified numbers, and request additional numbers when you need them.',
   },
   {
-    category: 'Admin',
-    icon: (
-      <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-        <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-      </svg>
-    ),
-    title: 'Admin dashboard',
-    description: 'Admins can review businesses, monitor activity, and handle incoming requests from customers.',
-  },
-  {
-    category: 'Admin',
-    icon: (
-      <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-        <path strokeLinecap="round" strokeLinejoin="round" d="M7.5 8.25h9m-9 3H12m-9 3h9M3.75 6h16.5A1.5 1.5 0 0121.75 7.5v9A1.5 1.5 0 0120.25 18H3.75A1.5 1.5 0 012.25 16.5v-9A1.5 1.5 0 013.75 6z" />
-      </svg>
-    ),
-    title: 'Request inbox',
-    description: 'Admins receive phone-number requests and website contact submissions, with email notifications.',
-  },
-  {
     category: 'Infrastructure',
     icon: (
       <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
@@ -215,7 +195,7 @@ const features = [
   },
 ];
 
-const categories = ['Voice AI', 'Business tools', 'Dashboard', 'Analytics', 'Admin', 'Infrastructure'];
+const categories = ['Voice AI', 'Business tools', 'Dashboard', 'Analytics', 'Infrastructure'];
 
 export default function FeaturesPage() {
   return (
