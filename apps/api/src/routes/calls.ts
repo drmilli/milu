@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { eq, and, desc, sql, ilike } from 'drizzle-orm';
+import { eq, and, desc, sql, ilike, or } from 'drizzle-orm';
 import { db, calls, transcripts, escalations } from '../db';
 import { authMiddleware } from '../middleware/auth';
 
@@ -63,9 +63,10 @@ callsRouter.get('/', async (req, res, next) => {
       businessId: z.string().optional(),
       status: z.enum(['ACTIVE', 'COMPLETED', 'FAILED']).optional(),
       resolution: z.enum(['AI', 'HUMAN', 'ABANDONED']).optional(),
-      intent: z.string().optional(), // free-text search on callerNumber
+      intent: z.string().optional(), // free-text search on callerNumber/name/location
     });
     const { page, limit, businessId, status, resolution, intent } = schema.parse(req.query);
+    const like = intent ? `%${intent}%` : null;
 
     const scopedBusinessId = req.user?.role === 'OWNER' ? req.user.businessId : businessId;
 
@@ -74,7 +75,11 @@ callsRouter.get('/', async (req, res, next) => {
       ...(scopedBusinessId ? [eq(calls.businessId, scopedBusinessId)] : []),
       ...(status ? [eq(calls.status, status)] : []),
       ...(resolution ? [eq(calls.resolution, resolution)] : []),
-      ...(intent ? [ilike(calls.callerNumber, `%${intent}%`)] : []),
+      ...(like ? [or(
+        ilike(calls.callerNumber, like),
+        sql`${calls.callerName} ILIKE ${like}`,
+        sql`${calls.callerLocation} ILIKE ${like}`,
+      )] : []),
     ];
 
     const where = conditions.length ? and(...conditions) : undefined;

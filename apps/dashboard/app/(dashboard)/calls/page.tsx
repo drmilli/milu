@@ -11,6 +11,9 @@ import { apiGet } from '../../../lib/api';
 interface Call {
   id: string;
   callerNumber?: string;
+  callerName?: string | null;
+  callerLocation?: string | null;
+  contactId?: string | null;
   durationSeconds?: number;
   intent?: string;
   resolution?: string;
@@ -85,6 +88,9 @@ function CallsPageInner() {
   const [playingUrl, setPlayingUrl] = useState<string | null>(null);
   const [loadingRecording, setLoadingRecording] = useState(false);
   const [upgradeMsg, setUpgradeMsg] = useState('');
+  const [contact, setContact] = useState<{ id: string; phone: string; name?: string | null; location?: string | null; totalCalls?: number; lastCallAt?: string | null } | null>(null);
+  const [historyCalls, setHistoryCalls] = useState<Call[]>([]);
+  const [loadingHistory, setLoadingHistory] = useState(false);
 
   const [filter, setFilter] = useState<'all' | 'AI' | 'HUMAN' | 'ABANDONED'>('all');
   const [search, setSearch] = useState('');
@@ -121,6 +127,31 @@ function CallsPageInner() {
       .catch(() => null)
       .finally(() => setLoadingTranscript(false));
   }, [selected, token]);
+
+  useEffect(() => {
+    if (!selected?.callerNumber || !token) return;
+    setContact(null);
+    setHistoryCalls([]);
+    setLoadingHistory(true);
+    apiGet<{ contacts: Array<{ id: string; phone: string; name?: string | null; location?: string | null; totalCalls?: number; lastCallAt?: string | null }> }>(
+      `/contacts?search=${encodeURIComponent(selected.callerNumber)}&limit=1&page=1`,
+      token
+    ).then(async (data) => {
+      const c = data.contacts?.[0];
+      if (!c?.id) return;
+      setContact(c);
+      try {
+        const detail = await apiGet<{ calls?: Call[] }>(`/contacts/${c.id}`, token);
+        const mapped = (detail.calls ?? []).map((r: any) => ({
+          ...r,
+          durationSeconds: r.durationSeconds ?? r.duration,
+        })) as Call[];
+        setHistoryCalls(mapped.filter(r => r.id !== selected.id));
+      } catch {
+        setHistoryCalls([]);
+      }
+    }).catch(() => null).finally(() => setLoadingHistory(false));
+  }, [selected?.id, selected?.callerNumber, token]);
 
   useEffect(() => {
     setPlayingUrl(null);
@@ -180,7 +211,7 @@ function CallsPageInner() {
             </svg>
             <input
               className="w-full pl-9 pr-4 py-2 text-sm bg-cream-light border border-cream-dark rounded-xl placeholder:text-cream-dark focus:outline-none focus:border-primary/50"
-              placeholder="Search by intent…"
+              placeholder="Search by caller, name, or location…"
               value={searchInput}
               onChange={e => setSearchInput(e.target.value)}
             />
@@ -216,6 +247,11 @@ function CallsPageInner() {
           ) : (
             calls.map((call) => {
               const label = resolutionLabel(call.resolution);
+              const primary = (call.callerName && call.callerName.trim()) ? call.callerName : (call.callerNumber ?? 'Unknown');
+              const secondaryParts = [
+                (call.callerName && call.callerNumber) ? call.callerNumber : null,
+                call.callerLocation ? `from ${call.callerLocation}` : null,
+              ].filter(Boolean);
               return (
                 <button
                   key={call.id}
@@ -227,12 +263,15 @@ function CallsPageInner() {
                 >
                   <div className="flex items-center justify-between mb-1">
                     <span className="text-sm font-medium text-primary-dark truncate max-w-[140px]">
-                      {call.callerNumber ?? 'Unknown'}
+                      {primary}
                     </span>
                     <span className={clsx('text-xs font-medium px-2 py-0.5 rounded-full flex-shrink-0', statusCls[label])}>
                       {label}
                     </span>
                   </div>
+                  {secondaryParts.length > 0 && (
+                    <p className="text-xs text-primary-warm truncate">{secondaryParts.join(' · ')}</p>
+                  )}
                   <p className="text-xs text-primary-warm truncate capitalize">
                     {call.intent?.toLowerCase().replace('_', ' ') ?? '—'}
                   </p>
@@ -276,11 +315,18 @@ function CallsPageInner() {
           <>
             <div className="bg-white border-b border-cream-dark px-6 py-4 flex items-center justify-between">
               <div>
-                <p className="font-semibold text-primary-dark">{selected.callerNumber ?? 'Unknown'}</p>
+                <p className="font-semibold text-primary-dark">
+                  {selected.callerName?.trim() || contact?.name?.trim() || selected.callerNumber || 'Unknown'}
+                </p>
                 <p className="text-xs text-primary-warm mt-0.5">
                   {fmtDate(selected.startedAt)} · {fmtDuration(selected.durationSeconds)} ·{' '}
                   <span className="capitalize">{selected.intent?.toLowerCase().replace('_', ' ') ?? '—'}</span>
                 </p>
+                {(selected.callerNumber || contact?.location || selected.callerLocation) && (
+                  <p className="text-xs text-cream-dark mt-1">
+                    {[selected.callerNumber, (selected.callerLocation ?? contact?.location) ? `from ${selected.callerLocation ?? contact?.location}` : null].filter(Boolean).join(' · ')}
+                  </p>
+                )}
               </div>
               <div className="flex items-center gap-2">
                 <button
@@ -299,7 +345,56 @@ function CallsPageInner() {
               </div>
             </div>
 
-            <div className="flex-1 overflow-y-auto p-6 space-y-4">
+            <div className="flex-1 overflow-y-auto p-6 space-y-6">
+              <div className="bg-white rounded-2xl border border-cream-dark p-4">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <p className="text-xs text-primary-warm">Caller profile</p>
+                    <p className="text-sm font-semibold text-primary-dark mt-1">
+                      {contact?.name?.trim() || selected.callerName?.trim() || '—'}
+                    </p>
+                    <p className="text-xs text-primary-warm mt-1">
+                      {(contact?.location ?? selected.callerLocation)?.trim() ? (contact?.location ?? selected.callerLocation) : '—'}
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-xs text-primary-warm">Previous calls</p>
+                    <p className="text-sm font-semibold text-primary-dark mt-1">
+                      {contact?.totalCalls != null ? Math.max(0, (contact.totalCalls ?? 0) - 1) : (loadingHistory ? '…' : '—')}
+                    </p>
+                  </div>
+                </div>
+
+                {(loadingHistory || historyCalls.length > 0) && (
+                  <div className="mt-4">
+                    <p className="text-xs font-semibold text-primary-warm uppercase tracking-wider mb-2">Call history</p>
+                    {loadingHistory ? (
+                      <div className="space-y-2">
+                        <Skeleton className="h-4 w-40" />
+                        <Skeleton className="h-4 w-56" />
+                      </div>
+                    ) : (
+                      <div className="space-y-1">
+                        {historyCalls.slice(0, 6).map(h => (
+                          <button
+                            key={h.id}
+                            onClick={() => setSelected(h)}
+                            className="w-full text-left px-3 py-2 rounded-xl hover:bg-cream-light transition-colors"
+                          >
+                            <p className="text-sm text-primary-dark font-medium">
+                              {fmtDate(h.startedAt)} · {fmtDuration(h.durationSeconds)} · {resolutionLabel(h.resolution)}
+                            </p>
+                            <p className="text-xs text-primary-warm capitalize">
+                              {h.intent?.toLowerCase().replace('_', ' ') ?? '—'}
+                            </p>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
               {loadingTranscript ? (
                 Array.from({ length: 4 }).map((_, i) => (
                   <div key={i} className={clsx('flex gap-3', i % 2 === 0 ? 'flex-row' : 'flex-row-reverse')}>

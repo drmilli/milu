@@ -1,7 +1,7 @@
 import type { Request, Response } from 'express';
 import crypto from 'crypto';
 import twilio from 'twilio';
-import { and, desc, eq, gte, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, ne, sql } from 'drizzle-orm';
 import { db, phoneNumbers, agentConfigs, businesses, calls, escalations, notifications, transcripts, knowledgeBases, knowledgeDocuments, businessSettings, contacts, orders, appointments, catalogItems } from '../db';
 import { logger } from '../config/logger';
 import { env } from '../config/env';
@@ -335,9 +335,35 @@ async function twilioCachePopPersistent(callId: string): Promise<string | null> 
   return twilioCachePop(callId);
 }
 
-function gatherTurn(callId: string, language: string, baseUrl: string, timeout = 2) {
+function gatherTurn(callId: string, language: string, baseUrl: string, timeout = 4) {
   const action = `${baseUrl}/webhooks/twilio/voice/gather?callId=${encodeURIComponent(callId)}`;
   return `<Gather input="speech" action="${action}" method="POST" timeout="${timeout}" speechTimeout="1" language="${language}"></Gather>`;
+}
+
+function parseProfileText(input: string) {
+  const raw = input.trim();
+  const cleaned = raw.replace(/\s+/g, ' ');
+  const lower = cleaned.toLowerCase();
+
+  const fromMatch = cleaned.match(/\b(from|in)\b\s+(.+)$/i);
+  const location = fromMatch?.[2]?.trim().replace(/^[,.\-:\s]+/, '').replace(/[.?!]+$/, '') ?? '';
+
+  let namePart = cleaned;
+  if (fromMatch?.index != null) namePart = cleaned.slice(0, fromMatch.index).trim();
+
+  namePart = namePart
+    .replace(/^(my name is|i am|i'm|this is)\b/i, '')
+    .trim()
+    .replace(/^[,.\-:\s]+/, '')
+    .replace(/[.?!]+$/, '');
+
+  const nameTokens = namePart.split(' ').filter(Boolean).slice(0, 3);
+  const name = nameTokens.join(' ').trim();
+
+  const locTokens = location.split(' ').filter(Boolean).slice(0, 4);
+  const loc = locTokens.join(' ').trim();
+
+  return { name: name || null, location: loc || null };
 }
 
 function redirectToRespond(callId: string, baseUrl: string, attempt: number) {
@@ -353,7 +379,7 @@ async function computeTwilioTurn(callId: string, speechResult: string, baseUrl: 
     return twiml('<Say voice="alice">Something went wrong. Goodbye.</Say><Hangup/>');
   }
 
-  const [history, [agentRow], [bizRow], [kbRow], kbDocs, catalogSummary] = await Promise.all([
+  const [history, [agentRow], [bizRow], [kbRow], kbDocs, catalogSummary, [contactRow], previousSnippets] = await Promise.all([
     db.select({ speaker: transcripts.speaker, text: transcripts.text })
       .from(transcripts)
       .where(eq(transcripts.callId, callId))
@@ -367,6 +393,23 @@ async function computeTwilioTurn(callId: string, speechResult: string, baseUrl: 
     db.select({ summary: knowledgeDocuments.summary })
       .from(knowledgeDocuments).where(eq(knowledgeDocuments.businessId, callRow.businessId)).limit(5),
     buildCatalogSummary(callRow.businessId, speechResult),
+    callRow.contactId
+      ? db.select({ id: contacts.id, name: contacts.name, location: contacts.location, totalCalls: contacts.totalCalls })
+        .from(contacts).where(eq(contacts.id, callRow.contactId)).limit(1)
+      : db.select({ id: contacts.id, name: contacts.name, location: contacts.location, totalCalls: contacts.totalCalls })
+        .from(contacts).where(and(eq(contacts.businessId, callRow.businessId), eq(contacts.phone, callRow.callerNumber))).limit(1),
+    callRow.callerNumber
+      ? db.select({ speaker: transcripts.speaker, text: transcripts.text, createdAt: transcripts.createdAt })
+        .from(transcripts)
+        .leftJoin(calls, eq(calls.id, transcripts.callId))
+        .where(and(
+          eq(calls.businessId, callRow.businessId),
+          eq(calls.callerNumber, callRow.callerNumber),
+          ne(calls.id, callId),
+        ))
+        .orderBy(desc(transcripts.createdAt))
+        .limit(8)
+      : Promise.resolve([] as { speaker: string; text: string; createdAt: Date }[]),
   ]);
 
   const messages: ChatMessage[] = [
@@ -388,6 +431,10 @@ async function computeTwilioTurn(callId: string, speechResult: string, baseUrl: 
     ? { reply: 'I’ll get someone to help you right away.', action: 'escalate' as const, appointment: null, order: null }
     : await voiceChat(messages, {
       businessName: bizRow?.name ?? 'this business',
+      callerNumber: callRow.callerNumber ?? null,
+      callerName: callRow.callerName ?? contactRow?.name ?? null,
+      callerLocation: callRow.callerLocation ?? contactRow?.location ?? null,
+      previousCallerSnippets: previousSnippets.slice().reverse().map(s => `${s.speaker}: ${s.text}`),
       agentName: agentRow?.name,
       agentLanguage: agentRow?.language,
       faqs: (kbRow?.faqs as { question: string; answer: string }[]) ?? [],
@@ -402,25 +449,13 @@ async function computeTwilioTurn(callId: string, speechResult: string, baseUrl: 
 
   await db.insert(transcripts).values({ callId, speaker: 'agent', text: reply });
 
-  let contactId: string | undefined;
   const phone = callRow.callerNumber ?? '';
-  if (phone) {
-    const [existingContact] = await db.select({ id: contacts.id }).from(contacts)
-      .where(and(eq(contacts.businessId, callRow.businessId), eq(contacts.phone, phone)))
-      .limit(1);
-    if (existingContact?.id) {
-      contactId = existingContact.id;
-      await db.update(contacts).set({ lastCallAt: new Date() })
-        .where(eq(contacts.id, contactId));
-    } else {
-      const [created] = await db.insert(contacts).values({
-        businessId: callRow.businessId,
-        phone,
-        name: appt?.customerName ?? order?.customerName,
-        lastCallAt: new Date(),
-      }).returning({ id: contacts.id });
-      contactId = created?.id;
-    }
+  const contactId = callRow.contactId ?? contactRow?.id;
+  if (contactId) {
+    const update: Record<string, unknown> = { lastCallAt: new Date(), updatedAt: new Date() };
+    if (!contactRow?.name && (appt?.customerName || order?.customerName)) update.name = appt?.customerName ?? order?.customerName;
+    await db.update(contacts).set(update as any).where(eq(contacts.id, contactId)).catch(() => null);
+    await db.update(calls).set({ contactId }).where(and(eq(calls.id, callId), sql`${calls.contactId} is null`)).catch(() => null);
   }
 
   if ((plan?.features.ops ?? true) && appt?.scheduledAt) {
@@ -531,7 +566,7 @@ export async function handleTwilioVoiceWebhook(req: Request, res: Response) {
       }
     }
 
-    const greeting = agentRow?.greeting ?? `Hello, thank you for calling ${bizRow?.name ?? 'us'}. How can I help you today?`;
+    const baseGreeting = agentRow?.greeting ?? `Hello, thank you for calling ${bizRow?.name ?? 'us'}.`;
     const businessHoursOnly = agentRow?.businessHoursOnly ?? false;
     const afterHoursMessage = agentRow?.afterHoursMessage ?? 'We are currently closed. Please call back during business hours. Goodbye.';
     const langMap: Record<string, string> = { en: 'en-US', yo: 'en-US', ig: 'en-US', ha: 'en-US', pcm: 'en-US' };
@@ -541,9 +576,66 @@ export async function handleTwilioVoiceWebhook(req: Request, res: Response) {
       return res.send(twiml(`<Say voice="alice" language="${language}">${escapeXml(afterHoursMessage)}</Say><Hangup/>`));
     }
 
+    const now = new Date();
+    let contactRow: { id: string; name: string | null; location: string | null; totalCalls: number } | undefined;
+    const [existingContact] = await db.select({
+      id: contacts.id,
+      name: contacts.name,
+      location: contacts.location,
+      totalCalls: contacts.totalCalls,
+    }).from(contacts).where(and(eq(contacts.businessId, businessId), eq(contacts.phone, fromNumber))).limit(1);
+
+    if (existingContact) {
+      contactRow = {
+        id: existingContact.id,
+        name: existingContact.name ?? null,
+        location: existingContact.location ?? null,
+        totalCalls: existingContact.totalCalls ?? 0,
+      };
+      await db.update(contacts).set({
+        totalCalls: (contactRow.totalCalls ?? 0) + 1,
+        lastCallAt: now,
+        updatedAt: now,
+      }).where(eq(contacts.id, contactRow.id));
+    } else {
+      const [created] = await db.insert(contacts).values({
+        businessId,
+        phone: fromNumber,
+        totalCalls: 1,
+        lastCallAt: now,
+      }).returning({ id: contacts.id, name: contacts.name, location: contacts.location, totalCalls: contacts.totalCalls });
+      if (created) {
+        contactRow = {
+          id: created.id,
+          name: created.name ?? null,
+          location: created.location ?? null,
+          totalCalls: created.totalCalls ?? 1,
+        };
+      }
+    }
+
+    const needsName = !contactRow?.name;
+    const needsLocation = !contactRow?.location;
+    const awaitingProfile = needsName || needsLocation;
+    const profilePrompt = needsName && needsLocation
+      ? "What's your name, and where are you calling from?"
+      : needsName
+        ? "What's your name?"
+        : "Where are you calling from?";
+
+    const greeting = awaitingProfile
+      ? `${baseGreeting} ${profilePrompt}`
+      : (contactRow?.name && contactRow?.location)
+        ? `Hi ${contactRow.name}. Thanks for calling from ${contactRow.location}. How can I help you today?`
+        : `${baseGreeting} How can I help you today?`;
+
     const [callRow] = await db.insert(calls).values({
       businessId,
+      contactId: contactRow?.id ?? null,
       callerNumber: fromNumber,
+      callerName: contactRow?.name ?? null,
+      callerLocation: contactRow?.location ?? null,
+      awaitingProfile,
       status: 'ACTIVE',
     }).returning({ id: calls.id });
 
@@ -557,9 +649,11 @@ export async function handleTwilioVoiceWebhook(req: Request, res: Response) {
       ? `<Start><Record recordingStatusCallback="${escapeXml(`${baseUrl}/webhooks/twilio/voice/recording?callId=${encodeURIComponent(callId)}`)}" recordingStatusCallbackMethod="POST" recordingChannels="dual" /></Start>`
       : '';
 
+    await db.insert(transcripts).values({ callId, speaker: 'agent', text: greeting }).catch(() => null);
+
     const speak = `<Say voice="alice" language="${language}">${escapeXml(greeting)}</Say>`;
 
-    const xml = twiml(record + speak + gatherTurn(callId, language, baseUrl, 2));
+    const xml = twiml(record + speak + gatherTurn(callId, language, baseUrl, awaitingProfile ? 6 : 4));
     return res.send(xml);
   } catch (err) {
     logger.error({ err, toNumber, fromNumber }, 'Error handling Twilio voice webhook');
@@ -586,6 +680,50 @@ export async function handleTwilioVoiceGather(req: Request, res: Response) {
 
   try {
     await db.insert(transcripts).values({ callId, speaker: 'caller', text: speechResult });
+
+    const [callRow] = await db.select({
+      businessId: calls.businessId,
+      contactId: calls.contactId,
+      callerNumber: calls.callerNumber,
+      callerName: calls.callerName,
+      callerLocation: calls.callerLocation,
+      awaitingProfile: calls.awaitingProfile,
+    }).from(calls).where(eq(calls.id, callId)).limit(1);
+
+    if (callRow?.awaitingProfile) {
+      const parsed = parseProfileText(speechResult);
+      const finalName = (callRow.callerName ?? '').trim() ? callRow.callerName : parsed.name;
+      const finalLocation = (callRow.callerLocation ?? '').trim() ? callRow.callerLocation : parsed.location;
+
+      const stillNeedsName = !finalName;
+      const stillNeedsLocation = !finalLocation;
+      const stillAwaiting = stillNeedsName || stillNeedsLocation;
+
+      const prompt = stillNeedsName
+        ? "Thanks. What's your name?"
+        : stillNeedsLocation
+          ? `Thanks ${finalName}. Where are you calling from?`
+          : `Thanks ${finalName} from ${finalLocation}. How can I help you today?`;
+
+      await db.update(calls).set({
+        callerName: finalName ?? null,
+        callerLocation: finalLocation ?? null,
+        awaitingProfile: stillAwaiting,
+      }).where(eq(calls.id, callId));
+
+      if (callRow.contactId) {
+        const update: Record<string, unknown> = { updatedAt: new Date() };
+        if (finalName) update.name = finalName;
+        if (finalLocation) update.location = finalLocation;
+        await db.update(contacts).set(update as any).where(eq(contacts.id, callRow.contactId)).catch(() => null);
+      }
+
+      await db.insert(transcripts).values({ callId, speaker: 'agent', text: prompt }).catch(() => null);
+      return res.send(twiml(
+        `<Say voice="alice" language="${language}">${escapeXml(prompt)}</Say>` +
+        gatherTurn(callId, language, baseUrl, stillAwaiting ? 6 : 4),
+      ));
+    }
 
     const compute = computeTwilioTurn(callId, speechResult, baseUrl)
       .then(async (xml) => {

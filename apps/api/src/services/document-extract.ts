@@ -261,6 +261,10 @@ export async function voiceChat(
   messages: ChatMessage[],
   context: {
     businessName: string;
+    callerNumber?: string | null;
+    callerName?: string | null;
+    callerLocation?: string | null;
+    previousCallerSnippets?: string[];
     agentName?: string | null;
     agentLanguage?: string | null;
     faqs: { question: string; answer: string }[];
@@ -288,6 +292,16 @@ export async function voiceChat(
     `You are ${agentName}, a phone customer service agent for "${context.businessName}".`,
     `Tone: ${tone}. Speak naturally as on a real phone call — 1 to 3 short sentences max. Never use bullet points, numbered lists, markdown, or asterisks.`,
     `Do not start your reply with filler acknowledgements like "Alright", "Okay", or "Sure". Start directly with the answer or question.`,
+    (context.callerName || context.callerLocation || context.callerNumber)
+      ? `Caller info: ${[
+        context.callerName ? `Name: ${context.callerName}` : null,
+        context.callerLocation ? `From: ${context.callerLocation}` : null,
+        context.callerNumber ? `Phone: ${context.callerNumber}` : null,
+      ].filter(Boolean).join(' | ')}`
+      : null,
+    context.previousCallerSnippets?.length
+      ? `Previous conversations with this caller (most recent last):\n${context.previousCallerSnippets.slice(-6).join('\n')}`
+      : null,
     lang && lang !== 'en'
       ? `Primary language: ${lang}. Respond in the language the customer uses. If they mix languages (e.g. Pidgin, code-switching), match their style.`
       : `Respond in the same language or dialect the customer uses (English, Nigerian Pidgin, Yoruba, Igbo, etc.). Match their communication style naturally.`,

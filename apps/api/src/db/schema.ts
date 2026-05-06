@@ -116,7 +116,11 @@ export const agentConfigs = pgTable('agent_configs', {
 export const calls = pgTable('calls', {
   id: text('id').primaryKey().$defaultFn(() => randomUUID()),
   businessId: text('business_id').notNull().references(() => businesses.id),
+  contactId: text('contact_id'),
   callerNumber: text('caller_number').notNull(),
+  callerName: text('caller_name'),
+  callerLocation: text('caller_location'),
+  awaitingProfile: boolean('awaiting_profile').default(false).notNull(),
   status: callStatusEnum('status').default('ACTIVE').notNull(),
   resolution: resolutionEnum('resolution'),
   intent: intentEnum('intent'),
@@ -153,6 +157,7 @@ export const contacts = pgTable('contacts', {
   businessId: text('business_id').notNull().references(() => businesses.id, { onDelete: 'cascade' }),
   phone: text('phone').notNull(),
   name: text('name'),
+  location: text('location'),
   email: text('email'),
   notes: text('notes'),
   tags: jsonb('tags').$type<string[]>().default([]).notNull(),
@@ -339,12 +344,26 @@ export const phoneNumberRequests = pgTable('phone_number_requests', {
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 });
 
+export const dataConnectors = pgTable('data_connectors', {
+  id: text('id').primaryKey().$defaultFn(() => randomUUID()),
+  businessId: text('business_id').notNull().unique().references(() => businesses.id, { onDelete: 'cascade' }),
+  baseUrl: text('base_url').notNull(),
+  apiKey: text('api_key').notNull(),
+  enabled: boolean('enabled').default(false).notNull(),
+  lastTestAt: timestamp('last_test_at', { withTimezone: true }),
+  lastTestStatus: text('last_test_status'),
+  lastTestError: text('last_test_error'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
 // ─── Relations ────────────────────────────────────────────────────────────────
 export const businessesRelations = relations(businesses, ({ many, one }) => ({
   phoneNumbers: many(phoneNumbers),
   knowledgeBase: one(knowledgeBases, { fields: [businesses.id], references: [knowledgeBases.businessId] }),
   agentConfig: one(agentConfigs, { fields: [businesses.id], references: [agentConfigs.businessId] }),
   settings: one(businessSettings, { fields: [businesses.id], references: [businessSettings.businessId] }),
+  dataConnector: one(dataConnectors, { fields: [businesses.id], references: [dataConnectors.businessId] }),
   calls: many(calls),
   users: many(users),
   contacts: many(contacts),
@@ -362,6 +381,7 @@ export const usersRelations = relations(users, ({ one }) => ({
 
 export const callsRelations = relations(calls, ({ one, many }) => ({
   business: one(businesses, { fields: [calls.businessId], references: [businesses.id] }),
+  contact: one(contacts, { fields: [calls.contactId], references: [contacts.id] }),
   transcripts: many(transcripts),
   escalation: one(escalations, { fields: [calls.id], references: [escalations.callId] }),
 }));
@@ -374,6 +394,7 @@ export const escalationsRelations = relations(escalations, ({ one }) => ({
 
 export const contactsRelations = relations(contacts, ({ one, many }) => ({
   business: one(businesses, { fields: [contacts.businessId], references: [businesses.id] }),
+  calls: many(calls),
   orders: many(orders),
   appointments: many(appointments),
 }));
@@ -416,3 +437,4 @@ export type BusinessSettings = typeof businessSettings.$inferSelect;
 export type PhoneVerification = typeof phoneVerifications.$inferSelect;
 export type ContactSubmission = typeof contactSubmissions.$inferSelect;
 export type PhoneNumberRequest = typeof phoneNumberRequests.$inferSelect;
+export type DataConnector = typeof dataConnectors.$inferSelect;

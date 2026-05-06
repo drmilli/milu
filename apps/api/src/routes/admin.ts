@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { eq, desc, ilike, and, or, sql, gte, inArray, lt } from 'drizzle-orm';
 import bcrypt from 'bcryptjs';
 import twilio from 'twilio';
-import { db, businesses, users, calls, escalations, phoneNumbers, agentConfigs, notifications, catalogItems, contactSubmissions, phoneNumberRequests } from '../db';
+import { db, businesses, users, calls, escalations, phoneNumbers, agentConfigs, notifications, catalogItems, contactSubmissions, phoneNumberRequests, dataConnectors } from '../db';
 import { logger } from '../config/logger';
 import { adminGuard } from '../middleware/admin-guard';
 import { signAdminToken, verifyAdminToken } from '../utils/jwt';
@@ -213,7 +213,15 @@ adminRouter.get('/businesses', async (req, res, next) => {
         subscriptionTier: businesses.subscriptionTier,
         isActive: businesses.isActive,
         createdAt: businesses.createdAt,
-      }).from(businesses).where(where).orderBy(desc(businesses.createdAt)).limit(limit).offset((page - 1) * limit),
+        connectorEnabled: dataConnectors.enabled,
+        connectorBaseUrl: dataConnectors.baseUrl,
+      })
+        .from(businesses)
+        .leftJoin(dataConnectors, eq(dataConnectors.businessId, businesses.id))
+        .where(where)
+        .orderBy(desc(businesses.createdAt))
+        .limit(limit)
+        .offset((page - 1) * limit),
       db.select({ n: sql<number>`count(*)` }).from(businesses).where(where),
     ]);
 
@@ -237,6 +245,7 @@ adminRouter.get('/businesses', async (req, res, next) => {
         calls: Number(callCountRows[0]?.n ?? 0),
         mrr: isTrial ? 0 : planMrr[b.subscriptionTier] ?? 0,
         joined: b.createdAt.toISOString(),
+        dbConnected: Boolean((b as any).connectorEnabled) && Boolean((b as any).connectorBaseUrl),
       };
     }));
 
@@ -259,9 +268,12 @@ adminRouter.get('/businesses/recent', async (_req, res, next) => {
         ownerEmail: users.email,
         ownerFirstName: users.firstName,
         ownerLastName: users.lastName,
+        connectorEnabled: dataConnectors.enabled,
+        connectorBaseUrl: dataConnectors.baseUrl,
       })
       .from(businesses)
       .leftJoin(users, and(eq(users.businessId, businesses.id), eq(users.role, 'OWNER')))
+      .leftJoin(dataConnectors, eq(dataConnectors.businessId, businesses.id))
       .orderBy(desc(businesses.createdAt))
       .limit(10);
 
@@ -281,6 +293,7 @@ adminRouter.get('/businesses/recent', async (_req, res, next) => {
       owner: r.ownerFirstName
         ? `${r.ownerFirstName} ${r.ownerLastName ?? ''}`.trim()
         : (r.ownerEmail ?? 'Unknown'),
+      dbConnected: Boolean((r as any).connectorEnabled) && Boolean((r as any).connectorBaseUrl),
     })));
   } catch (err) { next(err); }
 });
@@ -508,7 +521,7 @@ adminRouter.get('/businesses/:id', async (req, res, next) => {
 
     const startOfMonth = new Date(); startOfMonth.setDate(1); startOfMonth.setHours(0,0,0,0);
 
-    const [members, recentCalls, callTotal, callMonth, escalationCount, agentRow] = await Promise.all([
+    const [members, recentCalls, callTotal, callMonth, escalationCount, agentRow, connectorRow] = await Promise.all([
       db.select({ id: users.id, email: users.email, firstName: users.firstName, lastName: users.lastName, role: users.role })
         .from(users).where(eq(users.businessId, req.params.id)),
       db.select({ id: calls.id, callerNumber: calls.callerNumber, duration: calls.duration, resolution: calls.resolution, intent: calls.intent, startedAt: calls.startedAt, recordingUrl: calls.recordingUrl })
@@ -517,6 +530,12 @@ adminRouter.get('/businesses/:id', async (req, res, next) => {
       db.select({ n: sql<number>`count(*)` }).from(calls).where(and(eq(calls.businessId, req.params.id), gte(calls.startedAt, startOfMonth))),
       db.select({ n: sql<number>`count(*)` }).from(escalations).where(eq(escalations.businessId, req.params.id)),
       db.select().from(agentConfigs).where(eq(agentConfigs.businessId, req.params.id)).limit(1),
+      db.select({
+        baseUrl: dataConnectors.baseUrl,
+        enabled: dataConnectors.enabled,
+        lastTestAt: dataConnectors.lastTestAt,
+        lastTestStatus: dataConnectors.lastTestStatus,
+      }).from(dataConnectors).where(eq(dataConnectors.businessId, req.params.id)).limit(1),
     ]);
 
     const owner = members.find(m => m.role === 'OWNER');
@@ -541,6 +560,15 @@ adminRouter.get('/businesses/:id', async (req, res, next) => {
       callsTotal: total,
       resolutionRate: total > 0 ? Math.round((aiResolved / Math.min(total, 10)) * 100) : 0,
       escalations: Number(escalationCount[0]?.n ?? 0),
+      dbConnected: Boolean(connectorRow?.[0]?.enabled) && Boolean(connectorRow?.[0]?.baseUrl),
+      dataConnector: connectorRow?.[0]
+        ? {
+          enabled: connectorRow[0].enabled,
+          baseUrl: connectorRow[0].baseUrl,
+          lastTestAt: connectorRow[0].lastTestAt?.toISOString?.() ?? null,
+          lastTestStatus: connectorRow[0].lastTestStatus ?? null,
+        }
+        : null,
       agent: agent ? {
         voiceId: agent.voiceId,
         tone: agent.tone,

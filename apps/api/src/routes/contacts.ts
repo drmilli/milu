@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { eq, and, ilike, desc, sql } from 'drizzle-orm';
+import { eq, and, ilike, desc, sql, or } from 'drizzle-orm';
 import { db, contacts, calls, orders, appointments } from '../db';
 import { authMiddleware } from '../middleware/auth';
 import { audit } from '../services/audit';
@@ -96,6 +96,7 @@ contactsRouter.post('/', async (req, res, next) => {
       businessId: z.string(),
       phone: z.string().min(5),
       name: z.string().optional(),
+      location: z.string().optional(),
       email: z.string().email().optional(),
       notes: z.string().optional(),
       tags: z.array(z.string()).optional(),
@@ -130,7 +131,10 @@ contactsRouter.get('/:id', async (req, res, next) => {
     if (!contact) return res.status(404).json({ error: 'Contact not found' });
 
     const [callHistory, orderHistory, appointmentHistory] = await Promise.all([
-      db.select().from(calls).where(eq(calls.callerNumber, contact.phone)).orderBy(desc(calls.startedAt)).limit(20),
+      db.select().from(calls).where(or(
+        eq(calls.contactId, contact.id),
+        and(eq(calls.businessId, contact.businessId), eq(calls.callerNumber, contact.phone)),
+      )).orderBy(desc(calls.startedAt)).limit(20),
       db.select().from(orders).where(eq(orders.contactId, req.params.id)).orderBy(desc(orders.createdAt)).limit(20),
       db.select().from(appointments).where(eq(appointments.contactId, req.params.id)).orderBy(desc(appointments.scheduledAt)).limit(20),
     ]);
@@ -170,6 +174,7 @@ contactsRouter.patch('/:id', async (req, res, next) => {
   try {
     const data = z.object({
       name: z.string().optional(),
+      location: z.string().optional(),
       email: z.string().email().optional(),
       notes: z.string().optional(),
       tags: z.array(z.string()).optional(),

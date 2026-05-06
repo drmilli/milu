@@ -29,7 +29,10 @@
       "Bash(curl -s http://localhost:4000/docs)",
       "Bash(bash test-at-voice.sh http://localhost:4000 +2342017001479 +2349035735555)",
       "Bash(grep -v \"^\\\\s*$\")",
-      "Bash(grep -v \"^$\")"
+      "Bash(grep -v \"^$\")",
+      "WebFetch(domain:hyperframes.mintlify.app)",
+      "WebFetch(domain:addrom.com)",
+      "WebFetch(domain:blog.nidhin.dev)"
     ],
     "additionalDirectories": [
       "/Users/ok/Documents/projects/milu"

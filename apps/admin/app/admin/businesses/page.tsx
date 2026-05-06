@@ -16,6 +16,7 @@ type Business = {
   mrr: number;
   joined: string;
   industry: string;
+  dbConnected?: boolean;
 };
 
 const planColors: Record<string, string> = {
@@ -145,7 +146,14 @@ export default function BusinessesPage() {
                       <span className="text-xs font-bold text-primary">{b.name[0]}</span>
                     </div>
                     <div>
-                      <p className="font-medium text-primary-dark">{b.name}</p>
+                      <div className="flex items-center gap-2">
+                        <p className="font-medium text-primary-dark">{b.name}</p>
+                        {b.dbConnected && (
+                          <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-sky-500/10 text-sky-700">
+                            DB connected
+                          </span>
+                        )}
+                      </div>
                       <p className="text-xs text-primary-warm">{b.email}</p>
                     </div>
                   </div>

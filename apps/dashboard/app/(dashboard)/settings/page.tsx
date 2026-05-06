@@ -15,6 +15,18 @@ interface Settings {
   whatsappNumber?: string | null;
 }
 
+type DataConnectorState =
+  | { connected: false }
+  | {
+      connected: true;
+      baseUrl: string;
+      enabled: boolean;
+      apiKey: string;
+      lastTestAt?: string | null;
+      lastTestStatus?: string | null;
+      lastTestError?: string | null;
+    };
+
 export default function SettingsPage() {
   const { token, user, ready } = useAuth();
   const businessId = user?.businessId ?? '';
@@ -43,11 +55,23 @@ export default function SettingsPage() {
   const [waCooldown, setWaCooldown] = useState(0);
   const isVerifyingWa = waStep === 'verifying';
 
+  const [connectorBaseUrl, setConnectorBaseUrl] = useState('');
+  const [connectorEnabled, setConnectorEnabled] = useState(false);
+  const [connectorApiKey, setConnectorApiKey] = useState('');
+  const [connectorSaving, setConnectorSaving] = useState(false);
+  const [connectorTesting, setConnectorTesting] = useState(false);
+  const [connectorMsg, setConnectorMsg] = useState('');
+  const [connectorErr, setConnectorErr] = useState('');
+  const [connectorLastTestAt, setConnectorLastTestAt] = useState<string | null>(null);
+  const [connectorLastTestStatus, setConnectorLastTestStatus] = useState<string | null>(null);
+  const [connectorLastTestError, setConnectorLastTestError] = useState<string | null>(null);
+
   const load = useCallback(() => {
     if (!token || !businessId) return;
     Promise.all([
       apiGet<Settings>(`/settings/${businessId}`, token),
-    ]).then(([settings]) => {
+      apiGet<DataConnectorState>(`/businesses/${businessId}/data-connector`, token).catch(() => ({ connected: false } as DataConnectorState)),
+    ]).then(([settings, dc]) => {
       setForm(f => ({
         ...f,
         firstName: user?.firstName ?? '',
@@ -58,6 +82,21 @@ export default function SettingsPage() {
         notifyWeekly: settings.notifyWeekly,
       }));
       if (settings.whatsappNumber) setVerifiedWa(settings.whatsappNumber);
+      if (dc.connected) {
+        setConnectorBaseUrl(dc.baseUrl);
+        setConnectorEnabled(dc.enabled);
+        setConnectorApiKey(dc.apiKey);
+        setConnectorLastTestAt(dc.lastTestAt ?? null);
+        setConnectorLastTestStatus(dc.lastTestStatus ?? null);
+        setConnectorLastTestError(dc.lastTestError ?? null);
+      } else {
+        setConnectorBaseUrl('');
+        setConnectorEnabled(false);
+        setConnectorApiKey('');
+        setConnectorLastTestAt(null);
+        setConnectorLastTestStatus(null);
+        setConnectorLastTestError(null);
+      }
     }).catch((err: unknown) => {
       const msg = err instanceof Error ? err.message : '';
       if (msg.toLowerCase().includes('upgrade')) {
@@ -164,6 +203,60 @@ export default function SettingsPage() {
     } finally {
       setSaving(false);
     }
+  }
+
+  async function saveConnector(rotateKey = false) {
+    if (!token || !businessId) return;
+    setConnectorSaving(true);
+    setConnectorErr('');
+    setConnectorMsg('');
+    try {
+      const res = await apiPut<DataConnectorState>(`/businesses/${businessId}/data-connector`, {
+        baseUrl: connectorBaseUrl,
+        enabled: connectorEnabled,
+        rotateKey,
+      }, token);
+      if (res.connected) {
+        setConnectorApiKey(res.apiKey);
+        setConnectorLastTestAt(res.lastTestAt ?? null);
+        setConnectorLastTestStatus(res.lastTestStatus ?? null);
+        setConnectorLastTestError(res.lastTestError ?? null);
+      }
+      setConnectorMsg('Saved');
+      setTimeout(() => setConnectorMsg(''), 1500);
+    } catch (err: unknown) {
+      setConnectorErr(err instanceof Error ? err.message : 'Failed to save connector');
+    } finally {
+      setConnectorSaving(false);
+    }
+  }
+
+  async function testConnector() {
+    if (!token || !businessId) return;
+    setConnectorTesting(true);
+    setConnectorErr('');
+    setConnectorMsg('');
+    try {
+      const res = await apiPost<{ ok: boolean; status: number; error?: string | null }>(`/businesses/${businessId}/data-connector/test`, {}, token);
+      setConnectorMsg(res.ok ? 'Connection OK' : `Test failed (${res.status})`);
+      const dc = await apiGet<DataConnectorState>(`/businesses/${businessId}/data-connector`, token).catch(() => ({ connected: false } as DataConnectorState));
+      if (dc.connected) {
+        setConnectorLastTestAt(dc.lastTestAt ?? null);
+        setConnectorLastTestStatus(dc.lastTestStatus ?? null);
+        setConnectorLastTestError(dc.lastTestError ?? null);
+      }
+    } catch (err: unknown) {
+      setConnectorErr(err instanceof Error ? err.message : 'Test failed');
+    } finally {
+      setConnectorTesting(false);
+    }
+  }
+
+  function copy(text: string) {
+    if (!text) return;
+    navigator.clipboard.writeText(text).catch(() => null);
+    setConnectorMsg('Copied');
+    setTimeout(() => setConnectorMsg(''), 1200);
   }
 
   return (
@@ -330,6 +423,137 @@ export default function SettingsPage() {
             </button>
           </div>
         ))}
+      </div>
+
+      {/* Data connector */}
+      <div className="bg-white rounded-2xl border border-cream-dark p-6 space-y-4">
+        <div>
+          <h2 className="font-semibold text-primary-dark">Data connector</h2>
+          <p className="text-xs text-primary-warm mt-0.5">
+            Connect Milu to your backend so it can read real-time data like orders and payments.
+          </p>
+        </div>
+
+        <div className="space-y-3">
+          <div>
+            <label className="block text-xs font-medium text-primary-dark mb-1.5">Base URL</label>
+            <input
+              className={inputCls}
+              placeholder="https://your-backend.com"
+              value={connectorBaseUrl}
+              onChange={(e) => setConnectorBaseUrl(e.target.value)}
+            />
+          </div>
+
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <p className="text-sm font-medium text-primary-dark">Enable connector</p>
+              <p className="text-xs text-primary-warm">Milu will call your endpoints with the API key below.</p>
+            </div>
+            <button
+              onClick={() => setConnectorEnabled(v => !v)}
+              className={`relative w-11 h-6 rounded-full transition-colors flex-shrink-0 ${
+                connectorEnabled ? 'bg-primary' : 'bg-cream-dark'
+              }`}
+            >
+              <span className={`absolute left-0 top-0.5 w-5 h-5 bg-white rounded-full shadow-sm transition-transform duration-200 ${
+                connectorEnabled ? 'translate-x-5' : 'translate-x-0.5'
+              }`} />
+            </button>
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-primary-dark mb-1.5">API key</label>
+            <div className="flex gap-2">
+              <input className={inputCls} value={connectorApiKey ? `${connectorApiKey.slice(0, 6)}…${connectorApiKey.slice(-6)}` : ''} readOnly />
+              <button
+                onClick={() => copy(connectorApiKey)}
+                disabled={!connectorApiKey}
+                className="flex-shrink-0 px-4 py-2.5 bg-cream border border-cream-dark rounded-xl text-sm font-medium hover:bg-cream-dark/40 transition-colors disabled:opacity-50"
+              >
+                Copy
+              </button>
+            </div>
+            <p className="text-xs text-primary-warm mt-1">Store this key in your backend. It is used to authenticate Milu requests.</p>
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            <button
+              onClick={() => saveConnector(false)}
+              disabled={connectorSaving || !connectorBaseUrl.trim()}
+              className="px-4 py-2.5 bg-primary text-cream-light rounded-xl text-sm font-medium hover:bg-primary-dark transition-colors disabled:opacity-50"
+            >
+              {connectorSaving ? 'Saving…' : 'Save'}
+            </button>
+            <button
+              onClick={testConnector}
+              disabled={connectorTesting || !connectorApiKey}
+              className="px-4 py-2.5 bg-cream border border-cream-dark rounded-xl text-sm font-medium hover:bg-cream-dark/40 transition-colors disabled:opacity-50"
+            >
+              {connectorTesting ? 'Testing…' : 'Test connection'}
+            </button>
+            <button
+              onClick={() => saveConnector(true)}
+              disabled={connectorSaving || !connectorBaseUrl.trim()}
+              className="px-4 py-2.5 text-danger border border-danger/30 rounded-xl text-sm font-medium hover:bg-danger/5 transition-colors disabled:opacity-50"
+            >
+              Rotate key
+            </button>
+          </div>
+
+          {(connectorLastTestAt || connectorLastTestStatus || connectorLastTestError) && (
+            <div className="text-xs text-primary-warm">
+              {connectorLastTestAt && <p>Last test: {new Date(connectorLastTestAt).toLocaleString()}</p>}
+              {connectorLastTestStatus && <p>Status: {connectorLastTestStatus}</p>}
+              {connectorLastTestError && <p className="text-danger">Error: {connectorLastTestError}</p>}
+            </div>
+          )}
+
+          {connectorErr && <p className="text-xs text-danger bg-danger/5 border border-danger/20 rounded-lg px-3 py-2">{connectorErr}</p>}
+          {connectorMsg && <p className="text-xs text-success bg-success/5 border border-success/20 rounded-lg px-3 py-2">{connectorMsg}</p>}
+        </div>
+
+        <div className="rounded-xl border border-cream-dark bg-cream-light p-4">
+          <p className="text-xs font-semibold text-primary-dark mb-2">Backend requirements</p>
+          <pre className="text-xs text-primary-warm whitespace-pre-wrap leading-relaxed">
+{`Your backend must expose these endpoints:
+
+GET /milu/health
+  - return 200 JSON: {"ok": true}
+
+Recommended endpoints (you control what you expose):
+GET /milu/orders?phone=+234...&limit=10
+GET /milu/orders/:id
+GET /milu/payments?phone=+234...&status=failed&limit=10
+GET /milu/users?phone=+234...
+
+All requests from Milu include:
+  X-Milu-Api-Key: <your api key>
+
+How it works (simple):
+1) You enter your Base URL here and enable the connector.
+2) Milu calls your endpoints with X-Milu-Api-Key for authentication.
+3) Your backend checks the key and returns JSON.
+4) Use “Test connection” to verify /milu/health is reachable.
+
+Example (Node/Express):
+app.get('/milu/health', (req, res) => {
+  if (req.header('X-Milu-Api-Key') !== process.env.MILU_API_KEY) {
+    return res.status(401).json({ ok: false });
+  }
+  return res.json({ ok: true });
+});
+
+Example (curl):
+curl -H "X-Milu-Api-Key: <key>" https://your-backend.com/milu/health
+
+Base URL example:
+  https://your-backend.com
+
+Milu will call:
+  https://your-backend.com/milu/health`}
+          </pre>
+        </div>
       </div>
 
       {/* Danger zone */}

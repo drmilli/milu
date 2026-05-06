@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { eq, and, desc, sql } from 'drizzle-orm';
-import { db, businesses, knowledgeBases, knowledgeDocuments, kbChats, phoneNumbers, users, phoneVerifications, notifications, catalogItems, phoneNumberRequests } from '../db';
+import { db, businesses, knowledgeBases, knowledgeDocuments, kbChats, phoneNumbers, users, phoneVerifications, notifications, catalogItems, phoneNumberRequests, dataConnectors } from '../db';
 import { authMiddleware } from '../middleware/auth';
 import { sendCustomSms } from '../services/sms';
 import { searchAvailableNumbers, purchaseNumber, releaseNumber } from '../services/infobip';
@@ -26,6 +26,10 @@ function denyIfCoreOnly(req: any, res: any): boolean {
     return true;
   }
   return false;
+}
+
+function normalizeBaseUrl(input: string) {
+  return input.trim().replace(/\/+$/, '');
 }
 
 /**
@@ -740,6 +744,138 @@ businessesRouter.post('/:id/phone-number-requests', async (req, res, next) => {
     await audit(req, 'phone_number.requested', 'phone_number_request', row?.id ?? '', { quantity, checkoutUrl: CHECKOUT_URL });
 
     return res.status(201).json({ id: row?.id, checkoutUrl: CHECKOUT_URL, amountUsd: AMOUNT_USD_PER, quantity, createdAt: row?.createdAt?.toISOString() });
+  } catch (err) { next(err); }
+});
+
+// ─── Data Connector (Option A) ────────────────────────────────────────────────
+
+businessesRouter.get('/:id/data-connector', async (req, res, next) => {
+  try {
+    if (denyIfCoreOnly(req, res)) return;
+    if (req.user?.role !== 'OWNER') return res.status(403).json({ error: 'Business access required' });
+    if (!req.user.businessId || req.user.businessId !== req.params.id) return res.status(403).json({ error: 'Forbidden' });
+
+    const [row] = await db.select({
+      baseUrl: dataConnectors.baseUrl,
+      enabled: dataConnectors.enabled,
+      apiKey: dataConnectors.apiKey,
+      lastTestAt: dataConnectors.lastTestAt,
+      lastTestStatus: dataConnectors.lastTestStatus,
+      lastTestError: dataConnectors.lastTestError,
+      createdAt: dataConnectors.createdAt,
+      updatedAt: dataConnectors.updatedAt,
+    }).from(dataConnectors).where(eq(dataConnectors.businessId, req.params.id)).limit(1);
+
+    if (!row) return res.json({ connected: false });
+    return res.json({
+      connected: true,
+      baseUrl: row.baseUrl,
+      enabled: row.enabled,
+      apiKey: row.apiKey,
+      lastTestAt: row.lastTestAt?.toISOString?.() ?? null,
+      lastTestStatus: row.lastTestStatus ?? null,
+      lastTestError: row.lastTestError ?? null,
+      createdAt: row.createdAt.toISOString(),
+      updatedAt: row.updatedAt.toISOString(),
+    });
+  } catch (err) { next(err); }
+});
+
+businessesRouter.put('/:id/data-connector', async (req, res, next) => {
+  try {
+    if (denyIfCoreOnly(req, res)) return;
+    if (req.user?.role !== 'OWNER') return res.status(403).json({ error: 'Business access required' });
+    if (!req.user.businessId || req.user.businessId !== req.params.id) return res.status(403).json({ error: 'Forbidden' });
+
+    const data = z.object({
+      baseUrl: z.string().url(),
+      enabled: z.boolean().default(true),
+      rotateKey: z.boolean().optional(),
+    }).parse(req.body);
+
+    const baseUrl = normalizeBaseUrl(data.baseUrl);
+    const now = new Date();
+
+    const [existing] = await db.select({ id: dataConnectors.id, apiKey: dataConnectors.apiKey }).from(dataConnectors)
+      .where(eq(dataConnectors.businessId, req.params.id)).limit(1);
+
+    const apiKey = data.rotateKey || !existing
+      ? crypto.randomBytes(24).toString('hex')
+      : existing.apiKey;
+
+    const [row] = existing
+      ? await db.update(dataConnectors).set({
+        baseUrl,
+        enabled: data.enabled,
+        apiKey,
+        updatedAt: now,
+      }).where(eq(dataConnectors.businessId, req.params.id)).returning()
+      : await db.insert(dataConnectors).values({
+        businessId: req.params.id,
+        baseUrl,
+        enabled: data.enabled,
+        apiKey,
+        createdAt: now,
+        updatedAt: now,
+      }).returning();
+
+    await audit(req, 'data_connector.updated', 'data_connector', row?.id ?? '', { baseUrl, enabled: data.enabled });
+    return res.json({
+      connected: true,
+      baseUrl: row.baseUrl,
+      enabled: row.enabled,
+      apiKey: row.apiKey,
+      lastTestAt: row.lastTestAt?.toISOString?.() ?? null,
+      lastTestStatus: row.lastTestStatus ?? null,
+      lastTestError: row.lastTestError ?? null,
+      createdAt: row.createdAt.toISOString(),
+      updatedAt: row.updatedAt.toISOString(),
+    });
+  } catch (err) { next(err); }
+});
+
+businessesRouter.post('/:id/data-connector/test', async (req, res, next) => {
+  try {
+    if (denyIfCoreOnly(req, res)) return;
+    if (req.user?.role !== 'OWNER') return res.status(403).json({ error: 'Business access required' });
+    if (!req.user.businessId || req.user.businessId !== req.params.id) return res.status(403).json({ error: 'Forbidden' });
+
+    const [row] = await db.select({
+      id: dataConnectors.id,
+      baseUrl: dataConnectors.baseUrl,
+      apiKey: dataConnectors.apiKey,
+    }).from(dataConnectors).where(eq(dataConnectors.businessId, req.params.id)).limit(1);
+    if (!row) return res.status(404).json({ error: 'Connector not configured' });
+
+    const url = `${normalizeBaseUrl(row.baseUrl)}/milu/health`;
+    const now = new Date();
+    let ok = false;
+    let status = 0;
+    let body: unknown = null;
+    let error: string | null = null;
+
+    try {
+      const r = await fetch(url, {
+        method: 'GET',
+        headers: { 'X-Milu-Api-Key': row.apiKey, 'Accept': 'application/json' },
+        signal: AbortSignal.timeout(8000),
+      });
+      status = r.status;
+      ok = r.ok;
+      body = await r.json().catch(() => null);
+      if (!ok) error = `HTTP ${status}`;
+    } catch (e: unknown) {
+      error = e instanceof Error ? e.message : 'Request failed';
+    }
+
+    await db.update(dataConnectors).set({
+      lastTestAt: now,
+      lastTestStatus: ok ? 'OK' : 'FAILED',
+      lastTestError: ok ? null : (error ?? 'FAILED'),
+      updatedAt: now,
+    }).where(eq(dataConnectors.id, row.id));
+
+    return res.json({ ok, status, body, error });
   } catch (err) { next(err); }
 });
 
