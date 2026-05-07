@@ -14,6 +14,7 @@ interface FormData {
   firstName: string;
   lastName: string;
   email: string;
+  contactNumber: string;
   password: string;
   confirmPassword: string;
   // Step 2 (verify email)
@@ -35,7 +36,7 @@ interface FormData {
 }
 
 const INITIAL: FormData = {
-  firstName: '', lastName: '', email: '', password: '', confirmPassword: '',
+  firstName: '', lastName: '', email: '', contactNumber: '', password: '', confirmPassword: '',
   verificationCode: '',
   businessName: '', industry: '', weekdays: '8:00 AM – 8:00 PM', saturday: '9:00 AM – 6:00 PM', sunday: 'Closed',
   faqs: [{ question: '', answer: '' }],
@@ -133,6 +134,10 @@ function Step1({ data, set }: { data: FormData; set: (k: keyof FormData, v: stri
       <Field label="Work email" id="email">
         <input id="email" type="email" className={inputCls} placeholder="amaka@yourbusiness.ng"
           value={data.email} onChange={e => set('email', e.target.value)} />
+      </Field>
+      <Field label="Contact number" id="contactNumber">
+        <input id="contactNumber" className={inputCls} placeholder="+234 801 234 5678"
+          value={data.contactNumber} onChange={e => set('contactNumber', e.target.value)} />
       </Field>
       <Field label="Password" id="password">
         <div className="relative">
@@ -585,6 +590,7 @@ export default function RegisterPage() {
             email: data.email,
             password: data.password,
             businessName: data.businessName || data.firstName + "'s Business",
+            contactNumber: data.contactNumber,
             firstName: data.firstName,
             lastName: data.lastName,
           },
@@ -663,6 +669,7 @@ export default function RegisterPage() {
       return (
         data.firstName.trim() &&
         data.email.trim() &&
+        data.contactNumber.trim().length > 6 &&
         data.password.length >= 8 &&
         data.password === data.confirmPassword
       );

@@ -282,7 +282,7 @@ async function ttsUrl(text: string, voiceId: string | null | undefined, baseUrl:
       input: text,
       format: 'mp3',
     }),
-    signal: AbortSignal.timeout(20000),
+    signal: AbortSignal.timeout(8000),
   });
 
   if (!res.ok) {
@@ -303,6 +303,34 @@ async function ttsUrl(text: string, voiceId: string | null | undefined, baseUrl:
 }
 
 const twilioTwimlCache = new Map<string, { xml: string; expiresAt: number }>();
+
+function sayTag(text: string, language: string) {
+  return `<Say voice="alice" language="${language}">${escapeXml(text)}</Say>`;
+}
+
+function playTag(url: string) {
+  return `<Play>${escapeXml(url)}</Play>`;
+}
+
+async function speakTag(
+  text: string,
+  voiceId: string | null | undefined,
+  language: string,
+  baseUrl: string,
+  timeoutMs: number,
+) {
+  const trimmed = text.trim();
+  const short = trimmed.length > 700 ? trimmed.slice(0, 700) : trimmed;
+
+  if (!env.OPENAI_API_KEY) return sayTag(short, language);
+
+  const url = await Promise.race<string | null>([
+    ttsUrl(short, voiceId, baseUrl),
+    new Promise<null>((resolve) => setTimeout(() => resolve(null), timeoutMs)),
+  ]);
+
+  return url ? playTag(url) : sayTag(short, language);
+}
 
 function twilioCacheSet(callId: string, xml: string) {
   twilioTwimlCache.set(callId, { xml, expiresAt: Date.now() + 2 * 60 * 1000 });
@@ -502,17 +530,17 @@ async function computeTwilioTurn(callId: string, speechResult: string, baseUrl: 
   if (action === 'escalate') {
     await handleEscalation(callId, callRow.businessId, callRow.callerNumber ?? '', speechResult);
     await db.update(calls).set({ status: 'COMPLETED', resolution: 'HUMAN', endedAt: new Date() }).where(eq(calls.id, callId));
-    const speak = `<Say voice="alice" language="${language}">${escapeXml(reply)}</Say>`;
+    const speak = await speakTag(reply, agentRow?.voiceId, language, baseUrl, 2500);
     return twiml(`${speak}<Hangup/>`);
   }
 
   if (action === 'end') {
     await db.update(calls).set({ status: 'COMPLETED', resolution: 'AI', endedAt: new Date() }).where(eq(calls.id, callId));
-    const speak = `<Say voice="alice" language="${language}">${escapeXml(reply)}</Say>`;
+    const speak = await speakTag(reply, agentRow?.voiceId, language, baseUrl, 2500);
     return twiml(`${speak}<Hangup/>`);
   }
 
-  const speak = `<Say voice="alice" language="${language}">${escapeXml(reply)}</Say>`;
+  const speak = await speakTag(reply, agentRow?.voiceId, language, baseUrl, 2500);
   return twiml(speak + gatherTurn(callId, language, baseUrl));
 }
 
@@ -651,7 +679,7 @@ export async function handleTwilioVoiceWebhook(req: Request, res: Response) {
 
     await db.insert(transcripts).values({ callId, speaker: 'agent', text: greeting }).catch(() => null);
 
-    const speak = `<Say voice="alice" language="${language}">${escapeXml(greeting)}</Say>`;
+    const speak = await speakTag(greeting, agentRow?.voiceId, language, baseUrl, 1500);
 
     const xml = twiml(record + speak + gatherTurn(callId, language, baseUrl, awaitingProfile ? 6 : 4));
     return res.send(xml);
@@ -672,7 +700,7 @@ export async function handleTwilioVoiceGather(req: Request, res: Response) {
   logger.info({ callId, speechResult: speechResult.slice(0, 200) }, 'Twilio voice gather input');
 
   const retry = twiml(
-    `<Say voice="alice" language="${language}">${escapeXml("Sorry, I didn't catch that. Could you please repeat?")}</Say>` +
+    sayTag("Sorry, I didn't catch that. Could you please repeat?", language) +
     gatherTurn(callId, language, baseUrl),
   );
 
@@ -719,8 +747,9 @@ export async function handleTwilioVoiceGather(req: Request, res: Response) {
       }
 
       await db.insert(transcripts).values({ callId, speaker: 'agent', text: prompt }).catch(() => null);
+      const speak = await speakTag(prompt, null, language, baseUrl, 2000);
       return res.send(twiml(
-        `<Say voice="alice" language="${language}">${escapeXml(prompt)}</Say>` +
+        speak +
         gatherTurn(callId, language, baseUrl, stillAwaiting ? 6 : 4),
       ));
     }
@@ -741,7 +770,7 @@ export async function handleTwilioVoiceGather(req: Request, res: Response) {
     ]);
 
     if (quick) return res.send(quick);
-    return res.send(twiml('<Pause length="1"/>' + redirectToRespond(callId, baseUrl, 0)));
+    return res.send(twiml(redirectToRespond(callId, baseUrl, 0)));
   } catch (err) {
     logger.error({ err, callId }, 'Error handling Twilio voice gather');
     return res.send(retry);
@@ -763,7 +792,7 @@ export async function handleTwilioVoiceRespond(req: Request, res: Response) {
 
   if (Number.isFinite(attempt) && attempt >= 8) {
     return res.send(twiml(
-      `<Say voice="alice" language="${language}">${escapeXml("Sorry, I'm taking longer than expected. Please say that again.")}</Say>` +
+      sayTag("Sorry, I'm taking longer than expected. Please say that again.", language) +
       gatherTurn(callId, language, baseUrl),
     ));
   }

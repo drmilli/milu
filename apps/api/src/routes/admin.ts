@@ -551,7 +551,7 @@ adminRouter.get('/businesses/:id', async (req, res, next) => {
       industry: biz.industry ?? '',
       owner: owner ? [owner.firstName, owner.lastName].filter(Boolean).join(' ') || owner.email : 'Unknown',
       email: owner?.email ?? '',
-      phone: undefined,
+      phone: biz.contactPhone ?? undefined,
       plan: isTrial ? 'Trial' : biz.subscriptionTier === 'ONE_TIME' ? 'One-time' : biz.subscriptionTier === 'STARTER' ? 'Starter' : biz.subscriptionTier === 'GROWTH' ? 'Growth' : 'Enterprise',
       status: biz.isActive ? 'active' : 'suspended',
       joined: biz.createdAt.toISOString(),

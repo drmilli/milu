@@ -21,6 +21,7 @@ export const businesses = pgTable('businesses', {
   id: text('id').primaryKey().$defaultFn(() => randomUUID()),
   name: text('name').notNull(),
   industry: text('industry'),
+  contactPhone: text('contact_phone'),
   subscriptionTier: subscriptionTierEnum('subscription_tier').default('STARTER').notNull(),
   isActive: boolean('is_active').default(true).notNull(),
   config: jsonb('config').$type<Record<string, unknown>>().default({}).notNull(),

@@ -34,6 +34,7 @@ export const authRouter: Router = Router();
  *               email: { type: string, format: email }
  *               password: { type: string, minLength: 8 }
  *               businessName: { type: string }
+ *               contactNumber: { type: string }
  *               firstName: { type: string }
  *               lastName: { type: string }
  *     responses:
@@ -55,10 +56,11 @@ authRouter.post('/register', authLimiter, async (req, res, next) => {
       email: z.string().email(),
       password: z.string().min(8),
       businessName: z.string().min(1),
+      contactNumber: z.string().min(6).optional(),
       firstName: z.string().optional(),
       lastName: z.string().optional(),
     });
-    const { email, password, businessName, firstName, lastName } = schema.parse(req.body);
+    const { email, password, businessName, contactNumber, firstName, lastName } = schema.parse(req.body);
 
     const existing = await db.select({ id: users.id }).from(users).where(eq(users.email, email)).limit(1);
     if (existing.length) return res.status(409).json({ error: 'Email already registered' });
@@ -69,7 +71,11 @@ authRouter.post('/register', authLimiter, async (req, res, next) => {
     const businessId = crypto.randomUUID();
     const userId = crypto.randomUUID();
 
-    await db.insert(businesses).values({ id: businessId, name: businessName });
+    await db.insert(businesses).values({
+      id: businessId,
+      name: businessName,
+      contactPhone: contactNumber?.trim() ? contactNumber.trim() : undefined,
+    });
     await db.insert(knowledgeBases).values({ businessId, businessName });
     await db.insert(users).values({
       id: userId,
