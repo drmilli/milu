@@ -141,11 +141,12 @@ function CallsPageInner() {
       if (!c?.id) return;
       setContact(c);
       try {
-        const detail = await apiGet<{ calls?: Call[] }>(`/contacts/${c.id}`, token);
-        const mapped = (detail.calls ?? []).map((r: any) => ({
+        type ContactCall = Call & { duration?: number | null };
+        const detail = await apiGet<{ calls?: ContactCall[] }>(`/contacts/${c.id}`, token);
+        const mapped: Call[] = (detail.calls ?? []).map((r) => ({
           ...r,
-          durationSeconds: r.durationSeconds ?? r.duration,
-        })) as Call[];
+          durationSeconds: r.durationSeconds ?? (typeof r.duration === 'number' ? r.duration : undefined),
+        }));
         setHistoryCalls(mapped.filter(r => r.id !== selected.id));
       } catch {
         setHistoryCalls([]);
