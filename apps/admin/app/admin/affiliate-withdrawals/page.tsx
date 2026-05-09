@@ -65,7 +65,7 @@ export default function AffiliateWithdrawalsPage() {
         <select
           className="px-4 py-2.5 rounded-xl border border-cream-dark bg-white text-sm text-primary-dark"
           value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value as any)}
+          onChange={(e) => setStatusFilter(e.target.value as 'all' | Withdrawal['status'])}
         >
           <option value="all">All</option>
           <option value="NEW">NEW</option>
