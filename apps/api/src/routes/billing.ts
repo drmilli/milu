@@ -2,11 +2,12 @@ import { Router } from 'express';
 import crypto from 'crypto';
 import { z } from 'zod';
 import { and, eq, sql, gte } from 'drizzle-orm';
-import { db, businesses, users, calls } from '../db';
+import { db, businesses, users, calls, affiliateAgents, affiliateCommissions, affiliateReferrals, affiliateSettings } from '../db';
 import { authMiddleware } from '../middleware/auth';
 import { env } from '../config/env';
 import { sendSubscriptionConfirmEmail, sendSubscriptionCancelledEmail } from '../utils/email';
 import { logger } from '../config/logger';
+import { sendNotification } from '../services/notifications';
 
 export const billingRouter: Router = Router();
 
@@ -328,6 +329,86 @@ export async function handleWhopWebhook(req: import('express').Request, res: imp
           const [biz] = await db.select({ name: businesses.name }).from(businesses).where(eq(businesses.id, businessId)).limit(1);
           if (owner[0] && biz) {
             await sendSubscriptionConfirmEmail(owner[0].email, tier, biz.name);
+          }
+
+          if (event.action === 'payment.completed') {
+            const paymentRef = String(
+              (event.data as any).id ??
+              (event.data as any).payment_id ??
+              (event.data as any).transaction_id ??
+              (event.data as any).membership_id ??
+              (rawBody ? crypto.createHash('sha256').update(rawBody).digest('hex') : `${Date.now()}`),
+            );
+
+            const [bizRow] = await db.select({
+              affiliateAgentId: businesses.affiliateAgentId,
+            }).from(businesses).where(eq(businesses.id, businessId)).limit(1);
+
+            const agentId = bizRow?.affiliateAgentId ?? null;
+            if (agentId) {
+              const [ref] = await db.select({
+                id: affiliateReferrals.id,
+                eligibilityEndsAt: affiliateReferrals.eligibilityEndsAt,
+              }).from(affiliateReferrals).where(eq(affiliateReferrals.businessId, businessId)).limit(1);
+
+              if (ref && ref.eligibilityEndsAt > new Date()) {
+                const [agent] = await db.select({
+                  id: affiliateAgents.id,
+                  name: affiliateAgents.name,
+                  email: affiliateAgents.email,
+                  status: affiliateAgents.status,
+                  commissionPercent: affiliateAgents.commissionPercent,
+                }).from(affiliateAgents).where(eq(affiliateAgents.id, agentId)).limit(1);
+
+                if (agent && agent.status !== 'BANNED') {
+                  const [settings] = await db.select({
+                    defaultCommissionPercent: affiliateSettings.defaultCommissionPercent,
+                  }).from(affiliateSettings).limit(1);
+
+                  const percent = agent.commissionPercent ?? settings?.defaultCommissionPercent ?? 15;
+
+                  const metaAmount = (event.data as any).amount_usd ?? (event.data as any).amountUsd ?? (event.data as any).amount ?? (event.data as any).total;
+                  const parsed = typeof metaAmount === 'number'
+                    ? metaAmount
+                    : typeof metaAmount === 'string'
+                      ? Number(metaAmount)
+                      : NaN;
+                  const amountPaidUsd = Number.isFinite(parsed) && parsed > 0
+                    ? Math.round(parsed)
+                    : (TIER_META[tier]?.priceUsd ?? 0);
+
+                  const commissionAmountUsd = Math.max(0, Math.round((amountPaidUsd * percent) / 100));
+                  const status = agent.status === 'SUSPENDED' ? 'LOCKED' : 'CONFIRMED';
+
+                  const existing = await db.select({ id: affiliateCommissions.id })
+                    .from(affiliateCommissions)
+                    .where(and(eq(affiliateCommissions.affiliateAgentId, agent.id), eq(affiliateCommissions.paymentRef, paymentRef)))
+                    .limit(1);
+
+                  if (!existing.length && amountPaidUsd > 0 && commissionAmountUsd > 0) {
+                    await db.insert(affiliateCommissions).values({
+                      affiliateAgentId: agent.id,
+                      businessId,
+                      paymentRef,
+                      amountPaidUsd,
+                      commissionPercent: percent,
+                      commissionAmountUsd,
+                      status,
+                    });
+
+                    if (status === 'CONFIRMED') {
+                      sendNotification({
+                        title: 'Commission earned',
+                        body: `Hi ${agent.name},\n\nYou earned a $${commissionAmountUsd} commission from a referred business payment.\n\nPayment: $${amountPaidUsd}\nCommission rate: ${percent}%`,
+                        channel: 'EMAIL',
+                        recipient: agent.email,
+                        data: { affiliateAgentId: agent.id, businessId, paymentRef },
+                      }).catch(() => null);
+                    }
+                  }
+                }
+              }
+            }
           }
         }
         break;

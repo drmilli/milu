@@ -38,6 +38,7 @@ import { auditLogsRouter } from './routes/auditLogs';
 import { apiKeysRouter } from './routes/apiKeys';
 import { redis, ttsStoreDelete, ttsStoreGet } from './utils/redis';
 import { sendNotification } from './services/notifications';
+import { affiliateAuthRouter, affiliateRouter } from './routes/affiliate';
 
 const app: Express = express();
 const server = http.createServer(app);
@@ -216,6 +217,8 @@ app.use('/api/v1/reports', reportsRouter);
 app.use('/api/v1/webhooks/configs', webhookConfigRouter);
 app.use('/api/v1/audit-logs', auditLogsRouter);
 app.use('/api/v1/api-keys', apiKeysRouter);
+app.use('/api/v1/affiliate/auth', affiliateAuthRouter);
+app.use('/api/v1/affiliate', affiliateRouter);
 
 app.use(errorHandler);
 

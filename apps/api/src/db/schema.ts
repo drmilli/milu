@@ -15,6 +15,9 @@ export const notificationChannelEnum = pgEnum('notification_channel', ['IN_APP',
 export const notificationStatusEnum = pgEnum('notification_status', ['PENDING', 'SENT', 'FAILED', 'READ']);
 export const escalationStatusEnum = pgEnum('escalation_status', ['OPEN', 'ASSIGNED', 'RESOLVED']);
 export const catalogItemTypeEnum = pgEnum('catalog_item_type', ['PRODUCT', 'SERVICE']);
+export const affiliateAgentStatusEnum = pgEnum('affiliate_agent_status', ['ACTIVE', 'SUSPENDED', 'BANNED']);
+export const affiliateCommissionStatusEnum = pgEnum('affiliate_commission_status', ['PENDING', 'CONFIRMED', 'REVERSED', 'LOCKED']);
+export const affiliateWithdrawalStatusEnum = pgEnum('affiliate_withdrawal_status', ['NEW', 'APPROVED', 'PAID', 'REJECTED']);
 
 // ─── Core ─────────────────────────────────────────────────────────────────────
 export const businesses = pgTable('businesses', {
@@ -22,6 +25,9 @@ export const businesses = pgTable('businesses', {
   name: text('name').notNull(),
   industry: text('industry'),
   contactPhone: text('contact_phone'),
+  affiliateAgentId: text('affiliate_agent_id'),
+  affiliateReferralCode: text('affiliate_referral_code'),
+  affiliateReferredAt: timestamp('affiliate_referred_at', { withTimezone: true }),
   subscriptionTier: subscriptionTierEnum('subscription_tier').default('STARTER').notNull(),
   isActive: boolean('is_active').default(true).notNull(),
   config: jsonb('config').$type<Record<string, unknown>>().default({}).notNull(),
@@ -110,6 +116,61 @@ export const agentConfigs = pgTable('agent_configs', {
   clonedVoiceName: text('cloned_voice_name'),
   businessHoursOnly: boolean('business_hours_only').default(false).notNull(),
   afterHoursMessage: text('after_hours_message'),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+// ─── Affiliates ───────────────────────────────────────────────────────────────
+export const affiliateAgents = pgTable('affiliate_agents', {
+  id: text('id').primaryKey().$defaultFn(() => randomUUID()),
+  name: text('name').notNull(),
+  email: text('email').notNull().unique(),
+  password: text('password').notNull(),
+  referralCode: text('referral_code').notNull().unique(),
+  status: affiliateAgentStatusEnum('status').default('ACTIVE').notNull(),
+  commissionPercent: integer('commission_percent'),
+  commissionMonths: integer('commission_months'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+export const affiliateSettings = pgTable('affiliate_settings', {
+  id: text('id').primaryKey().$defaultFn(() => randomUUID()),
+  defaultCommissionPercent: integer('default_commission_percent').default(15).notNull(),
+  defaultCommissionMonths: integer('default_commission_months').default(12).notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+export const affiliateReferrals = pgTable('affiliate_referrals', {
+  id: text('id').primaryKey().$defaultFn(() => randomUUID()),
+  affiliateAgentId: text('affiliate_agent_id').notNull().references(() => affiliateAgents.id, { onDelete: 'cascade' }),
+  businessId: text('business_id').notNull().unique().references(() => businesses.id, { onDelete: 'cascade' }),
+  referralCode: text('referral_code').notNull(),
+  referredAt: timestamp('referred_at', { withTimezone: true }).defaultNow().notNull(),
+  eligibilityEndsAt: timestamp('eligibility_ends_at', { withTimezone: true }).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+export const affiliateCommissions = pgTable('affiliate_commissions', {
+  id: text('id').primaryKey().$defaultFn(() => randomUUID()),
+  affiliateAgentId: text('affiliate_agent_id').notNull().references(() => affiliateAgents.id, { onDelete: 'cascade' }),
+  businessId: text('business_id').notNull().references(() => businesses.id, { onDelete: 'cascade' }),
+  paymentRef: text('payment_ref'),
+  amountPaidUsd: integer('amount_paid_usd').notNull(),
+  commissionPercent: integer('commission_percent').notNull(),
+  commissionAmountUsd: integer('commission_amount_usd').notNull(),
+  status: affiliateCommissionStatusEnum('status').default('PENDING').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+export const affiliateWithdrawalRequests = pgTable('affiliate_withdrawal_requests', {
+  id: text('id').primaryKey().$defaultFn(() => randomUUID()),
+  affiliateAgentId: text('affiliate_agent_id').notNull().references(() => affiliateAgents.id, { onDelete: 'cascade' }),
+  amountUsd: integer('amount_usd').notNull(),
+  bankDetails: jsonb('bank_details').$type<Record<string, unknown>>().notNull(),
+  status: affiliateWithdrawalStatusEnum('status').default('NEW').notNull(),
+  adminNote: text('admin_note'),
+  payoutReference: text('payout_reference'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 });
 
@@ -364,6 +425,8 @@ export const businessesRelations = relations(businesses, ({ many, one }) => ({
   knowledgeBase: one(knowledgeBases, { fields: [businesses.id], references: [knowledgeBases.businessId] }),
   agentConfig: one(agentConfigs, { fields: [businesses.id], references: [agentConfigs.businessId] }),
   settings: one(businessSettings, { fields: [businesses.id], references: [businessSettings.businessId] }),
+  affiliateAgent: one(affiliateAgents, { fields: [businesses.affiliateAgentId], references: [affiliateAgents.id] }),
+  affiliateReferral: one(affiliateReferrals, { fields: [businesses.id], references: [affiliateReferrals.businessId] }),
   dataConnector: one(dataConnectors, { fields: [businesses.id], references: [dataConnectors.businessId] }),
   calls: many(calls),
   users: many(users),
@@ -413,6 +476,27 @@ export const appointmentsRelations = relations(appointments, ({ one }) => ({
 
 export const catalogItemsRelations = relations(catalogItems, ({ one }) => ({
   business: one(businesses, { fields: [catalogItems.businessId], references: [businesses.id] }),
+}));
+
+export const affiliateAgentsRelations = relations(affiliateAgents, ({ many }) => ({
+  referrals: many(affiliateReferrals),
+  commissions: many(affiliateCommissions),
+  withdrawalRequests: many(affiliateWithdrawalRequests),
+}));
+
+export const affiliateReferralsRelations = relations(affiliateReferrals, ({ one, many }) => ({
+  agent: one(affiliateAgents, { fields: [affiliateReferrals.affiliateAgentId], references: [affiliateAgents.id] }),
+  business: one(businesses, { fields: [affiliateReferrals.businessId], references: [businesses.id] }),
+  commissions: many(affiliateCommissions),
+}));
+
+export const affiliateCommissionsRelations = relations(affiliateCommissions, ({ one }) => ({
+  agent: one(affiliateAgents, { fields: [affiliateCommissions.affiliateAgentId], references: [affiliateAgents.id] }),
+  business: one(businesses, { fields: [affiliateCommissions.businessId], references: [businesses.id] }),
+}));
+
+export const affiliateWithdrawalRequestsRelations = relations(affiliateWithdrawalRequests, ({ one }) => ({
+  agent: one(affiliateAgents, { fields: [affiliateWithdrawalRequests.affiliateAgentId], references: [affiliateAgents.id] }),
 }));
 
 // ─── Types ────────────────────────────────────────────────────────────────────

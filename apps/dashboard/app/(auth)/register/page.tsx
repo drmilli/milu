@@ -2,6 +2,7 @@
 
 import { useState, useRef } from 'react';
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import { apiGet, apiPost, apiPut } from '../../../lib/api';
 import { saveSession } from '../../../lib/auth';
@@ -536,6 +537,8 @@ const slideVariants = {
 };
 
 export default function RegisterPage() {
+  const searchParams = useSearchParams();
+  const referralCode = searchParams.get('ref') ?? undefined;
   const [step, setStep] = useState(1);
   const [direction, setDirection] = useState(1);
   const [data, setData] = useState<FormData>(INITIAL);
@@ -591,6 +594,7 @@ export default function RegisterPage() {
             password: data.password,
             businessName: data.businessName || data.firstName + "'s Business",
             contactNumber: data.contactNumber,
+            referralCode,
             firstName: data.firstName,
             lastName: data.lastName,
           },

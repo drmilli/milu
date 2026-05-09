@@ -66,6 +66,7 @@ const envSchema = z.object({
   // Auth
   JWT_SECRET: z.string().min(16),
   ADMIN_JWT_SECRET: z.string().min(16),
+  AFFILIATE_JWT_SECRET: z.string().min(16).optional(),
   APP_URL: z.string().url().default('http://localhost:3000'),
   API_URL: z.string().url().default('http://localhost:4000'),
   CORS_ORIGINS: z.string().default('http://localhost:3000,http://localhost:3001,http://localhost:3002'),

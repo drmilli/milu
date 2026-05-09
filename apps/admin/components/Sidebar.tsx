@@ -35,6 +35,24 @@ const nav = [
     ),
   },
   {
+    label: 'Affiliates',
+    href: '/admin/affiliates',
+    icon: (
+      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6.75a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.5 20.25a7.5 7.5 0 0115 0" />
+      </svg>
+    ),
+  },
+  {
+    label: 'Affiliate Payouts',
+    href: '/admin/affiliate-withdrawals',
+    icon: (
+      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v12m0 0l-3-3m3 3l3-3M3.75 6.75h16.5" />
+      </svg>
+    ),
+  },
+  {
     label: 'Calls',
     href: '/admin/calls',
     icon: (

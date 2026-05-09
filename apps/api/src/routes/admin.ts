@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { eq, desc, ilike, and, or, sql, gte, inArray, lt } from 'drizzle-orm';
 import bcrypt from 'bcryptjs';
 import twilio from 'twilio';
-import { db, businesses, users, calls, escalations, phoneNumbers, agentConfigs, notifications, catalogItems, contactSubmissions, phoneNumberRequests, dataConnectors } from '../db';
+import { db, businesses, users, calls, escalations, phoneNumbers, agentConfigs, notifications, catalogItems, contactSubmissions, phoneNumberRequests, dataConnectors, affiliateAgents, affiliateReferrals, affiliateCommissions, affiliateWithdrawalRequests, affiliateSettings } from '../db';
 import { logger } from '../config/logger';
 import { adminGuard } from '../middleware/admin-guard';
 import { signAdminToken, verifyAdminToken } from '../utils/jwt';
@@ -491,6 +491,192 @@ adminRouter.patch('/phone-number-requests/:id', async (req, res, next) => {
     const { status } = z.object({ status: z.enum(['NEW', 'IN_REVIEW', 'FULFILLED', 'REJECTED']) }).parse(req.body);
     const [updated] = await db.update(phoneNumberRequests).set({ status }).where(eq(phoneNumberRequests.id, req.params.id)).returning();
     if (!updated) return res.status(404).json({ error: 'Request not found' });
+    return res.json({ ok: true });
+  } catch (err) { next(err); }
+});
+
+// ─── Admin: Affiliates ───────────────────────────────────────────────────────
+
+adminRouter.get('/affiliates', async (_req, res, next) => {
+  try {
+    const rows = await db.select({
+      id: affiliateAgents.id,
+      name: affiliateAgents.name,
+      email: affiliateAgents.email,
+      referralCode: affiliateAgents.referralCode,
+      status: affiliateAgents.status,
+      commissionPercent: affiliateAgents.commissionPercent,
+      commissionMonths: affiliateAgents.commissionMonths,
+      createdAt: affiliateAgents.createdAt,
+      referrals: sql<number>`(select count(*) from affiliate_referrals r where r.affiliate_agent_id = ${affiliateAgents.id})`,
+      earnedUsd: sql<number>`(select coalesce(sum(c.commission_amount_usd),0) from affiliate_commissions c where c.affiliate_agent_id = ${affiliateAgents.id} and c.status = 'CONFIRMED')`,
+    }).from(affiliateAgents).orderBy(desc(affiliateAgents.createdAt)).limit(200);
+
+    return res.json(rows.map(r => ({
+      id: r.id,
+      name: r.name,
+      email: r.email,
+      referralCode: r.referralCode,
+      status: r.status,
+      commissionPercent: r.commissionPercent,
+      commissionMonths: r.commissionMonths,
+      createdAt: r.createdAt.toISOString(),
+      referrals: Number(r.referrals ?? 0),
+      earnedUsd: Number(r.earnedUsd ?? 0),
+    })));
+  } catch (err) { next(err); }
+});
+
+adminRouter.get('/affiliates/:id', async (req, res, next) => {
+  try {
+    const [agent] = await db.select().from(affiliateAgents).where(eq(affiliateAgents.id, req.params.id)).limit(1);
+    if (!agent) return res.status(404).json({ error: 'Affiliate agent not found' });
+
+    const [settings] = await db.select().from(affiliateSettings).limit(1);
+    const commissionPercent = agent.commissionPercent ?? settings?.defaultCommissionPercent ?? 15;
+    const commissionMonths = agent.commissionMonths ?? settings?.defaultCommissionMonths ?? 12;
+
+    const [referrals, withdrawals] = await Promise.all([
+      db.select({
+        id: affiliateReferrals.id,
+        businessId: affiliateReferrals.businessId,
+        businessName: businesses.name,
+        referredAt: affiliateReferrals.referredAt,
+        eligibilityEndsAt: affiliateReferrals.eligibilityEndsAt,
+        plan: businesses.subscriptionTier,
+        isActive: businesses.isActive,
+      }).from(affiliateReferrals)
+        .leftJoin(businesses, eq(businesses.id, affiliateReferrals.businessId))
+        .where(eq(affiliateReferrals.affiliateAgentId, agent.id))
+        .orderBy(desc(affiliateReferrals.referredAt)),
+      db.select().from(affiliateWithdrawalRequests)
+        .where(eq(affiliateWithdrawalRequests.affiliateAgentId, agent.id))
+        .orderBy(desc(affiliateWithdrawalRequests.createdAt))
+        .limit(100),
+    ]);
+
+    return res.json({
+      id: agent.id,
+      name: agent.name,
+      email: agent.email,
+      referralCode: agent.referralCode,
+      status: agent.status,
+      commissionPercent,
+      commissionMonths,
+      createdAt: agent.createdAt.toISOString(),
+      referrals: referrals.map(r => ({
+        id: r.id,
+        businessId: r.businessId,
+        businessName: r.businessName ?? '—',
+        plan: r.plan,
+        status: r.isActive ? 'active' : 'inactive',
+        referredAt: r.referredAt.toISOString(),
+        eligibilityEndsAt: r.eligibilityEndsAt.toISOString(),
+      })),
+      withdrawals: withdrawals.map(w => ({
+        id: w.id,
+        amountUsd: w.amountUsd,
+        status: w.status,
+        adminNote: w.adminNote ?? null,
+        payoutReference: w.payoutReference ?? null,
+        createdAt: w.createdAt.toISOString(),
+        updatedAt: w.updatedAt.toISOString(),
+      })),
+    });
+  } catch (err) { next(err); }
+});
+
+adminRouter.patch('/affiliates/:id', async (req, res, next) => {
+  try {
+    const data = z.object({
+      status: z.enum(['ACTIVE', 'SUSPENDED', 'BANNED']).optional(),
+      commissionPercent: z.number().int().min(0).max(100).nullable().optional(),
+      commissionMonths: z.number().int().min(1).max(24).nullable().optional(),
+    }).parse(req.body);
+
+    const update: Record<string, unknown> = { updatedAt: new Date() };
+    if (data.status !== undefined) update.status = data.status;
+    if (data.commissionPercent !== undefined) update.commissionPercent = data.commissionPercent;
+    if (data.commissionMonths !== undefined) update.commissionMonths = data.commissionMonths;
+
+    const [row] = await db.update(affiliateAgents).set(update).where(eq(affiliateAgents.id, req.params.id)).returning();
+    if (!row) return res.status(404).json({ error: 'Affiliate agent not found' });
+    return res.json({ ok: true });
+  } catch (err) { next(err); }
+});
+
+adminRouter.get('/affiliate/withdrawals', async (_req, res, next) => {
+  try {
+    const rows = await db.select({
+      id: affiliateWithdrawalRequests.id,
+      affiliateAgentId: affiliateWithdrawalRequests.affiliateAgentId,
+      agentName: affiliateAgents.name,
+      agentEmail: affiliateAgents.email,
+      amountUsd: affiliateWithdrawalRequests.amountUsd,
+      status: affiliateWithdrawalRequests.status,
+      adminNote: affiliateWithdrawalRequests.adminNote,
+      payoutReference: affiliateWithdrawalRequests.payoutReference,
+      createdAt: affiliateWithdrawalRequests.createdAt,
+      updatedAt: affiliateWithdrawalRequests.updatedAt,
+    })
+      .from(affiliateWithdrawalRequests)
+      .leftJoin(affiliateAgents, eq(affiliateAgents.id, affiliateWithdrawalRequests.affiliateAgentId))
+      .orderBy(desc(affiliateWithdrawalRequests.createdAt))
+      .limit(200);
+
+    return res.json(rows.map(r => ({
+      id: r.id,
+      affiliateAgentId: r.affiliateAgentId,
+      agent: r.agentName ? `${r.agentName} (${r.agentEmail ?? ''})`.trim() : (r.agentEmail ?? 'Unknown'),
+      amountUsd: r.amountUsd,
+      status: r.status,
+      adminNote: r.adminNote ?? null,
+      payoutReference: r.payoutReference ?? null,
+      createdAt: r.createdAt.toISOString(),
+      updatedAt: r.updatedAt.toISOString(),
+    })));
+  } catch (err) { next(err); }
+});
+
+adminRouter.patch('/affiliate/withdrawals/:id', async (req, res, next) => {
+  try {
+    const data = z.object({
+      status: z.enum(['NEW', 'APPROVED', 'PAID', 'REJECTED']).optional(),
+      adminNote: z.string().max(2000).nullable().optional(),
+      payoutReference: z.string().max(200).nullable().optional(),
+    }).parse(req.body);
+
+    const update: Record<string, unknown> = { updatedAt: new Date() };
+    if (data.status !== undefined) update.status = data.status;
+    if (data.adminNote !== undefined) update.adminNote = data.adminNote;
+    if (data.payoutReference !== undefined) update.payoutReference = data.payoutReference;
+
+    const [row] = await db.update(affiliateWithdrawalRequests).set(update).where(eq(affiliateWithdrawalRequests.id, req.params.id)).returning();
+    if (!row) return res.status(404).json({ error: 'Withdrawal request not found' });
+    return res.json({ ok: true });
+  } catch (err) { next(err); }
+});
+
+adminRouter.get('/affiliate/settings', async (_req, res, next) => {
+  try {
+    const [row] = await db.select().from(affiliateSettings).limit(1);
+    return res.json(row ?? { defaultCommissionPercent: 15, defaultCommissionMonths: 12 });
+  } catch (err) { next(err); }
+});
+
+adminRouter.put('/affiliate/settings', async (req, res, next) => {
+  try {
+    const data = z.object({
+      defaultCommissionPercent: z.number().int().min(0).max(100),
+      defaultCommissionMonths: z.number().int().min(1).max(24),
+    }).parse(req.body);
+
+    const [existing] = await db.select({ id: affiliateSettings.id }).from(affiliateSettings).limit(1);
+    if (existing?.id) {
+      await db.update(affiliateSettings).set({ ...data, updatedAt: new Date() }).where(eq(affiliateSettings.id, existing.id));
+      return res.json({ ok: true });
+    }
+    await db.insert(affiliateSettings).values({ ...data }).returning();
     return res.json({ ok: true });
   } catch (err) { next(err); }
 });

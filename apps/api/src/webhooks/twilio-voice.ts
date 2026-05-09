@@ -281,6 +281,8 @@ async function ttsUrl(text: string, voiceId: string | null | undefined, baseUrl:
       voice,
       input: text,
       format: 'mp3',
+      instructions: 'Speak naturally and warmly, like a friendly and attentive customer service agent. Use a conversational tone with natural rhythm — not flat or robotic. Keep energy calm but engaged.',
+      speed: 0.95,
     }),
     signal: AbortSignal.timeout(8000),
   });

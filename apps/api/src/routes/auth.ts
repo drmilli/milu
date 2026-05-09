@@ -3,10 +3,11 @@ import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 import { z } from 'zod';
 import { eq } from 'drizzle-orm';
-import { db, users, businesses, knowledgeBases } from '../db';
+import { db, users, businesses, knowledgeBases, affiliateAgents, affiliateReferrals, affiliateSettings } from '../db';
 import { signToken, verifyToken } from '../utils/jwt';
 import { authLimiter } from '../middleware/rate-limit';
 import { sendVerificationEmail, sendPasswordResetEmail } from '../utils/email';
+import { sendNotification } from '../services/notifications';
 
 export const authRouter: Router = Router();
 
@@ -57,10 +58,11 @@ authRouter.post('/register', authLimiter, async (req, res, next) => {
       password: z.string().min(8),
       businessName: z.string().min(1),
       contactNumber: z.string().min(6).optional(),
+      referralCode: z.string().min(4).max(50).optional(),
       firstName: z.string().optional(),
       lastName: z.string().optional(),
     });
-    const { email, password, businessName, contactNumber, firstName, lastName } = schema.parse(req.body);
+    const { email, password, businessName, contactNumber, referralCode, firstName, lastName } = schema.parse(req.body);
 
     const existing = await db.select({ id: users.id }).from(users).where(eq(users.email, email)).limit(1);
     if (existing.length) return res.status(409).json({ error: 'Email already registered' });
@@ -71,11 +73,66 @@ authRouter.post('/register', authLimiter, async (req, res, next) => {
     const businessId = crypto.randomUUID();
     const userId = crypto.randomUUID();
 
+    let affiliateAgentId: string | null = null;
+    let affiliateReferralCode: string | null = null;
+    let affiliateReferredAt: Date | null = null;
+    let eligibilityEndsAt: Date | null = null;
+
+    if (referralCode?.trim()) {
+      const code = referralCode.trim();
+      const [agent] = await db.select({
+        id: affiliateAgents.id,
+        status: affiliateAgents.status,
+        commissionMonths: affiliateAgents.commissionMonths,
+      }).from(affiliateAgents).where(eq(affiliateAgents.referralCode, code)).limit(1);
+
+      if (agent && agent.status === 'ACTIVE') {
+        const [settings] = await db.select().from(affiliateSettings).limit(1);
+        const effectiveMonths = agent.commissionMonths ?? settings?.defaultCommissionMonths ?? 12;
+        const now = new Date();
+        const ends = new Date(now);
+        ends.setMonth(ends.getMonth() + Math.max(1, Math.min(24, effectiveMonths)));
+
+        affiliateAgentId = agent.id;
+        affiliateReferralCode = code;
+        affiliateReferredAt = now;
+        eligibilityEndsAt = ends;
+      }
+    }
+
     await db.insert(businesses).values({
       id: businessId,
       name: businessName,
       contactPhone: contactNumber?.trim() ? contactNumber.trim() : undefined,
+      affiliateAgentId,
+      affiliateReferralCode,
+      affiliateReferredAt,
     });
+
+    if (affiliateAgentId && affiliateReferralCode && affiliateReferredAt && eligibilityEndsAt) {
+      await db.insert(affiliateReferrals).values({
+        affiliateAgentId,
+        businessId,
+        referralCode: affiliateReferralCode,
+        referredAt: affiliateReferredAt,
+        eligibilityEndsAt,
+      }).catch(() => null);
+
+      const [agent] = await db.select({ name: affiliateAgents.name, email: affiliateAgents.email })
+        .from(affiliateAgents)
+        .where(eq(affiliateAgents.id, affiliateAgentId))
+        .limit(1);
+
+      if (agent?.email) {
+        sendNotification({
+          title: 'New referral signup',
+          body: `Hi ${agent.name},\n\nA new business signed up using your referral code (${affiliateReferralCode}).`,
+          channel: 'EMAIL',
+          recipient: agent.email,
+          data: { affiliateAgentId, businessId },
+        }).catch(() => null);
+      }
+    }
     await db.insert(knowledgeBases).values({ businessId, businessName });
     await db.insert(users).values({
       id: userId,
