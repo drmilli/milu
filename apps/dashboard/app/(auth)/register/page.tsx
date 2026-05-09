@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef } from 'react';
+import { useState, useRef, Suspense } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -536,7 +536,7 @@ const slideVariants = {
   exit: (dir: number) => ({ x: dir > 0 ? -48 : 48, opacity: 0 }),
 };
 
-export default function RegisterPage() {
+function RegisterPageInner() {
   const searchParams = useSearchParams();
   const referralCode = searchParams.get('ref') ?? undefined;
   const [step, setStep] = useState(1);
@@ -781,5 +781,13 @@ export default function RegisterPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function RegisterPage() {
+  return (
+    <Suspense>
+      <RegisterPageInner />
+    </Suspense>
   );
 }
