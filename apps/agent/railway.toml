@@ -1,0 +1,9 @@
+[build]
+dockerfilePath = "infra/docker/Dockerfile.agent"
+
+[deploy]
+startCommand = "node apps/agent/server.js"
+healthcheckPath = "/"
+healthcheckTimeout = 30
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 3

@@ -1,0 +1,24 @@
+FROM node:20-alpine AS base
+
+FROM base AS deps
+WORKDIR /app
+COPY package.json package-lock.json ./
+COPY apps/agent/package.json ./apps/agent/
+RUN npm ci
+
+FROM base AS build
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
+COPY tsconfig.base.json ./
+COPY apps/agent ./apps/agent
+ARG NEXT_PUBLIC_API_URL
+ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
+RUN npm run -w @milu/agent build
+
+FROM node:20-alpine AS runner
+WORKDIR /app
+ENV NODE_ENV=production
+COPY --from=build /app/apps/agent/.next/standalone ./
+COPY --from=build /app/apps/agent/.next/static ./apps/agent/.next/static
+EXPOSE 3003
+CMD ["node", "apps/agent/server.js"]
