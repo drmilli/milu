@@ -1,8 +1,8 @@
 [build]
-dockerfilePath = "infra/docker/Dockerfile.agent"
+buildCommand = "npm install && npm run build"
 
 [deploy]
-startCommand = "node apps/agent/server.js"
+startCommand = "npm run start"
 healthcheckPath = "/"
 healthcheckTimeout = 30
 restartPolicyType = "on_failure"
