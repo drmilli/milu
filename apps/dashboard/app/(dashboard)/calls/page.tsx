@@ -203,7 +203,11 @@ function CallsPageInner() {
         </div>
       )}
       {/* ── Call list ── */}
-      <div className="w-80 flex-shrink-0 border-r border-cream-dark flex flex-col bg-white">
+      <div className={clsx(
+        'flex-shrink-0 border-r border-cream-dark flex flex-col bg-white',
+        'w-full lg:w-80',
+        selected ? 'hidden lg:flex' : ''
+      )}>
         {/* Search + filter */}
         <div className="p-4 border-b border-cream-dark space-y-3">
           <div className="relative">
@@ -302,7 +306,11 @@ function CallsPageInner() {
       </div>
 
       {/* ── Transcript panel ── */}
-      <div className="flex-1 flex flex-col min-w-0 bg-cream-light/50">
+      <div className={clsx(
+        'flex flex-col min-w-0 bg-cream-light/50',
+        'w-full lg:flex-1',
+        !selected ? 'hidden lg:flex' : ''
+      )}>
         {!selected ? (
           <div className="flex-1 flex flex-col items-center justify-center text-center px-8 space-y-3">
             <div className="w-14 h-14 rounded-2xl bg-cream border border-cream-dark flex items-center justify-center">
@@ -314,7 +322,18 @@ function CallsPageInner() {
           </div>
         ) : (
           <>
-            <div className="bg-white border-b border-cream-dark px-6 py-4 flex items-center justify-between">
+            {/* Mobile back button */}
+            <button
+              onClick={() => setSelected(null)}
+              className="lg:hidden flex items-center gap-2 px-4 py-3 text-sm font-medium text-primary-warm bg-white border-b border-cream-dark flex-shrink-0"
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18" />
+              </svg>
+              Back to calls
+            </button>
+
+            <div className="bg-white border-b border-cream-dark px-4 py-4 flex items-start justify-between gap-3 flex-wrap">
               <div>
                 <p className="font-semibold text-primary-dark">
                   {selected.callerName?.trim() || contact?.name?.trim() || selected.callerNumber || 'Unknown'}

@@ -303,7 +303,7 @@ export default function OrdersPage() {
           </div>
 
           {/* Stats */}
-          <div className="grid grid-cols-4 gap-3 mb-4">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
             {[
               { label: 'Total orders', value: orders.filter(o => o.status !== 'cancelled').length },
               { label: 'New', value: orders.filter(o => o.status === 'new').length },
@@ -394,13 +394,23 @@ export default function OrdersPage() {
 
       {/* Right: detail */}
       {selected ? (
-        <div className="w-80 flex-shrink-0 bg-white flex flex-col overflow-y-auto">
+        <div className="fixed inset-0 z-40 bg-white flex flex-col overflow-y-auto lg:relative lg:inset-auto lg:z-auto lg:w-80 lg:flex-shrink-0">
+          {/* Mobile back button */}
+          <button
+            onClick={() => setSelected(null)}
+            className="lg:hidden flex items-center gap-2 px-4 py-3 text-sm font-medium text-primary-warm bg-cream-light border-b border-cream-dark flex-shrink-0"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18" />
+            </svg>
+            Back to orders
+          </button>
           <div className="px-5 py-4 border-b border-cream-dark flex items-center justify-between flex-shrink-0">
             <div>
-              <p className="font-semibold text-primary-dark">{selected.id}</p>
+              <p className="font-semibold text-primary-dark">{selected.customer}</p>
               <p className="text-xs text-primary-warm">{fmtDate(selected.date)}</p>
             </div>
-            <button onClick={() => setSelected(null)} className="w-8 h-8 flex items-center justify-center rounded-lg text-primary-warm hover:bg-cream transition-colors">
+            <button onClick={() => setSelected(null)} className="hidden lg:flex w-8 h-8 items-center justify-center rounded-lg text-primary-warm hover:bg-cream transition-colors">
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
             </button>
           </div>
@@ -529,7 +539,7 @@ export default function OrdersPage() {
           </div>
         </div>
       ) : (
-        <div className="w-80 flex-shrink-0 bg-cream-light/50 flex items-center justify-center">
+        <div className="hidden lg:flex lg:w-80 lg:flex-shrink-0 bg-cream-light/50 items-center justify-center">
           <p className="text-sm text-primary-warm">Select an order to view details</p>
         </div>
       )}

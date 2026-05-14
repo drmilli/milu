@@ -258,12 +258,12 @@ export default function AppointmentsPage() {
   return (
     <div className="p-6 lg:p-8 space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-start sm:items-center justify-between gap-3 flex-wrap">
         <div>
           <h1 className="font-heading font-bold text-2xl text-primary-dark">Appointments</h1>
           <p className="text-sm text-primary-warm mt-0.5">Bookings made by your AI agent and manually.</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-shrink-0">
           <div className="flex gap-0.5 bg-cream rounded-xl p-1 border border-cream-dark">
             <button
               onClick={() => setView('list')}
@@ -282,10 +282,10 @@ export default function AppointmentsPage() {
             onClick={() => setShowAdd(true)}
             className="bg-primary text-cream-light px-4 py-2 rounded-xl text-sm font-medium hover:bg-primary-dark transition-colors flex items-center gap-2"
           >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+            <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
             </svg>
-            New appointment
+            <span className="hidden sm:inline">New appointment</span>
           </button>
         </div>
       </div>
@@ -387,10 +387,21 @@ export default function AppointmentsPage() {
           </div>
 
           {selected && (
-            <div className="w-72 flex-shrink-0 bg-white rounded-2xl border border-cream-dark h-fit sticky top-6">
+            <div className={clsx(
+              'bg-white border border-cream-dark',
+              'fixed inset-0 z-50 overflow-y-auto',
+              'lg:relative lg:inset-auto lg:z-auto lg:w-72 lg:flex-shrink-0 lg:h-fit lg:sticky lg:top-6 lg:rounded-2xl lg:overflow-visible'
+            )}>
               <div className="flex items-center justify-between px-5 py-4 border-b border-cream-dark">
-                <p className="font-semibold text-primary-dark text-sm">{selected.id}</p>
-                <button onClick={() => setSelected(null)} className="w-7 h-7 flex items-center justify-center rounded-lg text-primary-warm hover:bg-cream transition-colors">
+                <div className="flex items-center gap-2 min-w-0">
+                  <button onClick={() => setSelected(null)} className="lg:hidden flex-shrink-0 w-7 h-7 flex items-center justify-center rounded-lg text-primary-warm hover:bg-cream transition-colors">
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18" />
+                    </svg>
+                  </button>
+                  <p className="font-semibold text-primary-dark text-sm truncate">{selected.name}</p>
+                </div>
+                <button onClick={() => setSelected(null)} className="flex-shrink-0 w-7 h-7 flex items-center justify-center rounded-lg text-primary-warm hover:bg-cream transition-colors">
                   <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
                   </svg>
@@ -454,7 +465,8 @@ export default function AppointmentsPage() {
           )}
         </div>
       ) : (
-        <div className="bg-white rounded-2xl border border-cream-dark overflow-hidden">
+        <div className="overflow-x-auto">
+        <div className="bg-white rounded-2xl border border-cream-dark overflow-hidden min-w-[560px]">
           <div className="px-6 py-4 border-b border-cream-dark flex items-center justify-between">
             <p className="font-semibold text-primary-dark">
               {MONTHS[calMonth]} {calYear}
@@ -508,6 +520,7 @@ export default function AppointmentsPage() {
               );
             })}
           </div>
+        </div>
         </div>
       )}
 
