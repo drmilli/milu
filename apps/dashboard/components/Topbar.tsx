@@ -57,7 +57,13 @@ function fmtDate(iso: string) {
   return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
-export default function Topbar() {
+interface TopbarProps {
+  onMobileMenu: () => void;
+  collapsed: boolean;
+  onToggleCollapse: () => void;
+}
+
+export default function Topbar({ onMobileMenu, collapsed, onToggleCollapse }: TopbarProps) {
   const { token, user, ready } = useAuth(false);
   const [notifOpen, setNotifOpen] = useState(false);
   const [notifications, setNotifications] = useState<Notification[]>([]);
@@ -113,19 +119,49 @@ export default function Topbar() {
     : (user?.planName ? `${user.planName} plan` : '');
 
   return (
-    <header className="h-14 border-b border-cream-dark bg-cream-light flex items-center justify-between px-6 flex-shrink-0 relative z-30">
-      {/* Business */}
-      <div className="flex items-center gap-2.5">
-        <div className="w-7 h-7 rounded-lg bg-primary/10 flex items-center justify-center">
-          <span className="text-xs font-bold text-primary">{bizInitial}</span>
-        </div>
-        <div>
-          <p className="text-sm font-semibold text-primary-dark leading-tight">
-            {user?.businessName || '—'}
-          </p>
-          <p className="text-xs text-primary-warm leading-tight capitalize">
-            {planLine}
-          </p>
+    <header className="h-14 border-b border-cream-dark bg-cream-light flex items-center justify-between px-4 flex-shrink-0 relative z-30">
+      <div className="flex items-center gap-2">
+        {/* Mobile hamburger */}
+        <button
+          onClick={onMobileMenu}
+          className="lg:hidden w-9 h-9 flex items-center justify-center rounded-xl text-primary-warm hover:bg-cream hover:text-primary-dark transition-colors"
+          aria-label="Open menu"
+        >
+          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" />
+          </svg>
+        </button>
+
+        {/* Desktop collapse toggle */}
+        <button
+          onClick={onToggleCollapse}
+          className="hidden lg:flex w-9 h-9 items-center justify-center rounded-xl text-primary-warm hover:bg-cream hover:text-primary-dark transition-colors"
+          aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+        >
+          {collapsed ? (
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" />
+            </svg>
+          ) : (
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" />
+            </svg>
+          )}
+        </button>
+
+        {/* Business */}
+        <div className="flex items-center gap-2.5">
+          <div className="w-7 h-7 rounded-lg bg-primary/10 flex items-center justify-center">
+            <span className="text-xs font-bold text-primary">{bizInitial}</span>
+          </div>
+          <div className="hidden sm:block">
+            <p className="text-sm font-semibold text-primary-dark leading-tight">
+              {user?.businessName || '—'}
+            </p>
+            <p className="text-xs text-primary-warm leading-tight capitalize">
+              {planLine}
+            </p>
+          </div>
         </div>
       </div>
 
