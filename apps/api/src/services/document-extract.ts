@@ -279,7 +279,7 @@ export async function voiceChat(
 ): Promise<VoiceChatResult> {
   function stripLeadingFiller(s: string) {
     const trimmed = s.trim();
-    const without = trimmed.replace(/^(alright|all right|okay|ok|sure|right|great|got it|i see)\b[,\s.!-]*/i, '');
+    const without = trimmed.replace(/^(hi|hey|hello|alright|all right|okay|ok|sure|right|great|got it|i see)\b[,\s.!-]*/i, '');
     return without.trim() || trimmed;
   }
 

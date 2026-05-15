@@ -86,16 +86,20 @@ analyticsRouter.get('/summary', async (req, res, next) => {
     ];
     const where = base.length ? and(...base as any) : undefined;
 
-    const [total, aiResolved, humanResolved, abandoned, escalationCount] = await Promise.all([
+    const escalationWhere = bid ? eq(escalations.businessId, bid) : undefined;
+
+    const [total, aiResolved, humanResolved, abandoned, escalationCount, avgDur] = await Promise.all([
       db.select({ n: sql<number>`count(*)` }).from(calls).where(where),
-      db.select({ n: sql<number>`count(*)` }).from(calls).where(and(...[...(base as any), eq(calls.resolution, 'AI')])),
-      db.select({ n: sql<number>`count(*)` }).from(calls).where(and(...[...(base as any), eq(calls.resolution, 'HUMAN')])),
-      db.select({ n: sql<number>`count(*)` }).from(calls).where(and(...[...(base as any), eq(calls.resolution, 'ABANDONED')])),
-      db.select({ n: sql<number>`count(*)` }).from(escalations),
+      db.select({ n: sql<number>`count(*)` }).from(calls).where(base.length ? and(...[...(base as any), eq(calls.resolution, 'AI')]) : eq(calls.resolution, 'AI')),
+      db.select({ n: sql<number>`count(*)` }).from(calls).where(base.length ? and(...[...(base as any), eq(calls.resolution, 'HUMAN')]) : eq(calls.resolution, 'HUMAN')),
+      db.select({ n: sql<number>`count(*)` }).from(calls).where(base.length ? and(...[...(base as any), eq(calls.resolution, 'ABANDONED')]) : eq(calls.resolution, 'ABANDONED')),
+      db.select({ n: sql<number>`count(*)` }).from(escalations).where(escalationWhere),
+      db.select({ avg: sql<number>`avg(${calls.duration})` }).from(calls).where(where),
     ]);
 
     const t = Number(total[0].n);
     const ai = Number(aiResolved[0].n);
+    const avgSecs = avgDur[0].avg != null ? Math.round(Number(avgDur[0].avg)) : undefined;
     return res.json({
       totalCalls: t,
       resolvedByAI: ai,
@@ -103,6 +107,7 @@ analyticsRouter.get('/summary', async (req, res, next) => {
       abandoned: Number(abandoned[0].n),
       escalations: Number(escalationCount[0].n),
       aiResolutionRate: t > 0 ? ((ai / t) * 100).toFixed(1) + '%' : '0%',
+      avgDurationSeconds: avgSecs,
     });
   } catch (err) {
     next(err);

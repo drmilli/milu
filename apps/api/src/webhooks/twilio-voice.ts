@@ -382,7 +382,8 @@ function parseProfileText(input: string) {
   if (fromMatch?.index != null) namePart = cleaned.slice(0, fromMatch.index).trim();
 
   namePart = namePart
-    .replace(/^(my name is|i am|i'm|this is)\b/i, '')
+    .replace(/^(hi|hey|hello|good morning|good afternoon|good evening)[,!\.\s]*/i, '')
+    .replace(/^(my name is|i am|i'm|it's|its|this is|am)\b/i, '')
     .trim()
     .replace(/^[,.\-:\s]+/, '')
     .replace(/[.?!]+$/, '');
@@ -656,7 +657,7 @@ export async function handleTwilioVoiceWebhook(req: Request, res: Response) {
     const greeting = awaitingProfile
       ? `${baseGreeting} ${profilePrompt}`
       : contactRow?.name
-        ? `Hi ${contactRow.name}, welcome back! How can I help you today?`
+        ? `Welcome back, ${contactRow.name}! How can I help you today?`
         : `${baseGreeting} How can I help you today?`;
 
     const [callRow] = await db.insert(calls).values({
