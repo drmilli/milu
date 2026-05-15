@@ -367,7 +367,7 @@ async function twilioCachePopPersistent(callId: string): Promise<string | null> 
 
 function gatherTurn(callId: string, language: string, baseUrl: string, timeout = 4) {
   const action = `${baseUrl}/webhooks/twilio/voice/gather?callId=${encodeURIComponent(callId)}`;
-  return `<Gather input="speech" action="${action}" method="POST" timeout="${timeout}" speechTimeout="1" language="${language}"></Gather>`;
+  return `<Gather input="speech" action="${action}" method="POST" timeout="${timeout}" speechTimeout="auto" language="${language}" enhanced="true" speechModel="phone_call" profanityFilter="false"></Gather>`;
 }
 
 function parseProfileText(input: string) {
@@ -655,8 +655,8 @@ export async function handleTwilioVoiceWebhook(req: Request, res: Response) {
 
     const greeting = awaitingProfile
       ? `${baseGreeting} ${profilePrompt}`
-      : (contactRow?.name && contactRow?.location)
-        ? `Hi ${contactRow.name}. Thanks for calling from ${contactRow.location}. How can I help you today?`
+      : contactRow?.name
+        ? `Hi ${contactRow.name}, welcome back! How can I help you today?`
         : `${baseGreeting} How can I help you today?`;
 
     const [callRow] = await db.insert(calls).values({
