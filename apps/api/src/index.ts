@@ -20,6 +20,8 @@ import { adminRouter, adminAuthRouter } from './routes/admin';
 import { usersRouter } from './routes/users';
 import { billingRouter, handleWhopWebhook } from './routes/billing';
 import { handleTwilioVoiceWebhook, handleTwilioVoiceGather, handleTwilioVoiceRespond, handleTwilioVoiceEnd, handleTwilioVoiceRecording, handleTwilioVoiceStatus, handleTwilioMessageStatus, handleTwilioIncomingMessage, handleTwilioIncomingMessageFallback } from './webhooks/twilio-voice';
+import { handleTwilioVoiceStream } from './webhooks/twilio-stream';
+import { WebSocketServer } from 'ws';
 // Infobip voice removed — using Twilio only for calls
 import { verifyWhatsAppWebhook, handleWhatsAppWebhook } from './webhooks/whatsapp';
 import { handleSendchampWebhook } from './webhooks/sendchamp';
@@ -221,6 +223,19 @@ app.use('/api/v1/affiliate/auth', affiliateAuthRouter);
 app.use('/api/v1/affiliate', affiliateRouter);
 
 app.use(errorHandler);
+
+// ─── WebSocket server for Twilio Media Streams ────────────────────────────────
+const wss = new WebSocketServer({ noServer: true });
+
+server.on('upgrade', (request, socket, head) => {
+  if (request.url?.startsWith('/webhooks/twilio/voice/stream')) {
+    wss.handleUpgrade(request, socket, head, (ws) => {
+      handleTwilioVoiceStream(ws, request);
+    });
+  } else {
+    socket.destroy();
+  }
+});
 
 server.listen(env.PORT, async () => {
   logger.info({

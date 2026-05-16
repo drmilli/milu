@@ -348,7 +348,10 @@ export async function voiceChat(
     opsEnabled
       ? `Only include [ORDER] if you have at least one item with qty. If missing, ask a short follow-up question instead.`
       : null,
-    `\nEnd every reply with exactly one of these tags (no other text after it):\n[CONTINUE] — conversation should continue\n[ESCALATE] — transfer to human agent\n[END] — call is wrapping up naturally`,
+    opsEnabled
+      ? `After successfully including an [APPOINTMENT] or [ORDER] block, always use [CONTINUE] and ask the customer if there is anything else you can help them with. Never use [END] immediately after booking.`
+      : null,
+    `\nEnd every reply with exactly one of these tags (no other text after it):\n[CONTINUE] — conversation should continue\n[ESCALATE] — transfer to human agent\n[END] — call is wrapping up naturally (never use this right after booking an appointment or order)`,
   ].filter(Boolean).join('\n');
 
   const msgs = messages.map(m => ({ role: m.role, content: m.content }));
@@ -361,7 +364,7 @@ export async function voiceChat(
         method: 'POST',
         headers: { 'Authorization': `Bearer ${env.OPENAI_API_KEY}`, 'content-type': 'application/json' },
         body: JSON.stringify({
-          model: 'gpt-4o-mini', max_tokens: 220, temperature: 0.2,
+          model: 'gpt-4o-mini', max_tokens: 450, temperature: 0.2,
           messages: [{ role: 'system', content: systemPrompt }, ...msgs],
         }),
         signal: AbortSignal.timeout(4500),
@@ -378,7 +381,7 @@ export async function voiceChat(
       const res = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: { 'x-api-key': env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-        body: JSON.stringify({ model: 'claude-haiku-4-5-20251001', max_tokens: 220, system: systemPrompt, messages: msgs }),
+        body: JSON.stringify({ model: 'claude-haiku-4-5-20251001', max_tokens: 450, system: systemPrompt, messages: msgs }),
         signal: AbortSignal.timeout(4500),
       });
       if (!res.ok) { const b = await res.text(); throw new Error(`Claude ${res.status}: ${b}`); }

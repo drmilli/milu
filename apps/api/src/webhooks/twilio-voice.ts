@@ -597,94 +597,50 @@ export async function handleTwilioVoiceWebhook(req: Request, res: Response) {
       }
     }
 
-    const baseGreeting = agentRow?.greeting ?? `Hello, thank you for calling ${bizRow?.name ?? 'us'}.`;
-    const businessHoursOnly = agentRow?.businessHoursOnly ?? false;
-    const afterHoursMessage = agentRow?.afterHoursMessage ?? 'We are currently closed. Please call back during business hours. Goodbye.';
-    const langMap: Record<string, string> = { en: 'en-US', yo: 'en-US', ig: 'en-US', ha: 'en-US', pcm: 'en-US' };
-    const language = langMap[agentRow?.language ?? 'en'] ?? 'en-US';
-
-    if (businessHoursOnly && false /* TODO: wire to per-business operating hours */) {
-      return res.send(twiml(`<Say voice="alice" language="${language}">${escapeXml(afterHoursMessage)}</Say><Hangup/>`));
-    }
-
+    // Look up or create contact
     const now = new Date();
     let contactRow: { id: string; name: string | null; location: string | null; totalCalls: number } | undefined;
     const [existingContact] = await db.select({
-      id: contacts.id,
-      name: contacts.name,
-      location: contacts.location,
-      totalCalls: contacts.totalCalls,
+      id: contacts.id, name: contacts.name, location: contacts.location, totalCalls: contacts.totalCalls,
     }).from(contacts).where(and(eq(contacts.businessId, businessId), eq(contacts.phone, fromNumber))).limit(1);
 
     if (existingContact) {
-      contactRow = {
-        id: existingContact.id,
-        name: existingContact.name ?? null,
-        location: existingContact.location ?? null,
-        totalCalls: existingContact.totalCalls ?? 0,
-      };
-      await db.update(contacts).set({
-        totalCalls: (contactRow.totalCalls ?? 0) + 1,
-        lastCallAt: now,
-        updatedAt: now,
-      }).where(eq(contacts.id, contactRow.id));
+      contactRow = { id: existingContact.id, name: existingContact.name ?? null, location: existingContact.location ?? null, totalCalls: existingContact.totalCalls ?? 0 };
+      await db.update(contacts).set({ totalCalls: (contactRow.totalCalls ?? 0) + 1, lastCallAt: now, updatedAt: now }).where(eq(contacts.id, contactRow.id));
     } else {
-      const [created] = await db.insert(contacts).values({
-        businessId,
-        phone: fromNumber,
-        totalCalls: 1,
-        lastCallAt: now,
-      }).returning({ id: contacts.id, name: contacts.name, location: contacts.location, totalCalls: contacts.totalCalls });
-      if (created) {
-        contactRow = {
-          id: created.id,
-          name: created.name ?? null,
-          location: created.location ?? null,
-          totalCalls: created.totalCalls ?? 1,
-        };
-      }
+      const [created] = await db.insert(contacts).values({ businessId, phone: fromNumber, totalCalls: 1, lastCallAt: now })
+        .returning({ id: contacts.id, name: contacts.name, location: contacts.location, totalCalls: contacts.totalCalls });
+      if (created) contactRow = { id: created.id, name: created.name ?? null, location: created.location ?? null, totalCalls: created.totalCalls ?? 1 };
     }
 
-    const needsName = !contactRow?.name;
-    const needsLocation = !contactRow?.location;
-    const awaitingProfile = needsName || needsLocation;
-    const profilePrompt = needsName && needsLocation
-      ? "What's your name, and where are you calling from?"
-      : needsName
-        ? "What's your name?"
-        : "Where are you calling from?";
-
-    const greeting = awaitingProfile
-      ? `${baseGreeting} ${profilePrompt}`
-      : contactRow?.name
-        ? `Welcome back, ${contactRow.name}! How can I help you today?`
-        : `${baseGreeting} How can I help you today?`;
-
+    // Create call record
     const [callRow] = await db.insert(calls).values({
       businessId,
       contactId: contactRow?.id ?? null,
       callerNumber: fromNumber,
       callerName: contactRow?.name ?? null,
       callerLocation: contactRow?.location ?? null,
-      awaitingProfile,
+      awaitingProfile: !contactRow?.name,
       status: 'ACTIVE',
     }).returning({ id: calls.id });
 
     const callId = callRow?.id ?? '';
-    logger.info({ businessId, fromNumber, toNumber, callSid, callId }, 'Inbound Twilio call answered');
+    logger.info({ businessId, fromNumber, toNumber, callSid, callId }, 'Inbound Twilio call answered — starting Realtime stream');
 
-    const enableRecording = agentRow?.enableRecording ?? true;
+    // Build stream URL (https → wss)
+    const wsUrl = baseUrl.replace(/^http/, 'ws') + `/webhooks/twilio/voice/stream`;
+
+    // Optional call recording (runs alongside the stream)
     const plan = bizRow?.createdAt ? buildPlanFromBusinessRow({ subscriptionTier: bizRow.subscriptionTier ?? null, createdAt: bizRow.createdAt }) : null;
-    const canRecord = (plan?.features.callRecording ?? true) && enableRecording;
+    const canRecord = (plan?.features.callRecording ?? true) && (agentRow?.enableRecording ?? true);
     const record = canRecord
       ? `<Start><Record recordingStatusCallback="${escapeXml(`${baseUrl}/webhooks/twilio/voice/recording?callId=${encodeURIComponent(callId)}`)}" recordingStatusCallbackMethod="POST" recordingChannels="dual" /></Start>`
       : '';
 
-    await db.insert(transcripts).values({ callId, speaker: 'agent', text: greeting }).catch(() => null);
-
-    const speak = await speakTag(greeting, agentRow?.voiceId, language, baseUrl, 1500);
-
-    const xml = twiml(record + speak + gatherTurn(callId, language, baseUrl, awaitingProfile ? 6 : 4));
+    const xml = twiml(
+      record +
+      `<Connect><Stream url="${escapeXml(wsUrl)}"><Parameter name="callId" value="${escapeXml(callId)}" /></Stream></Connect>`,
+    );
     return res.send(xml);
   } catch (err) {
     logger.error({ err, toNumber, fromNumber }, 'Error handling Twilio voice webhook');
