@@ -2,6 +2,8 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useAuth } from '../hooks/useAuth';
+import { useBusinesses } from '../hooks/useBusinesses';
+import { usePlan } from '../hooks/usePlan';
 import { apiGet } from '../lib/api';
 
 interface Notification {
@@ -65,10 +67,40 @@ interface TopbarProps {
 
 export default function Topbar({ onMobileMenu, collapsed, onToggleCollapse }: TopbarProps) {
   const { token, user, ready } = useAuth(false);
+  const { businesses, activeId, switchBusiness, createBusiness } = useBusinesses(token ?? '');
+  const { features: planFeatures } = usePlan(token ?? '');
+  const [bizMenuOpen, setBizMenuOpen] = useState(false);
+  const bizMenuRef = useRef<HTMLDivElement>(null);
+  const [showCreateBiz, setShowCreateBiz] = useState(false);
+  const [newBizName, setNewBizName] = useState('');
+  const [creatingBiz, setCreatingBiz] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [subscription, setSubscription] = useState<Subscription | null>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
+
+  async function handleCreateBiz() {
+    if (!newBizName.trim() || creatingBiz) return;
+    setCreatingBiz(true);
+    try {
+      await createBusiness(newBizName.trim());
+      setShowCreateBiz(false);
+      setNewBizName('');
+      setBizMenuOpen(false);
+    } catch { /* ignore */ }
+    finally { setCreatingBiz(false); }
+  }
+
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (bizMenuRef.current && !bizMenuRef.current.contains(e.target as Node)) {
+        setBizMenuOpen(false);
+        setShowCreateBiz(false);
+      }
+    }
+    if (bizMenuOpen) document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [bizMenuOpen]);
 
   const loadNotifications = useCallback(() => {
     if (!token || !user?.businessId) return;
@@ -149,18 +181,102 @@ export default function Topbar({ onMobileMenu, collapsed, onToggleCollapse }: To
           )}
         </button>
 
-        {/* Business */}
-        <div className="flex items-center gap-2.5">
+        {/* Business switcher — clickable on mobile, decorative on desktop (sidebar handles it there) */}
+        <div className="relative lg:hidden" ref={bizMenuRef}>
+          <button
+            onClick={() => user?.role === 'OWNER' && businesses.length > 0 && setBizMenuOpen(v => !v)}
+            className="flex items-center gap-2 rounded-xl px-2 py-1 hover:bg-cream transition-colors"
+          >
+            <div className="w-7 h-7 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0">
+              <span className="text-xs font-bold text-primary">{bizInitial}</span>
+            </div>
+            <div className="hidden sm:block text-left">
+              <p className="text-sm font-semibold text-primary-dark leading-tight">
+                {user?.businessName || '—'}
+              </p>
+              <p className="text-xs text-primary-warm leading-tight capitalize">{planLine}</p>
+            </div>
+            {user?.role === 'OWNER' && businesses.length > 0 && (
+              <svg className="w-3 h-3 text-primary-warm hidden sm:block" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
+              </svg>
+            )}
+          </button>
+
+          {bizMenuOpen && (
+            <div className="absolute left-0 top-full mt-1 w-56 bg-white border border-cream-dark rounded-2xl shadow-xl z-50 py-1 overflow-hidden">
+              {businesses.map(biz => (
+                <button
+                  key={biz.id}
+                  onClick={() => { switchBusiness(biz.id); setBizMenuOpen(false); }}
+                  className={`w-full text-left px-3 py-2.5 text-sm flex items-center gap-2.5 transition-colors ${
+                    biz.id === (activeId ?? businesses[0]?.id)
+                      ? 'bg-primary/5 text-primary-dark font-medium'
+                      : 'text-primary-warm hover:bg-cream-light'
+                  }`}
+                >
+                  <div className="w-6 h-6 rounded-md bg-primary/10 flex items-center justify-center flex-shrink-0">
+                    <span className="text-[10px] font-bold text-primary">{biz.name[0]?.toUpperCase()}</span>
+                  </div>
+                  <span className="truncate flex-1">{biz.name}</span>
+                  {biz.id === (activeId ?? businesses[0]?.id) && (
+                    <svg className="w-3.5 h-3.5 text-primary flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+                    </svg>
+                  )}
+                </button>
+              ))}
+              <div className="border-t border-cream-dark mt-1 pt-1">
+                {showCreateBiz ? (
+                  <div className="px-3 py-2">
+                    <input
+                      autoFocus
+                      value={newBizName}
+                      onChange={e => setNewBizName(e.target.value)}
+                      onKeyDown={e => e.key === 'Enter' && handleCreateBiz()}
+                      placeholder="Business name"
+                      className="w-full border border-cream-dark rounded-lg px-2.5 py-1.5 text-sm text-primary-dark placeholder:text-primary-warm/50 outline-none focus:border-primary/50 mb-2"
+                    />
+                    <div className="flex gap-1.5">
+                      <button onClick={handleCreateBiz} disabled={creatingBiz} className="flex-1 text-xs py-1.5 rounded-lg bg-primary text-white hover:bg-primary-dark transition-colors disabled:opacity-50">
+                        {creatingBiz ? '…' : 'Create'}
+                      </button>
+                      <button onClick={() => { setShowCreateBiz(false); setNewBizName(''); }} className="flex-1 text-xs py-1.5 rounded-lg border border-cream-dark text-primary-warm hover:bg-cream-light transition-colors">
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : planFeatures.multiBusiness ? (
+                  <button
+                    onClick={() => setShowCreateBiz(true)}
+                    className="w-full text-left px-3 py-2.5 text-sm text-primary-warm hover:bg-cream-light transition-colors flex items-center gap-2"
+                  >
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+                    </svg>
+                    Add business
+                  </button>
+                ) : (
+                  <div className="px-3 py-2.5 text-sm text-primary-warm/40 flex items-center gap-2">
+                    <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 1 0-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 0 0 2.25-2.25v-6.75a2.25 2.25 0 0 0-2.25-2.25H6.75a2.25 2.25 0 0 0-2.25 2.25v6.75a2.25 2.25 0 0 0 2.25 2.25z" />
+                    </svg>
+                    Add business · Enterprise
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Business name — desktop only (switcher is in sidebar) */}
+        <div className="hidden lg:flex items-center gap-2.5">
           <div className="w-7 h-7 rounded-lg bg-primary/10 flex items-center justify-center">
             <span className="text-xs font-bold text-primary">{bizInitial}</span>
           </div>
-          <div className="hidden sm:block">
-            <p className="text-sm font-semibold text-primary-dark leading-tight">
-              {user?.businessName || '—'}
-            </p>
-            <p className="text-xs text-primary-warm leading-tight capitalize">
-              {planLine}
-            </p>
+          <div>
+            <p className="text-sm font-semibold text-primary-dark leading-tight">{user?.businessName || '—'}</p>
+            <p className="text-xs text-primary-warm leading-tight capitalize">{planLine}</p>
           </div>
         </div>
       </div>
