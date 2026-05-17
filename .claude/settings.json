@@ -32,7 +32,8 @@
       "Bash(grep -v \"^$\")",
       "WebFetch(domain:hyperframes.mintlify.app)",
       "WebFetch(domain:addrom.com)",
-      "WebFetch(domain:blog.nidhin.dev)"
+      "WebFetch(domain:blog.nidhin.dev)",
+      "Bash(node -e ' *)"
     ],
     "additionalDirectories": [
       "/Users/ok/Documents/projects/milu"

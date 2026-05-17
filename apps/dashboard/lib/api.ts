@@ -1,10 +1,12 @@
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000';
 
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
+  const businessId = typeof window !== 'undefined' ? localStorage.getItem('activeBusinessId') : null;
   const res = await fetch(`${API_URL}/api/v1${path}`, {
     ...init,
     headers: {
       'Content-Type': 'application/json',
+      ...(businessId ? { 'X-Business-Id': businessId } : {}),
       ...(init?.headers ?? {}),
     },
   });
@@ -12,6 +14,10 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
+  }
+
+  if (res.status === 204 || res.headers.get('content-length') === '0') {
+    return undefined as T;
   }
 
   return res.json() as Promise<T>;
@@ -47,12 +53,9 @@ export function apiPatch<T>(path: string, body: unknown, token?: string) {
   });
 }
 
-export function apiDelete(path: string, token?: string) {
-  return fetch(`${process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000'}/api/v1${path}`, {
+export function apiDelete(path: string, token?: string): Promise<void> {
+  return apiFetch<void>(path, {
     method: 'DELETE',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
   });
 }

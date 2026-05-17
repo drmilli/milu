@@ -146,6 +146,8 @@ authRouter.post('/register', authLimiter, async (req, res, next) => {
       verificationToken,
     });
 
+    await db.update(businesses).set({ ownerId: userId }).where(eq(businesses.id, businessId)).catch(() => null);
+
     sendVerificationEmail(email, verificationToken).catch(() => null);
 
     const token = signToken({ userId, businessId, role: 'OWNER' });

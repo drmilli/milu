@@ -41,6 +41,8 @@ import { apiKeysRouter } from './routes/apiKeys';
 import { redis, ttsStoreDelete, ttsStoreGet } from './utils/redis';
 import { sendNotification } from './services/notifications';
 import { affiliateAuthRouter, affiliateRouter } from './routes/affiliate';
+import { followUpsRouter } from './routes/followUps';
+import { broadcastsRouter } from './routes/broadcasts';
 
 const app: Express = express();
 const server = http.createServer(app);
@@ -55,7 +57,7 @@ app.use(httpLogger);
 app.use((_req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Content-Type,Authorization,X-Requested-With');
+  res.header('Access-Control-Allow-Headers', 'Content-Type,Authorization,X-Requested-With,X-Business-Id');
   next();
 });
 app.options('*', (_req, res) => res.sendStatus(200));
@@ -221,6 +223,8 @@ app.use('/api/v1/audit-logs', auditLogsRouter);
 app.use('/api/v1/api-keys', apiKeysRouter);
 app.use('/api/v1/affiliate/auth', affiliateAuthRouter);
 app.use('/api/v1/affiliate', affiliateRouter);
+app.use('/api/v1/follow-ups', followUpsRouter);
+app.use('/api/v1/broadcasts', broadcastsRouter);
 
 app.use(errorHandler);
 

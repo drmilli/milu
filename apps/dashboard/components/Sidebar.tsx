@@ -2,9 +2,11 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { clsx } from 'clsx';
 import { useAuth } from '../hooks/useAuth';
+import { useBusinesses } from '../hooks/useBusinesses';
+import { usePlan } from '../hooks/usePlan';
 
 const nav = [
   {
@@ -36,6 +38,21 @@ const nav = [
     label: 'Phone Numbers',
     href: '/phone-numbers',
     icon: <svg className="w-5 h-5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}><path strokeLinecap="round" strokeLinejoin="round" d="M10.5 1.5H8.25A2.25 2.25 0 006 3.75v16.5a2.25 2.25 0 002.25 2.25h7.5A2.25 2.25 0 0018 20.25V3.75a2.25 2.25 0 00-2.25-2.25H13.5m-3 0V3h3V1.5m-3 0h3m-3 18.75h3" /></svg>,
+  },
+  {
+    label: 'Contacts',
+    href: '/contacts',
+    icon: <svg className="w-5 h-5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}><path strokeLinecap="round" strokeLinejoin="round" d="M17.982 18.725A7.488 7.488 0 0012 15.75a7.488 7.488 0 00-5.982 2.975m11.963 0a9 9 0 10-11.963 0m11.963 0A8.966 8.966 0 0112 21a8.966 8.966 0 01-5.982-2.275M15 9.75a3 3 0 11-6 0 3 3 0 016 0z" /></svg>,
+  },
+  {
+    label: 'Follow-ups',
+    href: '/follow-ups',
+    icon: <svg className="w-5 h-5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}><path strokeLinecap="round" strokeLinejoin="round" d="M9 12h3.75M9 15h3.75M9 18h3.75m3 .75H18a2.25 2.25 0 002.25-2.25V6.108c0-1.135-.845-2.098-1.976-2.192a48.424 48.424 0 00-1.123-.08m-5.801 0c-.065.21-.1.433-.1.664 0 .414.336.75.75.75h4.5a.75.75 0 00.75-.75 2.25 2.25 0 00-.1-.664m-5.8 0A2.251 2.251 0 0113.5 2.25H15c1.012 0 1.867.668 2.15 1.586m-5.8 0c-.376.023-.75.05-1.124.08C9.095 4.01 8.25 4.973 8.25 6.108V8.25m0 0H4.875c-.621 0-1.125.504-1.125 1.125v11.25c0 .621.504 1.125 1.125 1.125h9.75c.621 0 1.125-.504 1.125-1.125V9.375c0-.621-.504-1.125-1.125-1.125H8.25zM6.75 12h.008v.008H6.75V12zm0 3h.008v.008H6.75V15zm0 3h.008v.008H6.75V18z" /></svg>,
+  },
+  {
+    label: 'Broadcasts',
+    href: '/broadcasts',
+    icon: <svg className="w-5 h-5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}><path strokeLinecap="round" strokeLinejoin="round" d="M10.34 15.84c-.688-.06-1.386-.09-2.09-.09H7.5a4.5 4.5 0 110-9h.75c.704 0 1.402-.03 2.09-.09m0 9.18c.253.962.584 1.892.985 2.783.247.55.06 1.21-.463 1.511l-.657.38c-.551.318-1.26.117-1.527-.461a20.845 20.845 0 01-1.44-4.282m3.102.069a18.03 18.03 0 01-.59-4.59c0-1.586.205-3.124.59-4.59m0 9.18a23.848 23.848 0 018.835 2.535M10.34 6.66a23.847 23.847 0 008.835-2.535m0 0A23.74 23.74 0 0018.795 3m.38 1.125a23.91 23.91 0 011.014 5.395m-1.014 8.855c-.118.38-.245.754-.38 1.125m.38-1.125a23.91 23.91 0 001.014-5.395m0-3.46c.495.413.811 1.035.811 1.73 0 .695-.316 1.317-.811 1.73m0-3.46a24.347 24.347 0 010 3.46" /></svg>,
   },
   {
     label: 'Appointments',
@@ -158,18 +175,49 @@ export default function Sidebar({ mobileOpen, onMobileClose, collapsed }: Sideba
   const pathname = usePathname();
   const { user, logout, ready, token } = useAuth(false);
   const [businessName, setBusinessName] = useState('');
+  const [bizMenuOpen, setBizMenuOpen] = useState(false);
+  const bizMenuRef = useRef<HTMLDivElement>(null);
+
+  const { businesses, activeId, switchBusiness, createBusiness } = useBusinesses(token ?? '');
+  const { features: planFeatures } = usePlan(token ?? '');
+  const [showCreateBiz, setShowCreateBiz] = useState(false);
+  const [newBizName, setNewBizName] = useState('');
+  const [creatingBiz, setCreatingBiz] = useState(false);
 
   useEffect(() => {
-    if (user?.businessName) {
-      setBusinessName(user.businessName);
-    }
+    if (user?.businessName) setBusinessName(user.businessName);
   }, [user]);
+
+  useEffect(() => {
+    if (!bizMenuOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (bizMenuRef.current && !bizMenuRef.current.contains(e.target as Node)) setBizMenuOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [bizMenuOpen]);
+
+  const activeBiz = businesses.find(b => b.id === activeId) ?? businesses[0];
+  const displayedBizName = activeBiz?.name || businessName || '—';
 
   const initials = user
     ? ((user.firstName?.[0] ?? '') + (user.lastName?.[0] ?? '')).toUpperCase() || user.email[0].toUpperCase()
     : '?';
   const displayName = user ? [user.firstName, user.lastName].filter(Boolean).join(' ') || user.email : '';
-  const bizInitial = (businessName || displayName)[0]?.toUpperCase() ?? '?';
+  const bizInitial = displayedBizName[0]?.toUpperCase() ?? '?';
+
+  async function handleCreateBiz() {
+    if (!newBizName.trim()) return;
+    setCreatingBiz(true);
+    try {
+      const biz = await createBusiness(newBizName.trim());
+      switchBusiness(biz.id);
+    } catch { /* ignore */ } finally {
+      setCreatingBiz(false);
+      setShowCreateBiz(false);
+      setNewBizName('');
+    }
+  }
 
   return (
     <aside
@@ -185,7 +233,7 @@ export default function Sidebar({ mobileOpen, onMobileClose, collapsed }: Sideba
         'transition-all duration-200 ease-in-out',
       )}
     >
-      {/* Logo + business name */}
+      {/* Logo + business switcher */}
       <div className={clsx(
         'border-b border-white/10 flex-shrink-0',
         collapsed ? 'px-0 py-4 flex flex-col items-center' : 'px-5 py-4'
@@ -196,11 +244,90 @@ export default function Sidebar({ mobileOpen, onMobileClose, collapsed }: Sideba
           <>
             <img src="/brand/wordmark.svg" alt="milu." className="h-6 w-auto mb-1" />
             {ready && (
-              <div className="flex items-center gap-2 mt-2">
-                <div className="w-5 h-5 rounded bg-primary/30 flex items-center justify-center flex-shrink-0">
-                  <span className="text-[10px] font-bold text-cream-light">{bizInitial}</span>
-                </div>
-                <span className="text-xs text-cream/60 truncate">{businessName || '—'}</span>
+              <div className="relative mt-2" ref={bizMenuRef}>
+                <button
+                  onClick={() => user?.role === 'OWNER' && businesses.length > 0 && setBizMenuOpen(v => !v)}
+                  className={clsx(
+                    'flex items-center gap-2 w-full text-left',
+                    user?.role === 'OWNER' && businesses.length > 0 && 'cursor-pointer hover:opacity-80'
+                  )}
+                >
+                  <div className="w-5 h-5 rounded bg-primary/30 flex items-center justify-center flex-shrink-0">
+                    <span className="text-[10px] font-bold text-cream-light">{bizInitial}</span>
+                  </div>
+                  <span className="text-xs text-cream/60 truncate flex-1">{displayedBizName}</span>
+                  {user?.role === 'OWNER' && businesses.length > 0 && (
+                    <svg className="w-3 h-3 text-cream/40 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
+                    </svg>
+                  )}
+                </button>
+
+                {bizMenuOpen && (
+                  <div className="absolute left-0 top-full mt-1 w-52 bg-[#2A1A0E] border border-white/10 rounded-xl shadow-xl z-50 py-1 overflow-hidden">
+                    {businesses.map(biz => (
+                      <button
+                        key={biz.id}
+                        onClick={() => { switchBusiness(biz.id); setBizMenuOpen(false); }}
+                        className={clsx(
+                          'w-full text-left px-3 py-2 text-xs flex items-center gap-2 transition-colors',
+                          biz.id === (activeId ?? businesses[0]?.id)
+                            ? 'text-cream-light bg-white/10'
+                            : 'text-cream/60 hover:bg-white/5 hover:text-cream-light'
+                        )}
+                      >
+                        <div className="w-4 h-4 rounded bg-primary/30 flex items-center justify-center flex-shrink-0">
+                          <span className="text-[9px] font-bold text-cream-light">{biz.name[0]?.toUpperCase()}</span>
+                        </div>
+                        <span className="truncate">{biz.name}</span>
+                        {biz.id === (activeId ?? businesses[0]?.id) && (
+                          <svg className="w-3 h-3 text-cream/60 ml-auto flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+                          </svg>
+                        )}
+                      </button>
+                    ))}
+                    <div className="border-t border-white/10 mt-1 pt-1">
+                      {showCreateBiz ? (
+                        <div className="px-3 py-2">
+                          <input
+                            autoFocus
+                            value={newBizName}
+                            onChange={e => setNewBizName(e.target.value)}
+                            onKeyDown={e => e.key === 'Enter' && handleCreateBiz()}
+                            placeholder="Business name"
+                            className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1 text-xs text-cream-light placeholder:text-cream/30 outline-none focus:border-primary/60 mb-2"
+                          />
+                          <div className="flex gap-1.5">
+                            <button onClick={handleCreateBiz} disabled={creatingBiz} className="flex-1 text-[11px] py-1 rounded-lg bg-primary text-cream-light hover:bg-primary/80 transition-colors disabled:opacity-50">
+                              {creatingBiz ? '...' : 'Create'}
+                            </button>
+                            <button onClick={() => { setShowCreateBiz(false); setNewBizName(''); }} className="flex-1 text-[11px] py-1 rounded-lg bg-white/5 text-cream/60 hover:bg-white/10 transition-colors">
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      ) : planFeatures.multiBusiness ? (
+                        <button
+                          onClick={() => setShowCreateBiz(true)}
+                          className="w-full text-left px-3 py-2 text-xs text-cream/50 hover:text-cream-light hover:bg-white/5 transition-colors flex items-center gap-2"
+                        >
+                          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+                          </svg>
+                          Add business
+                        </button>
+                      ) : (
+                        <div className="px-3 py-2 text-xs text-cream/30 flex items-center gap-2">
+                          <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 1 0-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 0 0 2.25-2.25v-6.75a2.25 2.25 0 0 0-2.25-2.25H6.75a2.25 2.25 0 0 0-2.25 2.25v6.75a2.25 2.25 0 0 0 2.25 2.25z" />
+                          </svg>
+                          Add business · Enterprise
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </>

@@ -20,6 +20,54 @@ import { sendNotification } from '../services/notifications';
 export const businessesRouter: Router = Router();
 businessesRouter.use(authMiddleware);
 
+function requireMultiBusiness(req: any, res: any): boolean {
+  if (req.user?.role === 'OWNER' && req.plan && !req.plan.features.multiBusiness) {
+    res.status(402).json({ error: 'Managing multiple businesses requires the Enterprise plan. Contact us to upgrade.' });
+    return true;
+  }
+  return false;
+}
+
+// GET /mine — list all businesses owned by current user
+businessesRouter.get('/mine', async (req, res, next) => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+    const rows = await db.select({
+      id: businesses.id,
+      name: businesses.name,
+      industry: businesses.industry,
+      subscriptionTier: businesses.subscriptionTier,
+      isActive: businesses.isActive,
+      createdAt: businesses.createdAt,
+    }).from(businesses).where(eq(businesses.ownerId, userId)).orderBy(businesses.createdAt);
+    return res.json({ businesses: rows });
+  } catch (err) { next(err); }
+});
+
+// POST /create-additional — create an additional business for an existing owner
+businessesRouter.post('/create-additional', async (req, res, next) => {
+  try {
+    if (requireMultiBusiness(req, res)) return;
+    const userId = req.user?.userId;
+    if (!userId || req.user?.role !== 'OWNER') return res.status(403).json({ error: 'Only owners can create businesses' });
+    const { name, industry, contactPhone } = z.object({
+      name: z.string().min(1),
+      industry: z.string().optional(),
+      contactPhone: z.string().optional(),
+    }).parse(req.body);
+
+    const [biz] = await db.insert(businesses).values({
+      name, industry, contactPhone, ownerId: userId,
+    }).returning({ id: businesses.id, name: businesses.name });
+
+    // Seed empty knowledge base for the new business
+    await db.insert(knowledgeBases).values({ businessId: biz.id, businessName: name }).catch(() => null);
+
+    return res.status(201).json(biz);
+  } catch (err) { next(err); }
+});
+
 function denyIfCoreOnly(req: any, res: any): boolean {
   if (req.user?.role === 'OWNER' && req.plan?.tier === 'ONE_TIME') {
     res.status(402).json({ error: 'Upgrade to access this feature.' });
@@ -499,7 +547,7 @@ businessesRouter.post('/:id/phone-numbers/send-otp', async (req, res, next) => {
     }
 
     const payload: Record<string, unknown> = { message: 'OTP sent', number };
-    if (!smsSent) payload.devCode = code; // surface code when SMS fails (Twilio trial restriction)
+    if (!smsSent && env.NODE_ENV !== 'production') payload.devCode = code;
 
     return res.json(payload);
   } catch (err) { next(err); }

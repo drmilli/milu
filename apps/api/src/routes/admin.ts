@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { eq, desc, ilike, and, or, sql, gte, inArray, lt } from 'drizzle-orm';
 import bcrypt from 'bcryptjs';
 import twilio from 'twilio';
-import { db, businesses, users, calls, escalations, phoneNumbers, agentConfigs, notifications, catalogItems, contactSubmissions, phoneNumberRequests, dataConnectors, affiliateAgents, affiliateReferrals, affiliateCommissions, affiliateWithdrawalRequests, affiliateSettings } from '../db';
+import { db, businesses, users, calls, escalations, phoneNumbers, agentConfigs, notifications, catalogItems, contactSubmissions, phoneNumberRequests, dataConnectors, affiliateAgents, affiliateReferrals, affiliateCommissions, affiliateWithdrawalRequests, affiliateSettings, contacts, followUps } from '../db';
 import { logger } from '../config/logger';
 import { adminGuard } from '../middleware/admin-guard';
 import { signAdminToken, verifyAdminToken } from '../utils/jwt';
@@ -115,7 +115,7 @@ adminRouter.get('/stats', async (_req, res, next) => {
       callCount, callsThisMonth, callsLastMonth,
       escalationCount, escalationsToday, escalationBizToday,
       planCounts, resolvedCalls, activeCalls,
-      activeTrialCount,
+      activeTrialCount, contactCount, pendingFollowUps,
     ] = await Promise.all([
       db.select({ n: sql<number>`count(*)` }).from(businesses),
       db.select({ n: sql<number>`count(*)` }).from(businesses).where(eq(businesses.isActive, true)),
@@ -131,6 +131,8 @@ adminRouter.get('/stats', async (_req, res, next) => {
       db.select({ n: sql<number>`count(*)` }).from(calls).where(eq(calls.status, 'ACTIVE')),
       db.select({ n: sql<number>`count(*)` }).from(businesses)
         .where(and(eq(businesses.subscriptionTier, 'STARTER'), gte(businesses.createdAt, trialThreshold))),
+      db.select({ n: sql<number>`count(*)` }).from(contacts).catch(() => [{ n: 0 }]),
+      db.select({ n: sql<number>`count(*)` }).from(followUps).where(eq(followUps.status, 'PENDING')).catch(() => [{ n: 0 }]),
     ]);
 
     const planMap: Record<string, number> = {};
@@ -159,6 +161,8 @@ adminRouter.get('/stats', async (_req, res, next) => {
       aiResolutionRateChange: 0,
       escalationsToday: Number(escalationsToday[0].n),
       escalationBusinessCount: Number(escalationBizToday[0].n),
+      totalContacts: Number((contactCount as any[])[0]?.n ?? 0),
+      pendingFollowUps: Number((pendingFollowUps as any[])[0]?.n ?? 0),
     });
   } catch (err) {
     next(err);
@@ -213,6 +217,7 @@ adminRouter.get('/businesses', async (req, res, next) => {
         subscriptionTier: businesses.subscriptionTier,
         isActive: businesses.isActive,
         createdAt: businesses.createdAt,
+        ownerId: businesses.ownerId,
         connectorEnabled: dataConnectors.enabled,
         connectorBaseUrl: dataConnectors.baseUrl,
       })
@@ -226,10 +231,14 @@ adminRouter.get('/businesses', async (req, res, next) => {
     ]);
 
     const enriched = await Promise.all(rows.map(async (b) => {
-      const [ownerRows, callCountRows] = await Promise.all([
-        db.select({ email: users.email, firstName: users.firstName, lastName: users.lastName })
-          .from(users).where(and(eq(users.businessId, b.id), eq(users.role, 'OWNER'))).limit(1),
+      const [ownerRows, callCountRows, contactCountRows] = await Promise.all([
+        b.ownerId
+          ? db.select({ email: users.email, firstName: users.firstName, lastName: users.lastName })
+              .from(users).where(eq(users.id, b.ownerId)).limit(1)
+          : db.select({ email: users.email, firstName: users.firstName, lastName: users.lastName })
+              .from(users).where(and(eq(users.businessId, b.id), eq(users.role, 'OWNER'))).limit(1),
         db.select({ n: sql<number>`count(*)` }).from(calls).where(eq(calls.businessId, b.id)),
+        db.select({ n: sql<number>`count(*)` }).from(contacts).where(eq(contacts.businessId, b.id)).catch(() => [{ n: 0 }]),
       ]);
       const owner = ownerRows[0];
       const planMrr: Record<string, number> = { STARTER: 25, GROWTH: 45, ONE_TIME: 0, ENTERPRISE: 0 };
@@ -245,6 +254,7 @@ adminRouter.get('/businesses', async (req, res, next) => {
         calls: Number(callCountRows[0]?.n ?? 0),
         mrr: isTrial ? 0 : planMrr[b.subscriptionTier] ?? 0,
         joined: b.createdAt.toISOString(),
+        contacts: Number((contactCountRows as any[])[0]?.n ?? 0),
         dbConnected: Boolean((b as any).connectorEnabled) && Boolean((b as any).connectorBaseUrl),
       };
     }));
@@ -707,7 +717,7 @@ adminRouter.get('/businesses/:id', async (req, res, next) => {
 
     const startOfMonth = new Date(); startOfMonth.setDate(1); startOfMonth.setHours(0,0,0,0);
 
-    const [members, recentCalls, callTotal, callMonth, escalationCount, agentRow, connectorRow] = await Promise.all([
+    const [members, recentCalls, callTotal, callMonth, escalationCount, agentRow, connectorRow, contactCount, pendingFuCount] = await Promise.all([
       db.select({ id: users.id, email: users.email, firstName: users.firstName, lastName: users.lastName, role: users.role })
         .from(users).where(eq(users.businessId, req.params.id)),
       db.select({ id: calls.id, callerNumber: calls.callerNumber, duration: calls.duration, resolution: calls.resolution, intent: calls.intent, startedAt: calls.startedAt, recordingUrl: calls.recordingUrl })
@@ -722,9 +732,17 @@ adminRouter.get('/businesses/:id', async (req, res, next) => {
         lastTestAt: dataConnectors.lastTestAt,
         lastTestStatus: dataConnectors.lastTestStatus,
       }).from(dataConnectors).where(eq(dataConnectors.businessId, req.params.id)).limit(1),
+      db.select({ n: sql<number>`count(*)` }).from(contacts).where(eq(contacts.businessId, req.params.id)).catch(() => [{ n: 0 }]),
+      db.select({ n: sql<number>`count(*)` }).from(followUps).where(and(eq(followUps.businessId, req.params.id), eq(followUps.status, 'PENDING'))).catch(() => [{ n: 0 }]),
     ]);
 
-    const owner = members.find(m => m.role === 'OWNER');
+    // Owner: try from members list first, then look up via ownerId for additional businesses
+    let owner = members.find(m => m.role === 'OWNER');
+    if (!owner && biz.ownerId) {
+      const [ownerRow] = await db.select({ id: users.id, email: users.email, firstName: users.firstName, lastName: users.lastName, role: users.role })
+        .from(users).where(eq(users.id, biz.ownerId)).limit(1);
+      if (ownerRow) owner = ownerRow;
+    }
     const total = Number(callTotal[0]?.n ?? 0);
     const aiResolved = recentCalls.filter(c => c.resolution === 'AI').length;
     const planMrr: Record<string, number> = { STARTER: 25, GROWTH: 45, ONE_TIME: 0, ENTERPRISE: 0 };
@@ -746,6 +764,8 @@ adminRouter.get('/businesses/:id', async (req, res, next) => {
       callsTotal: total,
       resolutionRate: total > 0 ? Math.round((aiResolved / Math.min(total, 10)) * 100) : 0,
       escalations: Number(escalationCount[0]?.n ?? 0),
+      contacts: Number((contactCount as any[])[0]?.n ?? 0),
+      pendingFollowUps: Number((pendingFuCount as any[])[0]?.n ?? 0),
       dbConnected: Boolean(connectorRow?.[0]?.enabled) && Boolean(connectorRow?.[0]?.baseUrl),
       dataConnector: connectorRow?.[0]
         ? {
@@ -1674,5 +1694,31 @@ adminRouter.post('/test-whatsapp', async (req, res, next) => {
     }
 
     return res.json({ message: `WhatsApp ${type} test sent to ${to}` });
+  } catch (err) { next(err); }
+});
+
+// ─── GET /admin/contacts ───────────────────────────────────────────────────────
+adminRouter.get('/contacts', async (req, res, next) => {
+  try {
+    const { page, limit, search, businessId: qBid, stage } = z.object({
+      page: z.coerce.number().min(1).default(1),
+      limit: z.coerce.number().min(1).max(100).default(25),
+      search: z.string().optional(),
+      businessId: z.string().optional(),
+      stage: z.string().optional(),
+    }).parse(req.query);
+
+    const conditions: any[] = [];
+    if (qBid) conditions.push(eq(contacts.businessId, qBid));
+    if (search) conditions.push(or(ilike(contacts.phone, `%${search}%`), ilike(contacts.name, `%${search}%`)));
+    if (stage) conditions.push(eq(contacts.stage, stage as any));
+    const where = conditions.length ? and(...conditions) : undefined;
+
+    const [rows, countResult] = await Promise.all([
+      db.select().from(contacts).where(where).orderBy(desc(contacts.lastCallAt)).limit(limit).offset((page - 1) * limit),
+      db.select({ n: sql<number>`count(*)` }).from(contacts).where(where),
+    ]);
+
+    return res.json({ contacts: rows, total: Number(countResult[0].n), page, limit });
   } catch (err) { next(err); }
 });

@@ -1,7 +1,7 @@
 import type { Request, Response, NextFunction } from 'express';
 import { verifyToken, type JwtPayload } from '../utils/jwt';
-import { db, businesses } from '../db';
-import { eq } from 'drizzle-orm';
+import { db, businesses, users } from '../db';
+import { eq, and } from 'drizzle-orm';
 
 declare global {
   namespace Express {
@@ -22,6 +22,9 @@ declare global {
           callRecording: boolean;
           analytics: 'none' | 'basic' | 'full';
           notifications: { email: boolean; sms: boolean; whatsapp: boolean };
+          broadcasts: boolean;
+          crm: boolean;
+          multiBusiness: boolean;
         };
       };
     }
@@ -47,6 +50,9 @@ function buildPlan(input: { billingTier: 'STARTER' | 'GROWTH' | 'ENTERPRISE' | '
         callRecording: false,
         analytics: 'none' as const,
         notifications: { email: false, sms: false, whatsapp: false },
+        broadcasts: false,
+        crm: false,
+        multiBusiness: false,
       },
     };
   }
@@ -63,6 +69,9 @@ function buildPlan(input: { billingTier: 'STARTER' | 'GROWTH' | 'ENTERPRISE' | '
         callRecording: false,
         analytics: 'basic' as const,
         notifications: { email: true, sms: false, whatsapp: false },
+        broadcasts: false,
+        crm: false,
+        multiBusiness: false,
       },
     };
   }
@@ -79,6 +88,9 @@ function buildPlan(input: { billingTier: 'STARTER' | 'GROWTH' | 'ENTERPRISE' | '
         callRecording: true,
         analytics: 'full' as const,
         notifications: { email: true, sms: true, whatsapp: true },
+        broadcasts: true,
+        crm: false,
+        multiBusiness: false,
       },
     };
   }
@@ -94,6 +106,9 @@ function buildPlan(input: { billingTier: 'STARTER' | 'GROWTH' | 'ENTERPRISE' | '
       callRecording: true,
       analytics: 'full' as const,
       notifications: { email: true, sms: true, whatsapp: true },
+      broadcasts: true,
+      crm: true,
+      multiBusiness: true,
     },
   };
 }
@@ -105,6 +120,34 @@ export async function authMiddleware(req: Request, res: Response, next: NextFunc
   }
   try {
     req.user = verifyToken(header.slice(7));
+
+    const requestedBid = req.headers['x-business-id'] as string | undefined;
+
+    if (requestedBid) {
+      if (req.user.role === 'OWNER') {
+        // If it's their primary business (from JWT) allow it — handles pre-existing businesses where ownerId is NULL
+        if (requestedBid !== req.user.businessId) {
+          const [owned] = await db
+            .select({ id: businesses.id })
+            .from(businesses)
+            .where(and(eq(businesses.id, requestedBid), eq(businesses.ownerId, req.user.userId)))
+            .limit(1);
+          if (!owned) return res.status(403).json({ error: 'Access denied to this business' });
+        }
+        req.user = { ...req.user, businessId: requestedBid };
+      } else if (req.user.role === 'ADMIN') {
+        const [adminUser] = await db
+          .select({ businessId: users.businessId })
+          .from(users)
+          .where(eq(users.id, req.user.userId))
+          .limit(1);
+        if (!adminUser || adminUser.businessId !== requestedBid) {
+          return res.status(403).json({ error: 'Access denied to this business' });
+        }
+        req.user = { ...req.user, businessId: requestedBid };
+      }
+    }
+
     if (req.user.role === 'OWNER' && req.user.businessId) {
       const [biz] = await db
         .select({ subscriptionTier: businesses.subscriptionTier, createdAt: businesses.createdAt })

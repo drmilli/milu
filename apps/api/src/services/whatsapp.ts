@@ -345,3 +345,25 @@ export async function sendWeeklySummary(to: string, businessName: string, stats:
     `_Milu AI · dashboard.miluai.app_`
   );
 }
+
+export async function sendBroadcastMessage(
+  to: string,
+  contactName: string,
+  businessName: string,
+  messageBody: string,
+  businessContactPhone: string,
+) {
+  if (env.TWILIO_WHATSAPP_BROADCAST_CONTENT_SID) {
+    return sendViaTwilioWhatsAppTemplate(to, env.TWILIO_WHATSAPP_BROADCAST_CONTENT_SID, {
+      '1': contactName,
+      '2': businessName,
+      '3': messageBody,
+      '4': businessContactPhone,
+    });
+  }
+  // Fallback: plain text if template SID not configured
+  return sendWhatsAppText(
+    to,
+    `Hello ${contactName}, this is a follow-up from *${businessName}*.\n\n${messageBody}\n\nContact us on ${businessContactPhone}`,
+  );
+}

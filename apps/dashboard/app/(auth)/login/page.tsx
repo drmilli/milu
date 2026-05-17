@@ -24,7 +24,7 @@ export default function LoginPage() {
     setLoading(true);
     try {
       const res = await apiPost<{ token: string; user: StoredUser }>('/auth/login', { email, password });
-      saveSession(res.token, res.user);
+      saveSession(res.token, res.user, res.user.businessId);
       router.replace('/overview');
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Invalid email or password');

@@ -8,6 +8,14 @@ import { audit } from '../services/audit';
 export const contactsRouter: Router = Router();
 contactsRouter.use(authMiddleware);
 
+function requireCrm(req: any, res: any): boolean {
+  if (req.user?.role === 'OWNER' && req.plan && !req.plan.features.crm) {
+    res.status(402).json({ error: 'CRM (contacts & sales pipeline) requires the Enterprise plan. Contact us to upgrade.' });
+    return true;
+  }
+  return false;
+}
+
 /**
  * @openapi
  * tags:
@@ -42,17 +50,19 @@ contactsRouter.use(authMiddleware);
  */
 contactsRouter.get('/', async (req, res, next) => {
   try {
-    const { businessId: qBid, search, page, limit } = z.object({
-      businessId: z.string().optional(),
-      search: z.string().optional(),
+    if (requireCrm(req, res)) return;
+    const { search, page, limit, stage } = z.object({
+      search: z.string().max(100).optional(),
+      stage: z.string().optional(),
       page: z.coerce.number().min(1).default(1),
       limit: z.coerce.number().min(1).max(100).default(20),
     }).parse(req.query);
 
-    const bid = req.user?.businessId ?? qBid;
-    const conditions: any[] = [];
-    if (bid) conditions.push(eq(contacts.businessId, bid));
-    if (search) conditions.push(ilike(contacts.phone, `%${search}%`));
+    const bid = req.user?.businessId;
+    if (!bid) return res.status(401).json({ error: 'Unauthorized' });
+    const conditions: any[] = [eq(contacts.businessId, bid)];
+    if (search) conditions.push(or(ilike(contacts.phone, `%${search}%`), ilike(contacts.name, `%${search}%`), ilike(contacts.email, `%${search}%`)));
+    if (stage) conditions.push(eq(contacts.stage, stage as any));
     const where = conditions.length ? and(...conditions) : undefined;
 
     const [rows, countResult] = await Promise.all([
@@ -92,17 +102,21 @@ contactsRouter.get('/', async (req, res, next) => {
  */
 contactsRouter.post('/', async (req, res, next) => {
   try {
+    if (requireCrm(req, res)) return;
+    const bid = req.user?.businessId;
+    if (!bid) return res.status(401).json({ error: 'Unauthorized' });
+
     const data = z.object({
-      businessId: z.string(),
       phone: z.string().min(5),
       name: z.string().optional(),
       location: z.string().optional(),
       email: z.string().email().optional(),
       notes: z.string().optional(),
       tags: z.array(z.string()).optional(),
+      stage: z.enum(['LEAD', 'CONTACTED', 'QUALIFIED', 'PROPOSAL', 'CLOSED_WON', 'CLOSED_LOST']).optional(),
     }).parse(req.body);
 
-    const [contact] = await db.insert(contacts).values(data).returning();
+    const [contact] = await db.insert(contacts).values({ ...data, businessId: bid }).returning();
     await audit(req, 'contact.created', 'contact', contact.id);
     return res.status(201).json(contact);
   } catch (err) { next(err); }
@@ -127,7 +141,12 @@ contactsRouter.post('/', async (req, res, next) => {
  */
 contactsRouter.get('/:id', async (req, res, next) => {
   try {
-    const [contact] = await db.select().from(contacts).where(eq(contacts.id, req.params.id)).limit(1);
+    if (requireCrm(req, res)) return;
+    const bid = req.user?.businessId;
+    if (!bid) return res.status(401).json({ error: 'Unauthorized' });
+
+    const [contact] = await db.select().from(contacts)
+      .where(and(eq(contacts.id, req.params.id), eq(contacts.businessId, bid))).limit(1);
     if (!contact) return res.status(404).json({ error: 'Contact not found' });
 
     const [callHistory, orderHistory, appointmentHistory] = await Promise.all([
@@ -172,16 +191,21 @@ contactsRouter.get('/:id', async (req, res, next) => {
  */
 contactsRouter.patch('/:id', async (req, res, next) => {
   try {
+    if (requireCrm(req, res)) return;
+    const bid = req.user?.businessId;
+    if (!bid) return res.status(401).json({ error: 'Unauthorized' });
+
     const data = z.object({
       name: z.string().optional(),
       location: z.string().optional(),
       email: z.string().email().optional(),
       notes: z.string().optional(),
       tags: z.array(z.string()).optional(),
+      stage: z.enum(['LEAD', 'CONTACTED', 'QUALIFIED', 'PROPOSAL', 'CLOSED_WON', 'CLOSED_LOST']).optional(),
     }).parse(req.body);
 
     const [contact] = await db.update(contacts).set({ ...data, updatedAt: new Date() })
-      .where(eq(contacts.id, req.params.id)).returning();
+      .where(and(eq(contacts.id, req.params.id), eq(contacts.businessId, bid))).returning();
     if (!contact) return res.status(404).json({ error: 'Contact not found' });
     return res.json(contact);
   } catch (err) { next(err); }
@@ -206,7 +230,14 @@ contactsRouter.patch('/:id', async (req, res, next) => {
  */
 contactsRouter.delete('/:id', async (req, res, next) => {
   try {
-    await db.delete(contacts).where(eq(contacts.id, req.params.id));
+    if (requireCrm(req, res)) return;
+    const bid = req.user?.businessId;
+    if (!bid) return res.status(401).json({ error: 'Unauthorized' });
+
+    const [deleted] = await db.delete(contacts)
+      .where(and(eq(contacts.id, req.params.id), eq(contacts.businessId, bid)))
+      .returning({ id: contacts.id });
+    if (!deleted) return res.status(404).json({ error: 'Contact not found' });
     await audit(req, 'contact.deleted', 'contact', req.params.id);
     return res.status(204).send();
   } catch (err) { next(err); }

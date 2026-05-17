@@ -13,6 +13,7 @@ type Business = {
   plan: string;
   status: 'active' | 'trial' | 'suspended' | 'cancelled';
   calls: number;
+  contacts?: number;
   mrr: number;
   joined: string;
   industry: string;
@@ -57,7 +58,7 @@ export default function BusinessesPage() {
 
   const load = useCallback(() => {
     if (!token) return;
-    adminGet<Business[]>('/admin/businesses', token)
+    adminGet<Business[]>('/admin/businesses?limit=200', token)
       .then(setBusinesses).catch(() => null).finally(() => setLoading(false));
   }, [token]);
 
@@ -130,6 +131,7 @@ export default function BusinessesPage() {
               <th className="text-left px-4 py-3 text-xs font-semibold text-primary-warm uppercase tracking-wider">Plan</th>
               <th className="text-left px-4 py-3 text-xs font-semibold text-primary-warm uppercase tracking-wider">Status</th>
               <th className="text-right px-4 py-3 text-xs font-semibold text-primary-warm uppercase tracking-wider">Calls/mo</th>
+              <th className="text-right px-4 py-3 text-xs font-semibold text-primary-warm uppercase tracking-wider hidden lg:table-cell">Contacts</th>
               <th className="text-right px-4 py-3 text-xs font-semibold text-primary-warm uppercase tracking-wider">MRR</th>
               <th className="text-left px-4 py-3 text-xs font-semibold text-primary-warm uppercase tracking-wider">Joined</th>
               <th className="px-4 py-3" />
@@ -165,6 +167,7 @@ export default function BusinessesPage() {
                   <span className={`text-xs font-medium px-2.5 py-1 rounded-full capitalize ${statusColors[b.status] ?? 'bg-cream-dark text-primary-warm'}`}>{b.status}</span>
                 </td>
                 <td className="px-4 py-4 text-right font-medium text-primary-dark">{b.calls.toLocaleString()}</td>
+                <td className="px-4 py-4 text-right text-primary-warm hidden lg:table-cell">{b.contacts ?? 0}</td>
                 <td className="px-4 py-4 text-right font-medium text-primary-dark">
                   {b.mrr > 0 ? `₦${b.mrr.toLocaleString()}` : '—'}
                 </td>

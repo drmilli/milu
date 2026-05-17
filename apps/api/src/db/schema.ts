@@ -18,6 +18,11 @@ export const catalogItemTypeEnum = pgEnum('catalog_item_type', ['PRODUCT', 'SERV
 export const affiliateAgentStatusEnum = pgEnum('affiliate_agent_status', ['ACTIVE', 'SUSPENDED', 'BANNED']);
 export const affiliateCommissionStatusEnum = pgEnum('affiliate_commission_status', ['PENDING', 'CONFIRMED', 'REVERSED', 'LOCKED']);
 export const affiliateWithdrawalStatusEnum = pgEnum('affiliate_withdrawal_status', ['NEW', 'APPROVED', 'PAID', 'REJECTED']);
+export const contactStageEnum = pgEnum('contact_stage', ['LEAD', 'CONTACTED', 'QUALIFIED', 'PROPOSAL', 'CLOSED_WON', 'CLOSED_LOST']);
+export const followUpTypeEnum = pgEnum('follow_up_type', ['CALL', 'WHATSAPP', 'NOTE', 'EMAIL']);
+export const followUpStatusEnum = pgEnum('follow_up_status', ['PENDING', 'COMPLETED', 'CANCELLED']);
+export const broadcastStatusEnum = pgEnum('broadcast_status', ['DRAFT', 'SENDING', 'COMPLETED', 'FAILED']);
+export const templateStatusEnum = pgEnum('template_status', ['DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'REJECTED']);
 
 // ─── Core ─────────────────────────────────────────────────────────────────────
 export const businesses = pgTable('businesses', {
@@ -33,6 +38,7 @@ export const businesses = pgTable('businesses', {
   config: jsonb('config').$type<Record<string, unknown>>().default({}).notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  ownerId: text('owner_id'),
 });
 
 export const users = pgTable('users', {
@@ -223,10 +229,68 @@ export const contacts = pgTable('contacts', {
   email: text('email'),
   notes: text('notes'),
   tags: jsonb('tags').$type<string[]>().default([]).notNull(),
+  stage: contactStageEnum('stage').default('LEAD').notNull(),
   totalCalls: integer('total_calls').default(0).notNull(),
   lastCallAt: timestamp('last_call_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+// ─── Follow-ups ───────────────────────────────────────────────────────────────
+export const followUps = pgTable('follow_ups', {
+  id: text('id').primaryKey().$defaultFn(() => randomUUID()),
+  businessId: text('business_id').notNull().references(() => businesses.id, { onDelete: 'cascade' }),
+  contactId: text('contact_id').notNull().references(() => contacts.id, { onDelete: 'cascade' }),
+  callId: text('call_id').references(() => calls.id, { onDelete: 'set null' }),
+  type: followUpTypeEnum('type').default('CALL').notNull(),
+  title: text('title').notNull(),
+  notes: text('notes'),
+  status: followUpStatusEnum('status').default('PENDING').notNull(),
+  scheduledAt: timestamp('scheduled_at', { withTimezone: true }).notNull(),
+  completedAt: timestamp('completed_at', { withTimezone: true }),
+  createdBy: text('created_by').references(() => users.id, { onDelete: 'set null' }),
+  isAiSuggested: boolean('is_ai_suggested').default(false).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+export const messageTemplates = pgTable('message_templates', {
+  id: text('id').primaryKey().$defaultFn(() => randomUUID()),
+  businessId: text('business_id').notNull().references(() => businesses.id, { onDelete: 'cascade' }),
+  name: text('name').notNull(),
+  body: text('body').notNull(),
+  variables: jsonb('variables').$type<string[]>().default([]).notNull(),
+  status: templateStatusEnum('status').default('DRAFT').notNull(),
+  twilioSid: text('twilio_sid'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+export const messageBroadcasts = pgTable('message_broadcasts', {
+  id: text('id').primaryKey().$defaultFn(() => randomUUID()),
+  businessId: text('business_id').notNull().references(() => businesses.id, { onDelete: 'cascade' }),
+  templateId: text('template_id').references(() => messageTemplates.id, { onDelete: 'set null' }),
+  message: text('message').notNull(),
+  recipientFilter: jsonb('recipient_filter').$type<{ tags?: string[]; all?: boolean; contactIds?: string[] }>().default({}).notNull(),
+  totalRecipients: integer('total_recipients').default(0).notNull(),
+  sentCount: integer('sent_count').default(0).notNull(),
+  failedCount: integer('failed_count').default(0).notNull(),
+  status: broadcastStatusEnum('status').default('DRAFT').notNull(),
+  scheduledAt: timestamp('scheduled_at', { withTimezone: true }),
+  startedAt: timestamp('started_at', { withTimezone: true }),
+  completedAt: timestamp('completed_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+export const broadcastRecipients = pgTable('broadcast_recipients', {
+  id: text('id').primaryKey().$defaultFn(() => randomUUID()),
+  broadcastId: text('broadcast_id').notNull().references(() => messageBroadcasts.id, { onDelete: 'cascade' }),
+  contactId: text('contact_id').references(() => contacts.id, { onDelete: 'set null' }),
+  phone: text('phone').notNull(),
+  status: text('status').default('PENDING').notNull(),
+  twilioSid: text('twilio_sid'),
+  sentAt: timestamp('sent_at', { withTimezone: true }),
+  error: text('error'),
 });
 
 // ─── Orders ───────────────────────────────────────────────────────────────────
@@ -523,3 +587,7 @@ export type PhoneVerification = typeof phoneVerifications.$inferSelect;
 export type ContactSubmission = typeof contactSubmissions.$inferSelect;
 export type PhoneNumberRequest = typeof phoneNumberRequests.$inferSelect;
 export type DataConnector = typeof dataConnectors.$inferSelect;
+export type FollowUp = typeof followUps.$inferSelect;
+export type MessageTemplate = typeof messageTemplates.$inferSelect;
+export type MessageBroadcast = typeof messageBroadcasts.$inferSelect;
+export type BroadcastRecipient = typeof broadcastRecipients.$inferSelect;

@@ -61,10 +61,10 @@ billingRouter.get('/plans', async (_req, res, next) => {
     if (!env.WHOP_API_KEY || !env.WHOP_COMPANY_ID) {
       return res.json({
         plans: [
-          { id: 'one_time', name: 'One-time', price: 20, currency: 'USD', features: ['Voice', 'AI', 'Call logs'] },
-          { id: 'starter', name: 'Starter', price: 25, currency: 'USD', features: ['200 calls/mo', '1 phone number', 'Basic analytics'] },
-          { id: 'growth', name: 'Growth', price: 45, currency: 'USD', features: ['500 calls/mo', '1 phone number', 'Full analytics', 'Team members'] },
-          { id: 'enterprise', name: 'Enterprise', price: 0, currency: 'USD', features: ['Unlimited calls', 'Unlimited numbers', 'Priority support', 'Custom voice'] },
+          { id: 'one_time', name: 'One-time', price: 20, currency: 'USD', features: ['Voice AI agent', 'Call logs', 'Email notifications'] },
+          { id: 'starter', name: 'Starter', price: 25, currency: 'USD', features: ['200 calls/mo', '1 phone number', 'Basic analytics', 'Email notifications'] },
+          { id: 'growth', name: 'Growth', price: 45, currency: 'USD', features: ['500 calls/mo', 'Full analytics', 'Team members', 'WhatsApp notifications', 'Bulk WhatsApp broadcasts'] },
+          { id: 'enterprise', name: 'Enterprise', price: 0, currency: 'USD', features: ['Unlimited calls', 'CRM & contacts', 'Sales follow-ups', 'Multiple businesses', 'Priority support', 'Custom pricing'] },
         ],
       });
     }
@@ -195,6 +195,13 @@ billingRouter.get('/subscription/:businessId', authMiddleware, async (req, res, 
       while (renewsAt <= now) renewsAt.setMonth(renewsAt.getMonth() + 1);
     }
 
+    const effectiveTier = isTrial ? 'GROWTH' : tier;
+    const features = {
+      broadcasts: effectiveTier === 'GROWTH' || effectiveTier === 'ENTERPRISE',
+      crm: effectiveTier === 'ENTERPRISE',
+      multiBusiness: effectiveTier === 'ENTERPRISE',
+    };
+
     return res.json({
       planId: effectiveMeta.planId,
       planName: isTrial ? 'Free Trial (All features)' : effectiveMeta.planName,
@@ -206,6 +213,7 @@ billingRouter.get('/subscription/:businessId', authMiddleware, async (req, res, 
         calls: { used: Number(callCount[0]?.n ?? 0), limit: effectiveMeta.callLimit },
         teamMembers: { used: Number(memberCount[0]?.n ?? 0), limit: effectiveMeta.memberLimit },
       },
+      features,
     });
   } catch (err) {
     next(err);

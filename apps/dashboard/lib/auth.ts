@@ -1,5 +1,6 @@
 const TOKEN_KEY = 'milu_token';
 const USER_KEY = 'milu_user';
+const ACTIVE_BIZ_KEY = 'activeBusinessId';
 
 export interface StoredUser {
   id: string;
@@ -28,12 +29,25 @@ export function getUser(): StoredUser | null {
   }
 }
 
-export function saveSession(token: string, user: StoredUser) {
+export function saveSession(token: string, user: StoredUser, initialBusinessId?: string) {
   localStorage.setItem(TOKEN_KEY, token);
   localStorage.setItem(USER_KEY, JSON.stringify(user));
+  if (initialBusinessId && !localStorage.getItem(ACTIVE_BIZ_KEY)) {
+    localStorage.setItem(ACTIVE_BIZ_KEY, initialBusinessId);
+  }
 }
 
 export function clearSession() {
   localStorage.removeItem(TOKEN_KEY);
   localStorage.removeItem(USER_KEY);
+  localStorage.removeItem(ACTIVE_BIZ_KEY);
+}
+
+export function getActiveBusinessId(): string | null {
+  if (typeof window === 'undefined') return null;
+  return localStorage.getItem(ACTIVE_BIZ_KEY);
+}
+
+export function setActiveBusinessId(id: string) {
+  localStorage.setItem(ACTIVE_BIZ_KEY, id);
 }

@@ -93,23 +93,26 @@ export default function OverviewPage() {
   const [volume, setVolume] = useState<{ day: string; calls: number }[]>([]);
   const [recentCalls, setRecentCalls] = useState<Call[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
 
   useEffect(() => {
     if (!ready || !token) return;
     setLoading(true);
+    setLoadError(false);
 
     const days = range === '7d' ? 7 : 30;
     const from = new Date(Date.now() - days * 86400000).toISOString().split('T')[0];
 
-    Promise.all([
+    Promise.allSettled([
       apiGet<Summary>(`/analytics/summary?from=${from}`, token),
       apiGet<DayVolume[]>(`/analytics/daily-volume?days=${days}`, token),
       apiGet<{ calls: Call[] }>(`/calls?limit=5`, token),
     ]).then(([s, vol, c]) => {
-      setSummary(s);
-      setVolume(vol.map(r => ({ day: new Date(r.day).toLocaleDateString('en-US', { weekday: 'short' }), calls: r.count })));
-      setRecentCalls(c.calls);
-    }).catch(() => null).finally(() => setLoading(false));
+      if (s.status === 'fulfilled') setSummary(s.value);
+      if (vol.status === 'fulfilled') setVolume(vol.value.map(r => ({ day: new Date(r.day).toLocaleDateString('en-US', { weekday: 'short' }), calls: r.count })));
+      if (c.status === 'fulfilled') setRecentCalls(c.value.calls);
+      if (s.status === 'rejected' && vol.status === 'rejected' && c.status === 'rejected') setLoadError(true);
+    }).finally(() => setLoading(false));
   }, [ready, token, range]);
 
   const resRate = summary ? parseFloat(summary.aiResolutionRate) : 0;
@@ -123,6 +126,12 @@ export default function OverviewPage() {
           {user?.firstName ? `Welcome back, ${user.firstName}.` : 'Your AI agent activity at a glance.'}
         </p>
       </div>
+
+      {loadError && (
+        <div className="bg-danger/5 border border-danger/20 rounded-2xl px-5 py-4 text-sm text-danger">
+          Could not load dashboard data. Check your connection or try refreshing the page.
+        </div>
+      )}
 
       {/* Stats */}
       <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
