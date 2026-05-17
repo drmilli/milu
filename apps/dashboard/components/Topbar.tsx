@@ -355,7 +355,7 @@ export default function Topbar({ onMobileMenu, collapsed, onToggleCollapse }: To
 
         {/* Help */}
         <a
-          href="mailto:support@miluai.app"
+          href="mailto:info.miluai@gmail.com"
           className="w-9 h-9 flex items-center justify-center rounded-xl text-primary-warm hover:bg-cream hover:text-primary-dark transition-colors"
         >
           <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}>

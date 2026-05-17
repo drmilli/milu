@@ -322,7 +322,7 @@ export default function BillingPage() {
                     </span>
                   ) : plan.billing === 'sales' ? (
                     <a
-                      href="mailto:support@miluai.app?subject=Enterprise%20plan%20enquiry"
+                      href="mailto:info.miluai@gmail.com?subject=Enterprise%20plan%20enquiry"
                       className="w-full py-2.5 rounded-xl text-sm font-medium transition-colors border border-primary/30 text-primary hover:bg-primary hover:text-cream-light flex items-center justify-center"
                     >
                       Contact sales
@@ -421,7 +421,7 @@ export default function BillingPage() {
             Your agent will keep answering calls until the end of your current billing period. To cancel, contact us.
           </p>
           <a
-            href="mailto:support@miluai.app?subject=Cancel%20my%20subscription"
+            href="mailto:info.miluai@gmail.com?subject=Cancel%20my%20subscription"
             className="inline-block text-sm text-danger border border-danger/30 px-4 py-2 rounded-xl hover:bg-danger/4 transition-colors"
           >
             Contact support to cancel
