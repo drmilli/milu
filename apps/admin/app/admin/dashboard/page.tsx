@@ -19,6 +19,8 @@ interface AdminStats {
   aiResolutionRateChange: number;
   escalationsToday: number;
   escalationBusinessCount: number;
+  totalContacts?: number;
+  pendingFollowUps?: number;
 }
 
 interface RevenuePoint { month: string; mrr: number }
@@ -133,8 +135,8 @@ export default function AdminDashboardPage() {
     { label: 'Calls This Month', value: stats.callsThisMonth.toLocaleString(), change: `+${stats.callsGrowthPct.toFixed(1)}% vs last month`, up: true as const, live: false },
     { label: 'AI Resolution Rate', value: `${stats.aiResolutionRate.toFixed(1)}%`, change: `+${stats.aiResolutionRateChange.toFixed(1)}% vs last month`, up: true as const, live: false },
     { label: 'Escalations Today', value: stats.escalationsToday.toString(), change: `Across ${stats.escalationBusinessCount} businesses`, up: null, live: false },
-    { label: 'Total Contacts', value: (stats as any).totalContacts?.toLocaleString() ?? '—', change: 'Across all businesses', up: null, live: false },
-    { label: 'Pending Follow-ups', value: (stats as any).pendingFollowUps?.toLocaleString() ?? '—', change: 'Awaiting action', up: null, live: false },
+    { label: 'Total Contacts', value: stats.totalContacts?.toLocaleString() ?? '—', change: 'Across all businesses', up: null, live: false },
+    { label: 'Pending Follow-ups', value: stats.pendingFollowUps?.toLocaleString() ?? '—', change: 'Awaiting action', up: null, live: false },
   ] : null;
 
   return (
