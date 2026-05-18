@@ -297,6 +297,7 @@ export function handleTwilioVoiceStream(ws: WebSocket, _req: IncomingMessage) {
   let contextLoaded = false;
   let sessionCreated = false;
   let sessionConfigured = false;
+  let greetingTriggered = false;
 
   // Audio buffer: holds inbound audio until session is configured
   const audioQueue: string[] = [];
@@ -334,14 +335,17 @@ export function handleTwilioVoiceStream(ws: WebSocket, _req: IncomingMessage) {
     const { bizRow, agentRow, kbRow } = ctx;
     const ops = bizRow ? opsEnabled(bizRow) : true;
     const canEscalate = !!kbRow?.escalationNumber;
+    const voice = mapVoice(agentRow?.voiceId);
+    logger.info({ callId, voice, ops, canEscalate }, 'Configuring OpenAI Realtime session');
     toOpenAI({
       type: 'session.update',
       session: {
+        modalities: ['text', 'audio'],
         instructions: buildInstructions(ctx),
-        voice: mapVoice(agentRow?.voiceId),
+        voice,
         input_audio_format: 'g711_ulaw',
         output_audio_format: 'g711_ulaw',
-        input_audio_transcription: { model: 'gpt-4o-transcribe' },
+        input_audio_transcription: { model: 'whisper-1' },
         turn_detection: {
           type: 'server_vad',
           threshold: 0.5,
@@ -495,9 +499,12 @@ export function handleTwilioVoiceStream(ws: WebSocket, _req: IncomingMessage) {
       }
 
       case 'session.updated': {
-        // Session is fully configured — flush any buffered audio and trigger greeting
-        flushAudioQueue();
-        toOpenAI({ type: 'response.create' });
+        logger.info({ callId }, 'OpenAI session updated — triggering greeting');
+        if (!greetingTriggered) {
+          greetingTriggered = true;
+          flushAudioQueue();
+          toOpenAI({ type: 'response.create' });
+        }
         break;
       }
 
@@ -565,6 +572,12 @@ export function handleTwilioVoiceStream(ws: WebSocket, _req: IncomingMessage) {
 
       case 'error': {
         logger.error({ error: event.error, callId }, 'OpenAI Realtime API error');
+        // If session.updated never fired (session config was rejected), still attempt greeting
+        if (sessionConfigured && !greetingTriggered) {
+          greetingTriggered = true;
+          flushAudioQueue();
+          toOpenAI({ type: 'response.create' });
+        }
         break;
       }
     }
