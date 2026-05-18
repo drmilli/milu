@@ -81,6 +81,7 @@ app.get('/health', (_req, res) => res.json({
   status: 'ok',
   env: env.NODE_ENV,
   openai: !!env.OPENAI_API_KEY,
+  deepgram: !!env.DEEPGRAM_API_KEY,
   elevenlabs: !!env.ELEVENLABS_API_KEY,
   twilio: !!env.TWILIO_ACCOUNT_SID,
   whatsapp: !!env.WHATSAPP_TOKEN,

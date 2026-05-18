@@ -1,5 +1,6 @@
 import type { IncomingMessage } from 'http';
 import WebSocket from 'ws';
+import { createClient, LiveTranscriptionEvents } from '@deepgram/sdk';
 import { and, desc, eq, ne } from 'drizzle-orm';
 import {
   db, calls, contacts, agentConfigs, businesses, knowledgeBases,
@@ -8,74 +9,18 @@ import {
 } from '../db';
 import { env } from '../config/env';
 import { logger } from '../config/logger';
-import { getElevenLabsVoiceId } from '../config/voices';
+import { getElevenLabsVoiceId, ELEVENLABS_VOICES, DEFAULT_VOICE } from '../config/voices';
 import { notifyBusinessOwners } from '../services/notifications';
 import { sendEscalationAlert } from '../services/whatsapp';
 import twilio from 'twilio';
 
-// ─── Voice mapping ─────────────────────────────────────────────────────────────
+// ─── ElevenLabs voice mapping ──────────────────────────────────────────────────
 
-type RealtimeVoice = 'alloy' | 'ash' | 'coral' | 'echo' | 'sage' | 'shimmer' | 'verse' | 'ballad';
-
-function mapVoice(voiceId: string | null | undefined): RealtimeVoice {
-  const v = (voiceId ?? '').toLowerCase().trim();
-  const m: Record<string, RealtimeVoice> = {
-    alloy: 'alloy', ash: 'ash', coral: 'coral', echo: 'echo',
-    sage: 'sage', shimmer: 'shimmer', verse: 'verse', ballad: 'ballad',
-    nova: 'coral', onyx: 'echo', fable: 'verse',
-    amaka: 'coral', chidi: 'echo', ngozi: 'shimmer',
-    aisha: 'alloy', tunde: 'ash', kola: 'verse',
-    tiff: 'shimmer', mike: 'echo', english: 'alloy',
-  };
-  return m[v] ?? 'coral';
-}
-
-// ─── ElevenLabs TTS streaming ─────────────────────────────────────────────────
-
-async function streamElevenLabsTts(
-  text: string,
-  voiceId: string,
-  controller: AbortController,
-  onChunk: (chunk: Uint8Array) => void,
-): Promise<void> {
-  const apiKey = env.ELEVENLABS_API_KEY;
-  if (!apiKey) return;
-
-  let res: Response;
-  try {
-    res = await fetch(
-      `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceId)}/stream?output_format=ulaw_8000`,
-      {
-        method: 'POST',
-        headers: { 'xi-api-key': apiKey, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          text,
-          model_id: 'eleven_turbo_v2_5',
-          voice_settings: { stability: 0.5, similarity_boost: 0.75 },
-        }),
-        signal: controller.signal,
-      },
-    );
-  } catch {
-    return;
-  }
-
-  if (!res.ok || !res.body) {
-    const err = await res.text().catch(() => '');
-    logger.warn({ status: res.status, err: err.slice(0, 200), voiceId }, 'ElevenLabs TTS stream failed');
-    return;
-  }
-
-  const reader = res.body.getReader();
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done || controller.signal.aborted) break;
-      if (value?.length) onChunk(value);
-    }
-  } finally {
-    reader.releaseLock();
-  }
+function resolveElevenLabsVoiceId(voiceId: string | null | undefined, clonedVoiceId: string | null | undefined): string {
+  if (clonedVoiceId) return clonedVoiceId;
+  const mapped = getElevenLabsVoiceId(voiceId);
+  if (mapped) return mapped;
+  return ELEVENLABS_VOICES[DEFAULT_VOICE] ?? '6aDn1KB0hjpdcocrUkmq'; // tiff default
 }
 
 // ─── Plan helper ───────────────────────────────────────────────────────────────
@@ -188,7 +133,7 @@ function buildInstructions(ctx: CallContext): string {
     faqs.length ? `Common questions:\n${faqs.slice(0, 10).map(f => `Q: ${f.question}\nA: ${f.answer}`).join('\n')}` : null,
     kbDocs.length ? `Additional info: ${kbDocs.slice(0, 3).map(d => (d.summary ?? '').slice(0, 300)).join(' ')}` : null,
     catalogSummary
-      ? `Products & services catalog (source of truth):\n${catalogSummary}\nOnly mention items and prices that appear in the catalog above. If an item is not listed, say you will confirm and follow up.`
+      ? `Products & services catalog (source of truth):\n${catalogSummary}\nOnly mention items and prices that appear in the catalog above.`
       : null,
     ``,
     `START OF CALL: Greet the caller immediately when the call connects.`,
@@ -206,57 +151,60 @@ function buildInstructions(ctx: CallContext): string {
   ].filter(Boolean).join('\n');
 }
 
-// ─── Function tool definitions ────────────────────────────────────────────────
+// ─── Chat API tool definitions ─────────────────────────────────────────────────
 
-function buildTools(ops: boolean, canEscalate: boolean): object[] {
+function buildChatTools(ops: boolean, canEscalate: boolean) {
   const tools: object[] = [];
 
   if (ops) {
     tools.push({
       type: 'function',
-      name: 'create_appointment',
-      description: 'Book an appointment when you have collected all required details from the customer.',
-      parameters: {
-        type: 'object',
-        properties: {
-          scheduledAt: { type: 'string', description: 'ISO 8601 datetime with timezone offset' },
-          durationMinutes: { type: 'integer', description: 'Duration in minutes, default 30' },
-          serviceType: { type: 'string', description: 'Type of service being booked' },
-          customerName: { type: 'string' },
-          customerPhone: { type: 'string' },
-          notes: { type: 'string' },
+      function: {
+        name: 'create_appointment',
+        description: 'Book an appointment when you have collected all required details from the customer.',
+        parameters: {
+          type: 'object',
+          properties: {
+            scheduledAt: { type: 'string', description: 'ISO 8601 datetime with timezone offset' },
+            durationMinutes: { type: 'integer', description: 'Duration in minutes, default 30' },
+            serviceType: { type: 'string', description: 'Type of service being booked' },
+            customerName: { type: 'string' },
+            customerPhone: { type: 'string' },
+            notes: { type: 'string' },
+          },
+          required: ['scheduledAt', 'customerName'],
         },
-        required: ['scheduledAt', 'customerName'],
       },
     });
 
     tools.push({
       type: 'function',
-      name: 'create_order',
-      description: 'Record a customer order when you have collected all required details.',
-      parameters: {
-        type: 'object',
-        properties: {
-          items: {
-            type: 'array',
+      function: {
+        name: 'create_order',
+        description: 'Place an order when you have collected all required details from the customer.',
+        parameters: {
+          type: 'object',
+          properties: {
             items: {
-              type: 'object',
-              properties: {
-                name: { type: 'string' },
-                qty: { type: 'integer' },
-                price: { type: 'number' },
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  name: { type: 'string' },
+                  qty: { type: 'integer' },
+                  price: { type: 'number' },
+                },
               },
-              required: ['name', 'qty'],
             },
+            customerName: { type: 'string' },
+            customerPhone: { type: 'string' },
+            deliveryAddress: { type: 'string' },
+            notes: { type: 'string' },
+            currency: { type: 'string', description: 'Default NGN' },
+            totalAmount: { type: 'number' },
           },
-          customerName: { type: 'string' },
-          customerPhone: { type: 'string' },
-          deliveryAddress: { type: 'string' },
-          notes: { type: 'string' },
-          currency: { type: 'string', description: 'Default NGN' },
-          totalAmount: { type: 'number' },
+          required: ['items', 'customerName'],
         },
-        required: ['items', 'customerName'],
       },
     });
   }
@@ -264,21 +212,25 @@ function buildTools(ops: boolean, canEscalate: boolean): object[] {
   if (canEscalate) {
     tools.push({
       type: 'function',
-      name: 'escalate_to_human',
-      description: 'Transfer the call to a human agent when you cannot help or the customer explicitly requests one.',
-      parameters: {
-        type: 'object',
-        properties: { reason: { type: 'string', description: 'Reason for escalation' } },
-        required: ['reason'],
+      function: {
+        name: 'escalate_to_human',
+        description: 'Transfer the call to a human agent when you cannot help or the customer explicitly requests one.',
+        parameters: {
+          type: 'object',
+          properties: { reason: { type: 'string', description: 'Reason for escalation' } },
+          required: ['reason'],
+        },
       },
     });
   }
 
   tools.push({
     type: 'function',
-    name: 'end_call',
-    description: 'End the call after saying goodbye when the conversation is naturally complete.',
-    parameters: { type: 'object', properties: {}, required: [] },
+    function: {
+      name: 'end_call',
+      description: 'End the call after saying goodbye when the conversation is naturally complete.',
+      parameters: { type: 'object', properties: {}, required: [] },
+    },
   });
 
   return tools;
@@ -294,84 +246,42 @@ export function handleTwilioVoiceStream(ws: WebSocket, req: IncomingMessage) {
   let streamSid = '';
   let callSid = '';
   let callId = '';
-  let openAiWs: WebSocket | null = null;
   let ctx: CallContext | null = null;
 
-  // Session readiness flags — both must be true before we configure OpenAI session
-  let contextLoaded = false;
-  let sessionCreated = false;
-  let sessionConfigured = false;
-  let greetingTriggered = false;
+  // Deepgram STT connection
+  let dgConnection: ReturnType<ReturnType<typeof createClient>['listen']['live']> | null = null;
+  let dgReady = false;
 
-  // Audio buffer: holds inbound audio until session is configured
-  const audioQueue: string[] = [];
+  // Audio buffer until Deepgram is ready
+  const audioQueue: Buffer[] = [];
 
-  // Accumulated transcripts per turn
-  let agentTurnText = '';
+  // Conversation state
+  const conversationHistory: { role: string; content: string }[] = [];
+  let systemInstructions = '';
+  let ops = true;
+  let canEscalate = false;
+  let agentVoiceId: string | null | undefined = null;
+  let agentClonedVoiceId: string | null | undefined = null;
 
-  // ElevenLabs TTS state (used when a cloned or preset ElevenLabs voice is active)
-  let elevenLabsController: AbortController | null = null;
+  // TTS / barge-in state
+  let agentSpeaking = false;
+  let ttsAbortController: AbortController | null = null;
 
   // ── Send helpers ────────────────────────────────────────────────────────────
-
-  function toOpenAI(obj: object) {
-    if (openAiWs?.readyState === WebSocket.OPEN) openAiWs.send(JSON.stringify(obj));
-  }
 
   function toTwilio(obj: object) {
     if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
   }
 
-  function sendAudio(payload: string) {
-    toTwilio({ event: 'media', streamSid, media: { payload } });
+  function sendAudio(b64Payload: string) {
+    toTwilio({ event: 'media', streamSid, media: { payload: b64Payload } });
   }
 
   function clearAudio() {
     toTwilio({ event: 'clear', streamSid });
   }
 
-  // ── Configure OpenAI session once both context and session.created are ready ─
-
-  function maybeConfigureSession() {
-    if (!contextLoaded || !sessionCreated || sessionConfigured || !ctx) return;
-    sessionConfigured = true;
-
-    const { bizRow, agentRow, kbRow } = ctx;
-    const ops = bizRow ? opsEnabled(bizRow) : true;
-    const canEscalate = !!kbRow?.escalationNumber;
-    const voice = mapVoice(agentRow?.voiceId);
-    logger.info({ callId, voice, ops, canEscalate }, 'Configuring OpenAI Realtime session');
-    toOpenAI({
-      type: 'session.update',
-      session: {
-        modalities: ['text', 'audio'],
-        instructions: buildInstructions(ctx),
-        voice,
-        input_audio_format: 'g711_ulaw',
-        output_audio_format: 'g711_ulaw',
-        input_audio_transcription: { model: 'whisper-1' },
-        turn_detection: {
-          type: 'server_vad',
-          threshold: 0.5,
-          prefix_padding_ms: 300,
-          silence_duration_ms: 600,
-        },
-        tools: buildTools(ops, canEscalate),
-        tool_choice: 'auto',
-      },
-    });
-  }
-
-  // ── Flush buffered audio after session is ready ──────────────────────────────
-
-  function flushAudioQueue() {
-    for (const payload of audioQueue) {
-      toOpenAI({ type: 'input_audio_buffer.append', audio: payload });
-    }
-    audioQueue.length = 0;
-  }
-
-  // ── Hang up via Twilio REST API ──────────────────────────────────────────────
+  // ── Hang up via Twilio REST ─────────────────────────────────────────────────
 
   async function hangUp(delayMs = 2500) {
     await new Promise(r => setTimeout(r, delayMs));
@@ -381,10 +291,24 @@ export function handleTwilioVoiceStream(ws: WebSocket, req: IncomingMessage) {
         logger.warn({ err, callSid }, 'Failed to hang up via Twilio REST'),
       );
     }
-    openAiWs?.close();
+    dgConnection?.finish();
+    ws.close();
   }
 
-  // ── Execute function calls ────────────────────────────────────────────────────
+  // ── Fallback to gather/respond if Deepgram fails ────────────────────────────
+
+  function fallbackToGatherPath() {
+    if (!callSid || !baseUrl) { ws.close(); return; }
+    logger.warn({ callId, callSid }, 'Deepgram failed — redirecting call to gather/respond path');
+    const client = getTwilioClient();
+    if (!client) { ws.close(); return; }
+    const url = `${baseUrl}/webhooks/twilio/voice/fallback-greeting?callId=${encodeURIComponent(callId)}`;
+    client.calls(callSid).update({ url, method: 'POST' })
+      .then(() => ws.close())
+      .catch(err => { logger.error({ err, callSid }, 'Fallback redirect failed'); ws.close(); });
+  }
+
+  // ── Execute function calls ─────────────────────────────────────────────────
 
   async function executeFn(name: string, args: Record<string, any>): Promise<string> {
     if (!ctx) return JSON.stringify({ success: false });
@@ -414,7 +338,7 @@ export function handleTwilioVoiceStream(ws: WebSocket, req: IncomingMessage) {
       await notifyBusinessOwners(callRow.businessId, 'New Appointment',
         `Booked for ${args.customerName ?? args.customerPhone} on ${scheduledAt.toLocaleString()}`).catch(() => null);
 
-      logger.info({ callId, appointmentId: row?.id }, 'Appointment created via Realtime');
+      logger.info({ callId, appointmentId: row?.id }, 'Appointment created via stream');
       return JSON.stringify({ success: true, appointmentId: row?.id });
     }
 
@@ -447,7 +371,7 @@ export function handleTwilioVoiceStream(ws: WebSocket, req: IncomingMessage) {
       await notifyBusinessOwners(callRow.businessId, 'New Order',
         `Order #${orderNumber} from ${args.customerName ?? args.customerPhone}`).catch(() => null);
 
-      logger.info({ callId, orderId: row?.id, orderNumber }, 'Order created via Realtime');
+      logger.info({ callId, orderId: row?.id, orderNumber }, 'Order created via stream');
       return JSON.stringify({ success: true, orderId: row?.id, orderNumber });
     }
 
@@ -489,153 +413,223 @@ export function handleTwilioVoiceStream(ws: WebSocket, req: IncomingMessage) {
     return JSON.stringify({ success: false, error: 'Unknown function' });
   }
 
-  // ── OpenAI Realtime event handler ─────────────────────────────────────────────
+  // ── Call LLM (OpenAI Chat API with function calling) ──────────────────────
 
-  async function onOpenAIMessage(data: Buffer) {
-    let event: any;
-    try { event = JSON.parse(data.toString()); } catch { return; }
+  async function callLLM(userText: string): Promise<string> {
+    if (!env.OPENAI_API_KEY) return "I'm sorry, I'm having trouble responding right now.";
 
-    switch (event.type) {
-      case 'session.created': {
-        sessionCreated = true;
-        maybeConfigureSession();
-        break;
+    conversationHistory.push({ role: 'user', content: userText });
+    const tools = buildChatTools(ops, canEscalate);
+
+    for (let iteration = 0; iteration < 5; iteration++) {
+      const res = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${env.OPENAI_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: 'gpt-4o',
+          messages: [
+            { role: 'system', content: systemInstructions },
+            ...conversationHistory,
+          ],
+          tools,
+          tool_choice: 'auto',
+          temperature: 0.7,
+          max_tokens: 300,
+        }),
+        signal: AbortSignal.timeout(15000),
+      });
+
+      if (!res.ok) {
+        const err = await res.text().catch(() => '');
+        logger.warn({ status: res.status, err: err.slice(0, 200) }, 'OpenAI Chat API error');
+        return "I'm having trouble responding right now. Please try again.";
       }
 
-      case 'session.updated': {
-        logger.info({ callId }, 'OpenAI session updated — triggering greeting');
-        if (!greetingTriggered) {
-          greetingTriggered = true;
-          flushAudioQueue();
-          toOpenAI({ type: 'response.create' });
+      const data = await res.json() as any;
+      const message = data.choices?.[0]?.message;
+      if (!message) break;
+
+      if (message.tool_calls?.length) {
+        conversationHistory.push({ role: 'assistant', content: message.content ?? '', ...message });
+
+        for (const tc of message.tool_calls) {
+          let fnArgs: Record<string, any> = {};
+          try { fnArgs = JSON.parse(tc.function.arguments ?? '{}'); } catch { /* ignore */ }
+          logger.info({ callId, fnName: tc.function.name }, 'Function call');
+          const result = await executeFn(tc.function.name, fnArgs).catch(err => {
+            logger.error({ err, fnName: tc.function.name }, 'Function execution error');
+            return JSON.stringify({ success: false });
+          });
+          conversationHistory.push({ role: 'tool', content: result } as any);
         }
-        break;
+        continue;
       }
 
-      case 'response.audio.delta': {
-        if (event.delta) sendAudio(event.delta);
-        break;
-      }
-
-      case 'response.audio_transcript.delta': {
-        agentTurnText += event.delta ?? '';
-        break;
-      }
-
-      case 'response.audio_transcript.done':
-      case 'response.done': {
-        const text = (event.transcript ?? agentTurnText).trim();
-        agentTurnText = '';
-        if (text && callId) {
-          await db.insert(transcripts).values({ callId, speaker: 'agent', text }).catch(() => null);
-        }
-        break;
-      }
-
-      case 'conversation.item.input_audio_transcription.completed': {
-        const text = (event.transcript ?? '').trim();
-        if (text && callId) {
-          await db.insert(transcripts).values({ callId, speaker: 'caller', text }).catch(() => null);
-        }
-        break;
-      }
-
-      case 'input_audio_buffer.speech_started': {
-        // Barge-in: cancel current response and clear Twilio audio buffer
-        toOpenAI({ type: 'response.cancel' });
-        clearAudio();
-        agentTurnText = '';
-        elevenLabsController?.abort();
-        elevenLabsController = null;
-        break;
-      }
-
-      case 'response.function_call_arguments.done': {
-        const fnName = event.name as string;
-        const fnCallId = event.call_id as string;
-        let fnArgs: Record<string, any> = {};
-        try { fnArgs = JSON.parse(event.arguments ?? '{}'); } catch { /* ignore */ }
-
-        logger.info({ callId, fnName }, 'Realtime function call');
-
-        let result: string;
-        try {
-          result = await executeFn(fnName, fnArgs);
-        } catch (err) {
-          logger.error({ err, fnName, callId }, 'Function call execution failed');
-          result = JSON.stringify({ success: false, error: 'Internal error' });
-        }
-
-        toOpenAI({
-          type: 'conversation.item.create',
-          item: { type: 'function_call_output', call_id: fnCallId, output: result },
-        });
-        toOpenAI({ type: 'response.create' });
-        break;
-      }
-
-      case 'error': {
-        logger.error({ error: event.error, callId }, 'OpenAI Realtime API error');
-        // If session.updated never fired (session config was rejected), still attempt greeting
-        if (sessionConfigured && !greetingTriggered) {
-          greetingTriggered = true;
-          flushAudioQueue();
-          toOpenAI({ type: 'response.create' });
-        }
-        break;
-      }
+      const text = (message.content ?? '').trim();
+      if (text) conversationHistory.push({ role: 'assistant', content: text });
+      return text;
     }
+
+    return "I'm sorry, I couldn't process that. Please try again.";
   }
 
-  // ── Fallback: redirect call to gather/respond path via Twilio REST ────────────
+  // ── Stream ElevenLabs TTS → Twilio ────────────────────────────────────────
 
-  function fallbackToGatherPath() {
-    if (greetingTriggered) return;
-    greetingTriggered = true; // prevent double-firing
-    if (!callSid || !baseUrl) {
-      ws.close();
-      return;
-    }
-    logger.warn({ callId, callSid }, 'OpenAI Realtime failed — redirecting call to gather/respond path');
-    const client = getTwilioClient();
-    if (!client) { ws.close(); return; }
-    const respondUrl = `${baseUrl}/webhooks/twilio/voice/fallback-greeting?callId=${encodeURIComponent(callId)}`;
-    client.calls(callSid).update({ url: respondUrl, method: 'POST' })
-      .then(() => ws.close())
-      .catch(err => { logger.error({ err, callSid }, 'Fallback redirect failed'); ws.close(); });
-  }
-
-  // ── Connect to OpenAI Realtime API ──────────────────────────────────────────
-
-  function connectToOpenAI() {
-    if (!env.OPENAI_API_KEY) {
-      logger.error('No OPENAI_API_KEY — cannot start Realtime session');
-      ws.close();
+  async function streamTTS(text: string): Promise<void> {
+    if (!text.trim()) return;
+    if (!env.ELEVENLABS_API_KEY) {
+      logger.warn({ callId }, 'No ELEVENLABS_API_KEY — cannot play TTS');
       return;
     }
 
-    const oaWs = new WebSocket('wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview', {
-      headers: {
-        Authorization: `Bearer ${env.OPENAI_API_KEY}`,
-        'OpenAI-Beta': 'realtime=v1',
-      },
+    if (ttsAbortController) ttsAbortController.abort();
+    ttsAbortController = new AbortController();
+    agentSpeaking = true;
+
+    const voiceId = resolveElevenLabsVoiceId(agentVoiceId, agentClonedVoiceId);
+    logger.info({ callId, voiceId, textLen: text.length }, 'Streaming ElevenLabs TTS');
+
+    let res: Response;
+    try {
+      res = await fetch(
+        `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceId)}/stream?output_format=ulaw_8000&optimize_streaming_latency=3`,
+        {
+          method: 'POST',
+          headers: { 'xi-api-key': env.ELEVENLABS_API_KEY, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            text,
+            model_id: 'eleven_turbo_v2_5',
+            voice_settings: { stability: 0.5, similarity_boost: 0.75 },
+          }),
+          signal: ttsAbortController.signal,
+        },
+      );
+    } catch {
+      agentSpeaking = false;
+      return;
+    }
+
+    if (!res.ok || !res.body) {
+      const err = await res.text().catch(() => '');
+      logger.warn({ status: res.status, err: err.slice(0, 200), voiceId }, 'ElevenLabs TTS failed');
+      agentSpeaking = false;
+      return;
+    }
+
+    const reader = res.body.getReader();
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done || ttsAbortController.signal.aborted) break;
+        if (value?.length) {
+          sendAudio(Buffer.from(value).toString('base64'));
+        }
+      }
+    } finally {
+      reader.releaseLock();
+      agentSpeaking = false;
+    }
+  }
+
+  // ── Handle a final transcript from Deepgram ────────────────────────────────
+
+  async function handleCallerSpeech(text: string) {
+    if (!ctx) return;
+    logger.info({ callId, text: text.slice(0, 200) }, 'Caller speech final');
+
+    await db.insert(transcripts).values({ callId, speaker: 'caller', text }).catch(() => null);
+
+    try {
+      const reply = await callLLM(text);
+      if (!reply) return;
+
+      await db.insert(transcripts).values({ callId, speaker: 'agent', text: reply }).catch(() => null);
+      await streamTTS(reply);
+    } catch (err) {
+      logger.error({ err, callId }, 'Error handling caller speech');
+    }
+  }
+
+  // ── Connect to Deepgram STT ────────────────────────────────────────────────
+
+  function connectToDeepgram() {
+    if (!env.DEEPGRAM_API_KEY) {
+      logger.error({ callId }, 'No DEEPGRAM_API_KEY — falling back to gather path');
+      fallbackToGatherPath();
+      return;
+    }
+
+    const dgClient = createClient(env.DEEPGRAM_API_KEY);
+    const conn = dgClient.listen.live({
+      model: 'nova-2',
+      language: 'multi',
+      smart_format: true,
+      interim_results: true,
+      endpointing: 300,
+      utterance_end_ms: 1000,
+      encoding: 'mulaw',
+      sample_rate: 8000,
     });
 
-    oaWs.on('open', () => logger.info({ callId }, 'OpenAI Realtime connected'));
-    oaWs.on('message', (data: Buffer) => onOpenAIMessage(data).catch(err => logger.error({ err }, 'OpenAI message handler error')));
-    oaWs.on('error', err => {
-      logger.error({ err, callId }, 'OpenAI Realtime WebSocket error — will fallback to gather path');
+    conn.on(LiveTranscriptionEvents.Open, () => {
+      logger.info({ callId }, 'Deepgram STT connected');
+      dgReady = true;
+      for (const chunk of audioQueue) {
+        const ab = chunk.buffer.slice(chunk.byteOffset, chunk.byteOffset + chunk.byteLength) as ArrayBuffer;
+        conn.send(ab);
+      }
+      audioQueue.length = 0;
+    });
+
+    conn.on(LiveTranscriptionEvents.Transcript, (data: any) => {
+      const text: string = data.channel?.alternatives?.[0]?.transcript ?? '';
+      const isFinal: boolean = data.is_final ?? false;
+      const speechFinal: boolean = data.speech_final ?? false;
+
+      // Barge-in: interrupt agent speech when caller starts talking
+      if (text && agentSpeaking) {
+        ttsAbortController?.abort();
+        clearAudio();
+        agentSpeaking = false;
+      }
+
+      if (isFinal && speechFinal && text.trim()) {
+        handleCallerSpeech(text.trim()).catch(err =>
+          logger.error({ err, callId }, 'handleCallerSpeech error'),
+        );
+      }
+    });
+
+    conn.on(LiveTranscriptionEvents.Error, (err: any) => {
+      logger.error({ err, callId }, 'Deepgram STT error');
       fallbackToGatherPath();
     });
-    oaWs.on('close', (code, reason) => {
-      logger.info({ callId, code, reason: reason.toString() }, 'OpenAI Realtime disconnected');
-      if (!greetingTriggered) fallbackToGatherPath();
+
+    conn.on(LiveTranscriptionEvents.Close, () => {
+      logger.info({ callId }, 'Deepgram STT closed');
     });
 
-    openAiWs = oaWs;
+    dgConnection = conn;
   }
 
-  // ── Twilio WebSocket event handlers ──────────────────────────────────────────
+  // ── Initial greeting ───────────────────────────────────────────────────────
+
+  async function sendGreeting() {
+    if (!ctx) return;
+    try {
+      const greeting = await callLLM('__CALL_STARTED__');
+      if (!greeting) return;
+      await db.insert(transcripts).values({ callId, speaker: 'agent', text: greeting }).catch(() => null);
+      await streamTTS(greeting);
+    } catch (err) {
+      logger.error({ err, callId }, 'Failed to send greeting');
+    }
+  }
+
+  // ── Twilio WebSocket event handlers ──────────────────────────────────────
 
   ws.on('message', async (data: Buffer) => {
     let msg: any;
@@ -649,37 +643,52 @@ export function handleTwilioVoiceStream(ws: WebSocket, req: IncomingMessage) {
 
         logger.info({ streamSid, callSid, callId }, 'Twilio Media Stream started');
 
-        if (!callId) { logger.error('Stream missing callId parameter'); ws.close(); return; }
+        if (!callId) { logger.error('Stream missing callId'); ws.close(); return; }
 
-        // Load DB context and connect to OpenAI in parallel
         loadCallContext(callId)
           .then(loaded => {
+            if (!loaded) { logger.error({ callId }, 'Call not found in DB'); ws.close(); return; }
             ctx = loaded;
-            contextLoaded = true;
-            if (!ctx) { logger.error({ callId }, 'Call not found'); ws.close(); return; }
-            maybeConfigureSession();
-          })
-          .catch(err => logger.error({ err, callId }, 'Failed to load call context'));
 
-        connectToOpenAI();
+            agentVoiceId = loaded.agentRow?.voiceId;
+            agentClonedVoiceId = loaded.agentRow?.clonedVoiceId;
+            ops = loaded.bizRow ? opsEnabled(loaded.bizRow) : true;
+            canEscalate = !!loaded.kbRow?.escalationNumber;
+            systemInstructions = buildInstructions(loaded);
+
+            // Update the "trigger" greeting to reference the actual agent name
+            const agentName = loaded.agentRow?.name ?? 'the agent';
+            const bizName = loaded.bizRow?.name ?? 'this business';
+            // Replace the __CALL_STARTED__ trigger with a proper instruction
+            systemInstructions += `\n\nWhen you receive the message "__CALL_STARTED__", respond ONLY with the greeting — do not reference the trigger text.`;
+
+            logger.info({ callId, agentVoiceId, ops, canEscalate }, 'Call context loaded — connecting to Deepgram');
+            connectToDeepgram();
+            sendGreeting().catch(err => logger.error({ err, callId }, 'Greeting error'));
+          })
+          .catch(err => {
+            logger.error({ err, callId }, 'Failed to load call context');
+            fallbackToGatherPath();
+          });
         break;
       }
 
       case 'media': {
         const payload: string = msg.media?.payload ?? '';
         if (!payload) break;
-        if (!sessionConfigured) {
-          // Buffer until OpenAI session is ready
-          audioQueue.push(payload);
+        const chunk = Buffer.from(payload, 'base64');
+        if (!dgReady) {
+          audioQueue.push(chunk);
         } else {
-          toOpenAI({ type: 'input_audio_buffer.append', audio: payload });
+          const ab = chunk.buffer.slice(chunk.byteOffset, chunk.byteOffset + chunk.byteLength) as ArrayBuffer;
+          dgConnection?.send(ab);
         }
         break;
       }
 
       case 'stop': {
         logger.info({ streamSid, callId }, 'Twilio stream stopped');
-        openAiWs?.close();
+        dgConnection?.finish();
         if (callId) {
           await db.update(calls)
             .set({ status: 'COMPLETED', resolution: 'AI', endedAt: new Date() })
@@ -692,12 +701,12 @@ export function handleTwilioVoiceStream(ws: WebSocket, req: IncomingMessage) {
   });
 
   ws.on('close', () => {
-    openAiWs?.close();
+    dgConnection?.finish();
     logger.info({ streamSid, callId }, 'Twilio WebSocket closed');
   });
 
   ws.on('error', err => {
     logger.error({ err, streamSid }, 'Twilio WebSocket error');
-    openAiWs?.close();
+    dgConnection?.finish();
   });
 }
