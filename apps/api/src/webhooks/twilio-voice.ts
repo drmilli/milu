@@ -1018,3 +1018,41 @@ export async function handleTwilioIncomingMessageFallback(req: Request, res: Res
   }, 'Twilio incoming message fallback');
   return res.sendStatus(200);
 }
+
+// Called by the stream fallback when OpenAI Realtime fails — greets the caller and starts the gather loop
+export async function handleTwilioVoiceFallbackGreeting(req: Request, res: Response) {
+  res.set('Content-Type', 'text/xml');
+  const callId = typeof req.query.callId === 'string' ? req.query.callId : '';
+  const baseUrl = getBaseUrl(req);
+  const language = 'en-US';
+
+  if (!callId) return res.send(twiml('<Hangup/>'));
+
+  logger.info({ callId }, 'Fallback greeting — Realtime path failed, using gather path');
+
+  try {
+    const [callRow] = await db.select({ businessId: calls.businessId, callerName: calls.callerName })
+      .from(calls).where(eq(calls.id, callId)).limit(1);
+    if (!callRow) return res.send(twiml('<Hangup/>'));
+
+    const [[agentRow], [bizRow]] = await Promise.all([
+      db.select({ name: agentConfigs.name, voiceId: agentConfigs.voiceId, clonedVoiceId: agentConfigs.clonedVoiceId })
+        .from(agentConfigs).where(eq(agentConfigs.businessId, callRow.businessId)).limit(1),
+      db.select({ name: businesses.name }).from(businesses).where(eq(businesses.id, callRow.businessId)).limit(1),
+    ]);
+
+    const agentName = agentRow?.name ?? 'your assistant';
+    const bizName = bizRow?.name ?? 'us';
+    const greeting = callRow.callerName
+      ? `Welcome back, ${callRow.callerName}! How can I help you today?`
+      : `Hello! You've reached ${bizName}. I'm ${agentName}. How can I help you today?`;
+
+    await db.insert(transcripts).values({ callId, speaker: 'agent', text: greeting }).catch(() => null);
+    const speak = await speakTag(greeting, agentRow?.voiceId, agentRow?.clonedVoiceId, language, baseUrl, 5000);
+    return res.send(twiml(speak + gatherTurn(callId, language, baseUrl)));
+  } catch (err) {
+    logger.error({ err, callId }, 'Fallback greeting failed');
+    const speak = sayTag("Hello! How can I help you today?", language);
+    return res.send(twiml(speak + gatherTurn(callId, language, baseUrl)));
+  }
+}

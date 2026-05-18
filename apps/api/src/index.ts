@@ -19,7 +19,7 @@ import { analyticsRouter } from './routes/analytics';
 import { adminRouter, adminAuthRouter } from './routes/admin';
 import { usersRouter } from './routes/users';
 import { billingRouter, handleWhopWebhook } from './routes/billing';
-import { handleTwilioVoiceWebhook, handleTwilioVoiceGather, handleTwilioVoiceRespond, handleTwilioVoiceEnd, handleTwilioVoiceRecording, handleTwilioVoiceStatus, handleTwilioMessageStatus, handleTwilioIncomingMessage, handleTwilioIncomingMessageFallback } from './webhooks/twilio-voice';
+import { handleTwilioVoiceWebhook, handleTwilioVoiceGather, handleTwilioVoiceRespond, handleTwilioVoiceEnd, handleTwilioVoiceRecording, handleTwilioVoiceStatus, handleTwilioMessageStatus, handleTwilioIncomingMessage, handleTwilioIncomingMessageFallback, handleTwilioVoiceFallbackGreeting } from './webhooks/twilio-voice';
 import { handleTwilioVoiceStream } from './webhooks/twilio-stream';
 import { WebSocketServer } from 'ws';
 // Infobip voice removed — using Twilio only for calls
@@ -88,6 +88,7 @@ app.get('/health', (_req, res) => res.json({
 
 // Webhooks (no auth, before rate limiting)
 app.post('/webhooks/twilio/voice', handleTwilioVoiceWebhook);
+app.post('/webhooks/twilio/voice/fallback-greeting', handleTwilioVoiceFallbackGreeting);
 app.post('/webhooks/twilio/voice/gather', handleTwilioVoiceGather);
 app.post('/webhooks/twilio/voice/respond', handleTwilioVoiceRespond);
 app.post('/webhooks/twilio/voice/end', handleTwilioVoiceEnd);

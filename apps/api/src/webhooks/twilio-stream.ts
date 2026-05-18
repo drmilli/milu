@@ -286,7 +286,11 @@ function buildTools(ops: boolean, canEscalate: boolean): object[] {
 
 // ─── Main WebSocket handler ───────────────────────────────────────────────────
 
-export function handleTwilioVoiceStream(ws: WebSocket, _req: IncomingMessage) {
+export function handleTwilioVoiceStream(ws: WebSocket, req: IncomingMessage) {
+  const proto = (req.headers['x-forwarded-proto'] as string | undefined)?.split(',')[0]?.trim() ?? 'https';
+  const host = req.headers['host'] ?? '';
+  const baseUrl = host ? `${proto}://${host}` : '';
+
   let streamSid = '';
   let callSid = '';
   let callId = '';
@@ -583,6 +587,24 @@ export function handleTwilioVoiceStream(ws: WebSocket, _req: IncomingMessage) {
     }
   }
 
+  // ── Fallback: redirect call to gather/respond path via Twilio REST ────────────
+
+  function fallbackToGatherPath() {
+    if (greetingTriggered) return;
+    greetingTriggered = true; // prevent double-firing
+    if (!callSid || !baseUrl) {
+      ws.close();
+      return;
+    }
+    logger.warn({ callId, callSid }, 'OpenAI Realtime failed — redirecting call to gather/respond path');
+    const client = getTwilioClient();
+    if (!client) { ws.close(); return; }
+    const respondUrl = `${baseUrl}/webhooks/twilio/voice/fallback-greeting?callId=${encodeURIComponent(callId)}`;
+    client.calls(callSid).update({ url: respondUrl, method: 'POST' })
+      .then(() => ws.close())
+      .catch(err => { logger.error({ err, callSid }, 'Fallback redirect failed'); ws.close(); });
+  }
+
   // ── Connect to OpenAI Realtime API ──────────────────────────────────────────
 
   function connectToOpenAI() {
@@ -601,8 +623,14 @@ export function handleTwilioVoiceStream(ws: WebSocket, _req: IncomingMessage) {
 
     oaWs.on('open', () => logger.info({ callId }, 'OpenAI Realtime connected'));
     oaWs.on('message', (data: Buffer) => onOpenAIMessage(data).catch(err => logger.error({ err }, 'OpenAI message handler error')));
-    oaWs.on('error', err => logger.error({ err, callId }, 'OpenAI Realtime error'));
-    oaWs.on('close', () => logger.info({ callId }, 'OpenAI Realtime disconnected'));
+    oaWs.on('error', err => {
+      logger.error({ err, callId }, 'OpenAI Realtime WebSocket error — will fallback to gather path');
+      fallbackToGatherPath();
+    });
+    oaWs.on('close', (code, reason) => {
+      logger.info({ callId, code, reason: reason.toString() }, 'OpenAI Realtime disconnected');
+      if (!greetingTriggered) fallbackToGatherPath();
+    });
 
     openAiWs = oaWs;
   }
