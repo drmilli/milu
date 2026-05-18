@@ -485,18 +485,10 @@ export function handleTwilioVoiceStream(ws: WebSocket, req: IncomingMessage) {
     return "I'm sorry, I couldn't process that. Please try again.";
   }
 
-  // ── Stream ElevenLabs TTS → Twilio ────────────────────────────────────────
+  // ── Stream TTS → Twilio (ElevenLabs primary, OpenAI fallback) ───────────────
 
-  async function streamTTS(text: string): Promise<void> {
-    if (!text.trim()) return;
-    if (!env.ELEVENLABS_API_KEY) {
-      logger.warn({ callId }, 'No ELEVENLABS_API_KEY — cannot play TTS');
-      return;
-    }
-
-    if (ttsAbortController) ttsAbortController.abort();
-    ttsAbortController = new AbortController();
-    agentSpeaking = true;
+  async function streamElevenLabsTTS(text: string, abort: AbortController): Promise<boolean> {
+    if (!env.ELEVENLABS_API_KEY) return false;
 
     const voiceId = resolveElevenLabsVoiceId(agentVoiceId, agentClonedVoiceId);
     logger.info({ callId, voiceId, textLen: text.length }, 'Streaming ElevenLabs TTS');
@@ -512,38 +504,91 @@ export function handleTwilioVoiceStream(ws: WebSocket, req: IncomingMessage) {
             text,
             model_id: 'eleven_turbo_v2_5',
             voice_settings: {
-              stability: 0.35,        // lower = more natural variation
-              similarity_boost: 0.8,  // higher = closer to original voice
-              style: 0.2,             // adds slight expression
+              stability: 0.35,
+              similarity_boost: 0.8,
+              style: 0.2,
               use_speaker_boost: true,
             },
           }),
-          signal: ttsAbortController.signal,
+          signal: abort.signal,
         },
       );
     } catch {
-      agentSpeaking = false;
-      return;
+      return false;
     }
 
     if (!res.ok || !res.body) {
       const err = await res.text().catch(() => '');
       logger.warn({ status: res.status, err: err.slice(0, 200), voiceId }, 'ElevenLabs TTS failed');
-      agentSpeaking = false;
-      return;
+      return false;
     }
 
     const reader = res.body.getReader();
     try {
       while (true) {
         const { done, value } = await reader.read();
-        if (done || ttsAbortController.signal.aborted) break;
-        if (value?.length) {
-          sendAudio(Buffer.from(value).toString('base64'));
-        }
+        if (done || abort.signal.aborted) break;
+        if (value?.length) sendAudio(Buffer.from(value).toString('base64'));
       }
     } finally {
       reader.releaseLock();
+    }
+    return true;
+  }
+
+  async function streamOpenAITTS(text: string, abort: AbortController): Promise<boolean> {
+    if (!env.OPENAI_API_KEY) return false;
+
+    logger.info({ callId, textLen: text.length }, 'Falling back to OpenAI TTS');
+    let res: Response;
+    try {
+      res = await fetch('https://api.openai.com/v1/audio/speech', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${env.OPENAI_API_KEY}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'tts-1',
+          voice: 'nova',
+          input: text,
+          response_format: 'ulaw',
+          speed: 1.0,
+        }),
+        signal: abort.signal,
+      });
+    } catch {
+      return false;
+    }
+
+    if (!res.ok || !res.body) {
+      const err = await res.text().catch(() => '');
+      logger.warn({ status: res.status, err: err.slice(0, 200) }, 'OpenAI TTS fallback failed');
+      return false;
+    }
+
+    const reader = res.body.getReader();
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done || abort.signal.aborted) break;
+        if (value?.length) sendAudio(Buffer.from(value).toString('base64'));
+      }
+    } finally {
+      reader.releaseLock();
+    }
+    return true;
+  }
+
+  async function streamTTS(text: string): Promise<void> {
+    if (!text.trim() || ws.readyState !== WebSocket.OPEN) return;
+
+    if (ttsAbortController) ttsAbortController.abort();
+    ttsAbortController = new AbortController();
+    agentSpeaking = true;
+
+    try {
+      const ok = await streamElevenLabsTTS(text, ttsAbortController)
+        || await streamOpenAITTS(text, ttsAbortController);
+      if (!ok) logger.error({ callId }, 'All TTS providers failed — caller will hear silence');
+    } finally {
       agentSpeaking = false;
     }
   }
@@ -688,6 +733,12 @@ export function handleTwilioVoiceStream(ws: WebSocket, req: IncomingMessage) {
             ops = loaded.bizRow ? opsEnabled(loaded.bizRow) : true;
             canEscalate = !!loaded.kbRow?.escalationNumber;
             systemInstructions = buildInstructions(loaded);
+
+            if (!env.DEEPGRAM_API_KEY) {
+              logger.error({ callId }, 'No DEEPGRAM_API_KEY — redirecting to fallback greeting path');
+              fallbackToGatherPath();
+              return;
+            }
 
             logger.info({ callId, agentVoiceId, ops, canEscalate }, 'Call context loaded — connecting to Deepgram');
             connectToDeepgram();
