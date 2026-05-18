@@ -199,7 +199,7 @@ agentRouter.delete('/:businessId/voice-clone', async (req, res, next) => {
     }
 
     await db.update(agentConfigs)
-      .set({ clonedVoiceId: null, clonedVoiceName: null, voiceId: 'amaka', updatedAt: new Date() })
+      .set({ clonedVoiceId: null, clonedVoiceName: null, voiceId: 'tiff', updatedAt: new Date() })
       .where(eq(agentConfigs.businessId, req.params.businessId));
 
     return res.json({ message: 'Voice clone removed' });

@@ -21,12 +21,9 @@ interface AgentConfig {
 }
 
 const PRESET_VOICES = [
-  { id: 'amaka', name: 'Amaka', desc: 'Warm, friendly — great for retail' },
-  { id: 'ngozi', name: 'Ngozi', desc: 'Energetic, upbeat — great for hospitality' },
-  { id: 'aisha', name: 'Aisha', desc: 'Clear, confident — great for clinics' },
-  { id: 'chidi', name: 'Chidi (Male)', desc: 'Calm, professional — great for services' },
-  { id: 'tunde', name: 'Tunde (Male)', desc: 'Friendly, upbeat — great for sales' },
-  { id: 'kola', name: 'Kola (Male)', desc: 'Deep, composed — great for support' },
+  { id: 'tiff', name: 'Tiff', desc: 'Warm, natural — great for customer service' },
+  { id: 'mike', name: 'Mike', desc: 'Clear, confident — great for sales & support' },
+  { id: 'english', name: 'English', desc: 'Neutral, professional — great for formal use' },
 ];
 
 const TONES = ['professional', 'friendly', 'concise', 'empathetic', 'formal'];
@@ -77,7 +74,7 @@ export default function AgentPage() {
     tone: 'friendly',
     greeting: "Hello, you've reached {businessName}. I'm your AI assistant. How can I help you today?",
     fallbackMessage: "I'm sorry, I didn't quite catch that. Could you please repeat your question?",
-    voiceId: 'amaka',
+    voiceId: 'tiff',
     enableRecording: true,
     enableTranscription: true,
     businessHoursOnly: false,
@@ -148,7 +145,7 @@ export default function AgentPage() {
   async function handleRemoveClone() {
     try {
       await apiDelete(`/agent/${businessId}/voice-clone`, token);
-      setConfig(prev => ({ ...prev, voiceId: 'amaka', clonedVoiceId: undefined, clonedVoiceName: undefined }));
+      setConfig(prev => ({ ...prev, voiceId: 'tiff', clonedVoiceId: undefined, clonedVoiceName: undefined }));
     } catch { /* ignore */ }
   }
 

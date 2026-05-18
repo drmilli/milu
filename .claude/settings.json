@@ -33,7 +33,9 @@
       "WebFetch(domain:hyperframes.mintlify.app)",
       "WebFetch(domain:addrom.com)",
       "WebFetch(domain:blog.nidhin.dev)",
-      "Bash(node -e ' *)"
+      "Bash(node -e ' *)",
+      "Bash(git -C /Users/ok/Documents/projects/milu diff --stat HEAD)",
+      "Bash(git -C /Users/ok/Documents/projects/milu status --short)"
     ],
     "additionalDirectories": [
       "/Users/ok/Documents/projects/milu"

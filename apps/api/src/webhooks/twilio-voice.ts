@@ -9,6 +9,7 @@ import { voiceChat, type ChatMessage } from '../services/document-extract';
 import { sendEscalationAlert } from '../services/whatsapp';
 import { notifyBusinessOwners } from '../services/notifications';
 import { redis, ttsStoreSet } from '../utils/redis';
+import { getElevenLabsVoiceId } from '../config/voices';
 
 function twiml(body: string) {
   return `<?xml version="1.0" encoding="UTF-8"?><Response>${body}</Response>`;
@@ -266,7 +267,49 @@ async function buildCatalogSummary(businessId: string, queryText: string): Promi
   }
 }
 
-async function ttsUrl(text: string, voiceId: string | null | undefined, baseUrl: string): Promise<string | null> {
+async function ttsStoreAudio(id: string, contentType: string, buf: Buffer, ttlSeconds: number) {
+  if (redis) {
+    await redis.set(`tts:${id}`, JSON.stringify({ ct: contentType, b64: buf.toString('base64') }), 'EX', ttlSeconds).catch(() => null);
+  } else {
+    ttsStoreSet(id, contentType, buf.toString('base64'), ttlSeconds);
+  }
+}
+
+async function elevenLabsTtsUrl(text: string, voiceId: string, baseUrl: string): Promise<string | null> {
+  if (!env.ELEVENLABS_API_KEY) return null;
+
+  const res = await fetch(
+    `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceId)}`,
+    {
+      method: 'POST',
+      headers: { 'xi-api-key': env.ELEVENLABS_API_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        text,
+        model_id: 'eleven_turbo_v2_5',
+        voice_settings: { stability: 0.5, similarity_boost: 0.75 },
+      }),
+      signal: AbortSignal.timeout(8000),
+    },
+  );
+
+  if (!res.ok) {
+    const err = await res.text().catch(() => '');
+    logger.warn({ status: res.status, err: err.slice(0, 200) }, 'ElevenLabs TTS failed');
+    return null;
+  }
+
+  const buf = Buffer.from(await res.arrayBuffer());
+  const id = crypto.randomUUID();
+  await ttsStoreAudio(id, 'audio/mpeg', buf, 5 * 60);
+  return `${baseUrl.replace(/\/$/, '')}/webhooks/tts/${id}`;
+}
+
+async function ttsUrl(text: string, voiceId: string | null | undefined, clonedVoiceId: string | null | undefined, baseUrl: string): Promise<string | null> {
+  const elevenLabsId = clonedVoiceId ?? getElevenLabsVoiceId(voiceId);
+  if (elevenLabsId && env.ELEVENLABS_API_KEY) {
+    return elevenLabsTtsUrl(text, elevenLabsId, baseUrl);
+  }
+
   if (!env.OPENAI_API_KEY) return null;
 
   const voice = mapAgentVoiceToOpenAi(voiceId);
@@ -295,12 +338,7 @@ async function ttsUrl(text: string, voiceId: string | null | undefined, baseUrl:
 
   const buf = Buffer.from(await res.arrayBuffer());
   const id = crypto.randomUUID();
-  const ttlSeconds = 5 * 60;
-  if (redis) {
-    await redis.set(`tts:${id}`, JSON.stringify({ ct: 'audio/mpeg', b64: buf.toString('base64') }), 'EX', ttlSeconds).catch(() => null);
-  } else {
-    ttsStoreSet(id, 'audio/mpeg', buf.toString('base64'), ttlSeconds);
-  }
+  await ttsStoreAudio(id, 'audio/mpeg', buf, 5 * 60);
   return `${baseUrl.replace(/\/$/, '')}/webhooks/tts/${id}`;
 }
 
@@ -317,6 +355,7 @@ function playTag(url: string) {
 async function speakTag(
   text: string,
   voiceId: string | null | undefined,
+  clonedVoiceId: string | null | undefined,
   language: string,
   baseUrl: string,
   timeoutMs: number,
@@ -324,10 +363,12 @@ async function speakTag(
   const trimmed = text.trim();
   const short = trimmed.length > 700 ? trimmed.slice(0, 700) : trimmed;
 
-  if (!env.OPENAI_API_KEY) return sayTag(short, language);
+  const elevenLabsId = clonedVoiceId ?? getElevenLabsVoiceId(voiceId);
+  const canTts = !!(elevenLabsId ? env.ELEVENLABS_API_KEY : env.OPENAI_API_KEY);
+  if (!canTts) return sayTag(short, language);
 
   const url = await Promise.race<string | null>([
-    ttsUrl(short, voiceId, baseUrl),
+    ttsUrl(short, voiceId, clonedVoiceId, baseUrl),
     new Promise<null>((resolve) => setTimeout(() => resolve(null), timeoutMs)),
   ]);
 
@@ -533,17 +574,17 @@ async function computeTwilioTurn(callId: string, speechResult: string, baseUrl: 
   if (action === 'escalate') {
     await handleEscalation(callId, callRow.businessId, callRow.callerNumber ?? '', speechResult);
     await db.update(calls).set({ status: 'COMPLETED', resolution: 'HUMAN', endedAt: new Date() }).where(eq(calls.id, callId));
-    const speak = await speakTag(reply, agentRow?.voiceId, language, baseUrl, 2500);
+    const speak = await speakTag(reply, agentRow?.voiceId, agentRow?.clonedVoiceId, language, baseUrl, 2500);
     return twiml(`${speak}<Hangup/>`);
   }
 
   if (action === 'end') {
     await db.update(calls).set({ status: 'COMPLETED', resolution: 'AI', endedAt: new Date() }).where(eq(calls.id, callId));
-    const speak = await speakTag(reply, agentRow?.voiceId, language, baseUrl, 2500);
+    const speak = await speakTag(reply, agentRow?.voiceId, agentRow?.clonedVoiceId, language, baseUrl, 2500);
     return twiml(`${speak}<Hangup/>`);
   }
 
-  const speak = await speakTag(reply, agentRow?.voiceId, language, baseUrl, 2500);
+  const speak = await speakTag(reply, agentRow?.voiceId, agentRow?.clonedVoiceId, language, baseUrl, 2500);
   return twiml(speak + gatherTurn(callId, language, baseUrl));
 }
 
@@ -706,7 +747,7 @@ export async function handleTwilioVoiceGather(req: Request, res: Response) {
       }
 
       await db.insert(transcripts).values({ callId, speaker: 'agent', text: prompt }).catch(() => null);
-      const speak = await speakTag(prompt, null, language, baseUrl, 2000);
+      const speak = await speakTag(prompt, null, null, language, baseUrl, 2000);
       return res.send(twiml(
         speak +
         gatherTurn(callId, language, baseUrl, stillAwaiting ? 6 : 4),
