@@ -116,7 +116,7 @@ function buildInstructions(ctx: CallContext): string {
   const faqs: { question: string; answer: string }[] = (kbRow?.faqs as any) ?? [];
 
   return [
-    `You are ${agentName}, a phone customer service agent for "${bizName}".`,
+    `You are ${agentName}, a phone customer service agent for "${bizName}". Your name is ${agentName} — never call yourself "Milu" or any other name.`,
     `Tone: ${tone}. Speak naturally as on a real phone call — concise, 1 to 3 short sentences max per turn.`,
     `Never use bullet points, numbered lists, or markdown. Never start with filler words like "Alright", "Sure", "Okay", "Certainly".`,
     `Start directly with your answer or question.`,
@@ -136,14 +136,8 @@ function buildInstructions(ctx: CallContext): string {
       ? `Products & services catalog (source of truth):\n${catalogSummary}\nOnly mention items and prices that appear in the catalog above.`
       : null,
     ``,
-    `START OF CALL: Greet the caller immediately when the call connects.`,
-    callerName
-      ? `Greet with: "Welcome back, ${callerName}! How can I help you today?"`
-      : `Greet with the agent's standard greeting, then ask how you can help.`,
-    ``,
-    `APPOINTMENTS: When the customer wants to book an appointment, collect the date, time, service type, and name. Then call the create_appointment function.`,
-    `ORDERS: When the customer wants to place an order, collect items, quantities, delivery address, and name. Then call the create_order function.`,
-    `After completing an appointment or order, confirm the details and ask if there is anything else you can help with.`,
+    `APPOINTMENTS: When the customer wants to book an appointment, collect the date, time, service type, and name. Then call the create_appointment function. After booking, confirm with the customer and ask if there is anything else you can help with — do NOT end the call immediately.`,
+    `ORDERS: When the customer wants to place an order, collect all items, quantities, delivery address, and their name. Then call the create_order function. After the order is placed, confirm the details and ask if there is anything else — do NOT end the call immediately.`,
     kbRow?.escalationNumber
       ? `ESCALATION: If you cannot help or the customer requests a human agent, call the escalate_to_human function.`
       : `If you cannot help, let the customer know the team will follow up.`,
@@ -415,13 +409,18 @@ export function handleTwilioVoiceStream(ws: WebSocket, req: IncomingMessage) {
 
   // ── Call LLM (OpenAI Chat API with function calling) ──────────────────────
 
+  let callEnded = false;
+
   async function callLLM(userText: string): Promise<string> {
     if (!env.OPENAI_API_KEY) return "I'm sorry, I'm having trouble responding right now.";
+    if (callEnded) return '';
 
     conversationHistory.push({ role: 'user', content: userText });
     const tools = buildChatTools(ops, canEscalate);
 
     for (let iteration = 0; iteration < 5; iteration++) {
+      if (callEnded) return '';
+
       const res = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
         headers: {
@@ -429,17 +428,17 @@ export function handleTwilioVoiceStream(ws: WebSocket, req: IncomingMessage) {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          model: 'gpt-4o',
+          model: 'gpt-4o-mini',
           messages: [
             { role: 'system', content: systemInstructions },
             ...conversationHistory,
           ],
           tools,
           tool_choice: 'auto',
-          temperature: 0.7,
-          max_tokens: 300,
+          temperature: 0.6,
+          max_tokens: 200,
         }),
-        signal: AbortSignal.timeout(15000),
+        signal: AbortSignal.timeout(12000),
       });
 
       if (!res.ok) {
@@ -453,17 +452,27 @@ export function handleTwilioVoiceStream(ws: WebSocket, req: IncomingMessage) {
       if (!message) break;
 
       if (message.tool_calls?.length) {
-        conversationHistory.push({ role: 'assistant', content: message.content ?? '', ...message });
+        // Push assistant message with tool_calls exactly as returned by API
+        conversationHistory.push(message);
 
         for (const tc of message.tool_calls) {
           let fnArgs: Record<string, any> = {};
           try { fnArgs = JSON.parse(tc.function.arguments ?? '{}'); } catch { /* ignore */ }
           logger.info({ callId, fnName: tc.function.name }, 'Function call');
+
           const result = await executeFn(tc.function.name, fnArgs).catch(err => {
             logger.error({ err, fnName: tc.function.name }, 'Function execution error');
             return JSON.stringify({ success: false });
           });
-          conversationHistory.push({ role: 'tool', content: result } as any);
+
+          // Include tool_call_id so OpenAI knows which call this result belongs to
+          conversationHistory.push({ role: 'tool', tool_call_id: tc.id, content: result } as any);
+
+          // If end_call or escalate was triggered, stop processing
+          if (tc.function.name === 'end_call' || tc.function.name === 'escalate_to_human') {
+            callEnded = true;
+            return '';
+          }
         }
         continue;
       }
@@ -502,7 +511,12 @@ export function handleTwilioVoiceStream(ws: WebSocket, req: IncomingMessage) {
           body: JSON.stringify({
             text,
             model_id: 'eleven_turbo_v2_5',
-            voice_settings: { stability: 0.5, similarity_boost: 0.75 },
+            voice_settings: {
+              stability: 0.35,        // lower = more natural variation
+              similarity_boost: 0.8,  // higher = closer to original voice
+              style: 0.2,             // adds slight expression
+              use_speaker_boost: true,
+            },
           }),
           signal: ttsAbortController.signal,
         },
@@ -615,13 +629,32 @@ export function handleTwilioVoiceStream(ws: WebSocket, req: IncomingMessage) {
     dgConnection = conn;
   }
 
-  // ── Initial greeting ───────────────────────────────────────────────────────
+  // ── Initial greeting (uses configured script — no LLM call needed) ──────────
 
   async function sendGreeting() {
     if (!ctx) return;
     try {
-      const greeting = await callLLM('__CALL_STARTED__');
-      if (!greeting) return;
+      const { agentRow, bizRow, callRow, contactRow } = ctx;
+      const callerName = callRow.callerName ?? contactRow?.name ?? null;
+      const bizName = bizRow?.name ?? '';
+      const agentName = agentRow?.name ?? '';
+
+      let greeting: string;
+      if (agentRow?.greeting?.trim()) {
+        // Use the exact greeting script the user configured in the dashboard
+        greeting = agentRow.greeting.trim();
+        // Simple substitution for placeholders if any
+        if (callerName) greeting = greeting.replace(/\{name\}/gi, callerName);
+        greeting = greeting.replace(/\{business\}/gi, bizName).replace(/\{agent\}/gi, agentName);
+      } else if (callerName) {
+        greeting = `Welcome back, ${callerName}! How can I help you today?`;
+      } else {
+        greeting = `Hello! Thank you for calling ${bizName || 'us'}. How can I help you today?`;
+      }
+
+      // Pre-load into conversation history so LLM has context of what was said
+      conversationHistory.push({ role: 'assistant', content: greeting });
+
       await db.insert(transcripts).values({ callId, speaker: 'agent', text: greeting }).catch(() => null);
       await streamTTS(greeting);
     } catch (err) {
@@ -655,12 +688,6 @@ export function handleTwilioVoiceStream(ws: WebSocket, req: IncomingMessage) {
             ops = loaded.bizRow ? opsEnabled(loaded.bizRow) : true;
             canEscalate = !!loaded.kbRow?.escalationNumber;
             systemInstructions = buildInstructions(loaded);
-
-            // Update the "trigger" greeting to reference the actual agent name
-            const agentName = loaded.agentRow?.name ?? 'the agent';
-            const bizName = loaded.bizRow?.name ?? 'this business';
-            // Replace the __CALL_STARTED__ trigger with a proper instruction
-            systemInstructions += `\n\nWhen you receive the message "__CALL_STARTED__", respond ONLY with the greeting — do not reference the trigger text.`;
 
             logger.info({ callId, agentVoiceId, ops, canEscalate }, 'Call context loaded — connecting to Deepgram');
             connectToDeepgram();
