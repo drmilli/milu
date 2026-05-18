@@ -77,7 +77,14 @@ app.use('/docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
 app.get('/docs.json', (_req, res) => res.json(swaggerSpec));
 
 // Health
-app.get('/health', (_req, res) => res.json({ status: 'ok', env: env.NODE_ENV }));
+app.get('/health', (_req, res) => res.json({
+  status: 'ok',
+  env: env.NODE_ENV,
+  openai: !!env.OPENAI_API_KEY,
+  elevenlabs: !!env.ELEVENLABS_API_KEY,
+  twilio: !!env.TWILIO_ACCOUNT_SID,
+  whatsapp: !!env.WHATSAPP_TOKEN,
+}));
 
 // Webhooks (no auth, before rate limiting)
 app.post('/webhooks/twilio/voice', handleTwilioVoiceWebhook);
@@ -249,6 +256,8 @@ server.listen(env.PORT, async () => {
     docs: `http://localhost:${env.PORT}/docs`,
     db: env.DATABASE_URL.replace(/:\/\/.*@/, '://***@'), // hide credentials
     twilio: !!env.TWILIO_ACCOUNT_SID,
+    openai: !!env.OPENAI_API_KEY,
+    elevenlabs: !!env.ELEVENLABS_API_KEY,
     whatsapp: !!env.WHATSAPP_TOKEN,
     email: !!env.GMAIL_USER,
     whop: !!env.WHOP_API_KEY,
