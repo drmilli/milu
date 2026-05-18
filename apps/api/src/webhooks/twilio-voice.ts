@@ -43,6 +43,9 @@ function mapAgentVoiceToOpenAi(voiceId: string | null | undefined): OpenAiTtsVoi
   if (v === 'aisha') return 'alloy';
   if (v === 'tunde') return 'echo';
   if (v === 'kola') return 'ash';
+  if (v === 'tiff') return 'shimmer';
+  if (v === 'mike') return 'echo';
+  if (v === 'english') return 'alloy';
   return 'nova';
 }
 

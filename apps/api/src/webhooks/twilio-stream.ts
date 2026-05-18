@@ -25,6 +25,7 @@ function mapVoice(voiceId: string | null | undefined): RealtimeVoice {
     nova: 'coral', onyx: 'echo', fable: 'verse',
     amaka: 'coral', chidi: 'echo', ngozi: 'shimmer',
     aisha: 'alloy', tunde: 'ash', kola: 'verse',
+    tiff: 'shimmer', mike: 'echo', english: 'alloy',
   };
   return m[v] ?? 'coral';
 }
@@ -303,9 +304,8 @@ export function handleTwilioVoiceStream(ws: WebSocket, _req: IncomingMessage) {
   // Accumulated transcripts per turn
   let agentTurnText = '';
 
-  // ElevenLabs TTS state (used when cloned voice is active)
+  // ElevenLabs TTS state (used when a cloned or preset ElevenLabs voice is active)
   let elevenLabsController: AbortController | null = null;
-  let elevenLabsTurnText = '';
 
   // ── Send helpers ────────────────────────────────────────────────────────────
 
@@ -334,23 +334,13 @@ export function handleTwilioVoiceStream(ws: WebSocket, _req: IncomingMessage) {
     const { bizRow, agentRow, kbRow } = ctx;
     const ops = bizRow ? opsEnabled(bizRow) : true;
     const canEscalate = !!kbRow?.escalationNumber;
-    const elevenLabsVoiceId = agentRow?.clonedVoiceId ?? getElevenLabsVoiceId(agentRow?.voiceId);
-    const useElevenLabs = !!(elevenLabsVoiceId && env.ELEVENLABS_API_KEY);
-
     toOpenAI({
       type: 'session.update',
       session: {
         instructions: buildInstructions(ctx),
-        ...(useElevenLabs
-          ? {
-              modalities: ['text'],
-              input_audio_format: 'g711_ulaw',
-            }
-          : {
-              voice: mapVoice(agentRow?.voiceId),
-              input_audio_format: 'g711_ulaw',
-              output_audio_format: 'g711_ulaw',
-            }),
+        voice: mapVoice(agentRow?.voiceId),
+        input_audio_format: 'g711_ulaw',
+        output_audio_format: 'g711_ulaw',
         input_audio_transcription: { model: 'gpt-4o-transcribe' },
         turn_detection: {
           type: 'server_vad',
@@ -521,30 +511,6 @@ export function handleTwilioVoiceStream(ws: WebSocket, _req: IncomingMessage) {
         break;
       }
 
-      case 'response.text.delta': {
-        const delta = event.delta ?? '';
-        elevenLabsTurnText += delta;
-        agentTurnText += delta;
-        break;
-      }
-
-      case 'response.text.done': {
-        const text = (event.text ?? elevenLabsTurnText).trim();
-        elevenLabsTurnText = '';
-        const elevenLabsId = ctx?.agentRow?.clonedVoiceId ?? getElevenLabsVoiceId(ctx?.agentRow?.voiceId);
-        if (text && elevenLabsId && env.ELEVENLABS_API_KEY) {
-          elevenLabsController?.abort();
-          const controller = new AbortController();
-          elevenLabsController = controller;
-          streamElevenLabsTts(text, elevenLabsId, controller, (chunk) => {
-            if (!controller.signal.aborted) {
-              sendAudio(Buffer.from(chunk).toString('base64'));
-            }
-          }).catch(err => logger.warn({ err, callId }, 'ElevenLabs TTS error'));
-        }
-        break;
-      }
-
       case 'response.audio_transcript.done':
       case 'response.done': {
         const text = (event.transcript ?? agentTurnText).trim();
@@ -568,7 +534,6 @@ export function handleTwilioVoiceStream(ws: WebSocket, _req: IncomingMessage) {
         toOpenAI({ type: 'response.cancel' });
         clearAudio();
         agentTurnText = '';
-        elevenLabsTurnText = '';
         elevenLabsController?.abort();
         elevenLabsController = null;
         break;
