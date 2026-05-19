@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useAuth } from '../../../hooks/useAuth';
 import { apiGet, apiPost, apiPatch, apiPut } from '../../../lib/api';
 
@@ -53,6 +53,8 @@ export default function SettingsPage() {
   const [waStep, setWaStep] = useState<WaStep>('idle');
   const [waError, setWaError] = useState('');
   const [waCooldown, setWaCooldown] = useState(0);
+  const waCooldownRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  useEffect(() => () => { if (waCooldownRef.current) clearInterval(waCooldownRef.current); }, []);
   const isVerifyingWa = waStep === 'verifying';
 
   const [connectorBaseUrl, setConnectorBaseUrl] = useState('');
@@ -129,9 +131,13 @@ export default function SettingsPage() {
   }
 
   function startCooldown() {
+    if (waCooldownRef.current) clearInterval(waCooldownRef.current);
     setWaCooldown(30);
-    const t = setInterval(() => {
-      setWaCooldown((v) => { if (v <= 1) { clearInterval(t); return 0; } return v - 1; });
+    waCooldownRef.current = setInterval(() => {
+      setWaCooldown((v) => {
+        if (v <= 1) { clearInterval(waCooldownRef.current!); waCooldownRef.current = null; return 0; }
+        return v - 1;
+      });
     }, 1000);
   }
 

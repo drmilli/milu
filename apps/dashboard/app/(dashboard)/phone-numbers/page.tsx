@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useAuth } from '../../../hooks/useAuth';
 import { apiGet, apiPost, apiDelete } from '../../../lib/api';
 
@@ -95,6 +95,8 @@ export default function PhoneNumbersPage() {
   const [step, setStep] = useState<Step>('idle');
   const [error, setError] = useState('');
   const [cooldown, setCooldown] = useState(0);
+  const cooldownRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  useEffect(() => () => { if (cooldownRef.current) clearInterval(cooldownRef.current); }, []);
 
   const load = useCallback(() => {
     if (!token || !businessId) return;
@@ -202,9 +204,13 @@ export default function PhoneNumbersPage() {
   // ── Manual verify flow ───────────────────────────────────────────────────
 
   function startCooldown() {
+    if (cooldownRef.current) clearInterval(cooldownRef.current);
     setCooldown(30);
-    const t = setInterval(() => {
-      setCooldown(v => { if (v <= 1) { clearInterval(t); return 0; } return v - 1; });
+    cooldownRef.current = setInterval(() => {
+      setCooldown(v => {
+        if (v <= 1) { clearInterval(cooldownRef.current!); cooldownRef.current = null; return 0; }
+        return v - 1;
+      });
     }, 1000);
   }
 

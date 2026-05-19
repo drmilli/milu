@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import Link from 'next/link';
 
 const transcript = [
-  { role: 'agent' as const, text: "Hello, you've reached Amaka's Boutique. I'm Milu, your AI assistant. How can I help you today?" },
+  { role: 'agent' as const, text: "Hello, you've reached Amaka's Boutique. How can I help you today?" },
   { role: 'caller' as const, text: 'Hi, I wanted to ask about the price of your Ankara sets.' },
   { role: 'agent' as const, text: 'Of course! Our Ankara co-ord sets start at ₦18,000. We have several styles currently in stock. Were you looking for something specific?' },
   { role: 'caller' as const, text: 'Yes, the ruffled one I saw on your Instagram page.' },
