@@ -101,7 +101,8 @@ async function sendViaTwilioWhatsAppTemplate(to: string, contentSid: string, con
   const normalize = (v: string) => (v.startsWith('whatsapp:') ? v : `whatsapp:${v}`);
   const toNormalized = normalize(to);
   const fromNormalized = normalize(fromRaw);
-  const statusCallbackUrl = `${env.API_URL.replace(/\/$/, '')}/webhooks/twilio/message-status`;
+  const rawUrl = env.API_URL.replace(/\/$/, '');
+  const statusCallbackUrl = rawUrl.startsWith('https://') ? `${rawUrl}/webhooks/twilio/message-status` : undefined;
 
   logger.info({
     to: maskPhone(toNormalized),
@@ -114,7 +115,7 @@ async function sendViaTwilioWhatsAppTemplate(to: string, contentSid: string, con
     const msg = await client.messages.create({
       from: fromNormalized,
       to: toNormalized,
-      statusCallback: statusCallbackUrl,
+      ...(statusCallbackUrl ? { statusCallback: statusCallbackUrl } : {}),
       contentSid,
       contentVariables: JSON.stringify(contentVariables),
     } as any);
