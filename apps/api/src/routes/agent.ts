@@ -44,7 +44,7 @@ agentRouter.get('/:businessId', async (req, res, next) => {
       // Return defaults if not configured yet
       return res.json({
         businessId: req.params.businessId,
-        name: 'Milu',
+        name: '',
         language: 'en',
         tone: 'friendly',
         greeting: null,
