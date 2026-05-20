@@ -276,6 +276,9 @@ export function handleTwilioVoiceStream(ws: WebSocket, req: IncomingMessage) {
   // Greeting guard: queue caller speech until greeting finishes to prevent LLM firing mid-greeting
   let greetingInProgress = false;
   let queuedCallerSpeech: string | null = null;
+  // LLM serialisation: prevent concurrent LLM+TTS calls from aborting each other
+  let llmRunning = false;
+  let pendingCallerSpeech: string | null = null;
 
   // ── Send helpers ────────────────────────────────────────────────────────────
 
@@ -447,6 +450,7 @@ export function handleTwilioVoiceStream(ws: WebSocket, req: IncomingMessage) {
   async function streamLLMAndTTS(userText: string): Promise<string> {
     if (!env.OPENAI_API_KEY || callEnded) return '';
 
+    logger.info({ callId, textLen: userText.length }, 'LLM call start');
     conversationHistory.push({ role: 'user', content: userText });
     const tools = buildChatTools(ops, canEscalate);
 
@@ -600,10 +604,11 @@ export function handleTwilioVoiceStream(ws: WebSocket, req: IncomingMessage) {
 
     if (!res.ok || !res.body) {
       const err = await res.text().catch(() => '');
-      logger.warn({ status: res.status, err: err.slice(0, 200), voiceId }, 'ElevenLabs TTS failed');
+      logger.warn({ status: res.status, err: err.slice(0, 300), voiceId }, 'ElevenLabs TTS failed');
       return false;
     }
 
+    logger.info({ callId, voiceId, textLen: text.length }, 'ElevenLabs TTS streaming to Twilio');
     const reader = res.body.getReader();
     try {
       while (true) {
@@ -640,6 +645,15 @@ export function handleTwilioVoiceStream(ws: WebSocket, req: IncomingMessage) {
 
   async function handleCallerSpeech(text: string) {
     if (!ctx) return;
+
+    // Serialise LLM calls: if one is already running, queue the latest speech
+    if (llmRunning) {
+      pendingCallerSpeech = text;
+      logger.info({ callId, text: text.slice(0, 80) }, 'LLM busy — caller speech queued');
+      return;
+    }
+
+    llmRunning = true;
     logger.info({ callId, text: text.slice(0, 200) }, 'Caller speech final');
     await db.insert(transcripts).values({ callId, speaker: 'caller', text }).catch(() => null);
     try {
@@ -647,6 +661,15 @@ export function handleTwilioVoiceStream(ws: WebSocket, req: IncomingMessage) {
       if (reply) await db.insert(transcripts).values({ callId, speaker: 'agent', text: reply }).catch(() => null);
     } catch (err) {
       logger.error({ err, callId }, 'Error handling caller speech');
+    } finally {
+      llmRunning = false;
+      if (pendingCallerSpeech) {
+        const pending = pendingCallerSpeech;
+        pendingCallerSpeech = null;
+        handleCallerSpeech(pending).catch(err =>
+          logger.error({ err, callId }, 'handleCallerSpeech (pending) error'),
+        );
+      }
     }
   }
 
