@@ -427,23 +427,9 @@ export function handleTwilioVoiceStream(ws: WebSocket, req: IncomingMessage) {
     return JSON.stringify({ success: false, error: 'Unknown function' });
   }
 
-  // ── Sentence splitter (for streaming TTS) ────────────────────────────────
-
-  function takeSentences(buf: string): [sentences: string[], remainder: string] {
-    const sentences: string[] = [];
-    let rest = buf;
-    // Match text ending in .!? followed by whitespace (next sentence starts) or end of string
-    while (rest.length) {
-      const m = rest.match(/^(.*?[.!?])(\s+|$)/s);
-      if (!m) break;
-      const s = m[1].trim();
-      if (s.length >= 4) sentences.push(s);
-      rest = rest.slice(m[1].length + m[2].length);
-    }
-    return [sentences, rest];
-  }
-
-  // ── LLM streaming with sentence-level TTS ────────────────────────────────
+  // ── LLM + ElevenLabs WebSocket streaming ─────────────────────────────────
+  // Tokens from OpenAI are piped directly to ElevenLabs in real-time,
+  // eliminating the sentence-boundary wait of the old REST-per-sentence approach.
 
   let callEnded = false;
 
@@ -457,6 +443,73 @@ export function handleTwilioVoiceStream(ws: WebSocket, req: IncomingMessage) {
     for (let iteration = 0; iteration < 5; iteration++) {
       if (callEnded) return '';
 
+      // Start OpenAI and open ElevenLabs WS concurrently to minimise latency
+      const voiceId = resolveElevenLabsVoiceId(agentVoiceId, agentClonedVoiceId);
+      const elWsUrl =
+        `wss://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceId)}/stream-input` +
+        `?model_id=eleven_flash_v2_5&output_format=ulaw_8000&optimize_streaming_latency=4`;
+
+      if (ttsAbortController) ttsAbortController.abort();
+      ttsAbortController = new AbortController();
+      const myAbort = ttsAbortController;
+
+      // ── Open ElevenLabs WebSocket ──
+      // Use object so TypeScript doesn't narrow the value aggressively inside closures
+      const elState = { v: 'connecting' as 'connecting' | 'open' | 'closed' };
+      let elTextSent = false;
+      let elAudioFinished = false;
+      let elDoneResolve!: () => void;
+      const elAudioDone = new Promise<void>(r => { elDoneResolve = r; });
+      const pendingText: string[] = []; // buffer tokens until WS opens
+
+      let elWs: InstanceType<typeof WebSocket> | null = null;
+
+      if (env.ELEVENLABS_API_KEY && !myAbort.signal.aborted) {
+        elWs = new WebSocket(elWsUrl, { headers: { 'xi-api-key': env.ELEVENLABS_API_KEY } });
+
+        elWs.on('open', () => {
+          elState.v = 'open';
+          if (myAbort.signal.aborted) { elWs!.close(); return; }
+          logger.info({ callId, voiceId }, 'ElevenLabs WS open — streaming LLM tokens');
+          elWs!.send(JSON.stringify({
+            text: ' ',
+            voice_settings: { stability: 0.35, similarity_boost: 0.8, style: 0.2, use_speaker_boost: true },
+            generation_config: { chunk_length_schedule: [120] },
+          }));
+          // Flush any tokens that arrived before WS opened
+          for (const t of pendingText) {
+            elWs!.send(JSON.stringify({ text: t }));
+            elTextSent = true;
+          }
+          pendingText.length = 0;
+        });
+
+        elWs.on('message', (data: Buffer) => {
+          if (myAbort.signal.aborted) { elWs!.close(); return; }
+          try {
+            const msg = JSON.parse(data.toString());
+            if (msg.audio) sendAudio(msg.audio);
+            if (msg.isFinal) { elAudioFinished = true; elDoneResolve(); }
+          } catch { /* ignore */ }
+        });
+
+        elWs.on('error', (err: Error) => {
+          logger.warn({ err: err.message, callId }, 'ElevenLabs WS error');
+          elState.v = 'closed';
+          elDoneResolve();
+        });
+
+        elWs.on('close', () => {
+          elState.v = 'closed';
+          if (!elAudioFinished) elDoneResolve();
+        });
+
+        agentSpeaking = true;
+      } else {
+        elDoneResolve(); // nothing to wait for
+      }
+
+      // ── OpenAI streaming ──
       const res = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
         headers: { Authorization: `Bearer ${env.OPENAI_API_KEY}`, 'Content-Type': 'application/json' },
@@ -475,24 +528,24 @@ export function handleTwilioVoiceStream(ws: WebSocket, req: IncomingMessage) {
       if (!res.ok || !res.body) {
         const err = await res.text().catch(() => '');
         logger.warn({ status: res.status, err: err.slice(0, 200) }, 'OpenAI stream error');
+        elWs?.close();
+        agentSpeaking = false;
         const sorry = "I'm having trouble responding right now.";
         await streamTTS(sorry);
         return sorry;
       }
 
-      // Accumulate streaming response
       const reader = res.body.getReader();
       const dec = new TextDecoder();
       type TcAccum = { id: string; name: string; args: string };
       const tcMap = new Map<number, TcAccum>();
-      let textBuf = '';
       let fullText = '';
       let finishReason = '';
 
       try {
         while (true) {
           const { done, value } = await reader.read();
-          if (done) break;
+          if (done || myAbort.signal.aborted) break;
           for (const line of dec.decode(value, { stream: true }).split('\n')) {
             if (!line.startsWith('data: ')) continue;
             const raw = line.slice(6).trim();
@@ -504,14 +557,16 @@ export function handleTwilioVoiceStream(ws: WebSocket, req: IncomingMessage) {
             if (choice.finish_reason) finishReason = choice.finish_reason;
             const delta = choice.delta ?? {};
 
-            // Stream text → sentence-level TTS
-            if (delta.content) {
-              textBuf += delta.content;
+            // Stream text token → ElevenLabs WS in real-time
+            if (delta.content && !myAbort.signal.aborted) {
               fullText += delta.content;
-              const [ready, rest] = takeSentences(textBuf);
-              textBuf = rest;
-              for (const s of ready) {
-                if (!callEnded) await streamTTS(s);
+              if (elWs) {
+                if (elState.v === 'open') {
+                  elWs.send(JSON.stringify({ text: delta.content }));
+                  elTextSent = true;
+                } else if (elState.v === 'connecting') {
+                  pendingText.push(delta.content);
+                }
               }
             }
 
@@ -531,11 +586,31 @@ export function handleTwilioVoiceStream(ws: WebSocket, req: IncomingMessage) {
         reader.releaseLock();
       }
 
-      // Flush any remaining partial sentence
-      if (textBuf.trim() && !callEnded) {
-        fullText += textBuf;
-        await streamTTS(textBuf.trim());
+      // If WS was still connecting when OpenAI finished, wait briefly then flush buffer
+      if (elWs && elState.v === 'connecting' && pendingText.length > 0) {
+        await Promise.race([
+          new Promise<void>(r => elWs!.once('open', r)),
+          new Promise<void>(r => elWs!.once('error', r as any)),
+          new Promise<void>(r => setTimeout(r, 2000)),
+        ]);
+        if (elWs.readyState === WebSocket.OPEN && pendingText.length > 0) {
+          for (const t of pendingText) {
+            elWs.send(JSON.stringify({ text: t }));
+            elTextSent = true;
+          }
+          pendingText.length = 0;
+        }
       }
+
+      // Send EOS and wait for all audio chunks
+      if (elWs && elTextSent && elWs.readyState === WebSocket.OPEN && !myAbort.signal.aborted) {
+        elWs.send(JSON.stringify({ text: '' })); // EOS
+        await Promise.race([elAudioDone, new Promise<void>(r => setTimeout(r, 10000))]);
+      } else {
+        elDoneResolve(); // nothing was sent — don't wait
+      }
+      if (elWs && elState.v !== 'closed') elWs.close();
+      agentSpeaking = false;
 
       if (finishReason === 'tool_calls' && tcMap.size > 0) {
         const tcs = Array.from(tcMap.values());
@@ -559,7 +634,7 @@ export function handleTwilioVoiceStream(ws: WebSocket, req: IncomingMessage) {
             return '';
           }
         }
-        continue; // Loop to get the text reply after tool execution
+        continue; // Get the text reply after tool execution
       }
 
       const reply = fullText.trim();
@@ -655,7 +730,7 @@ export function handleTwilioVoiceStream(ws: WebSocket, req: IncomingMessage) {
 
     llmRunning = true;
     logger.info({ callId, text: text.slice(0, 200) }, 'Caller speech final');
-    await db.insert(transcripts).values({ callId, speaker: 'caller', text }).catch(() => null);
+    db.insert(transcripts).values({ callId, speaker: 'caller', text }).catch(() => null);
     try {
       const reply = await streamLLMAndTTS(text);
       if (reply) await db.insert(transcripts).values({ callId, speaker: 'agent', text: reply }).catch(() => null);
@@ -688,8 +763,8 @@ export function handleTwilioVoiceStream(ws: WebSocket, req: IncomingMessage) {
       language: 'multi',
       smart_format: true,
       interim_results: true,
-      endpointing: 200,
-      utterance_end_ms: 1000,
+      endpointing: 100,
+      utterance_end_ms: 500,
       encoding: 'mulaw',
       sample_rate: 8000,
     });
