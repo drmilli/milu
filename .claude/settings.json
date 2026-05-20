@@ -36,7 +36,8 @@
       "Bash(node -e ' *)",
       "Bash(git -C /Users/ok/Documents/projects/milu diff --stat HEAD)",
       "Bash(git -C /Users/ok/Documents/projects/milu status --short)",
-      "Bash(TWILIO_WHATSAPP_BROADCAST_CONTENT_SID=HXd411089a82ac6c11278014f5653e9119 npx tsx test-broadcast.ts)"
+      "Bash(TWILIO_WHATSAPP_BROADCAST_CONTENT_SID=HXd411089a82ac6c11278014f5653e9119 npx tsx test-broadcast.ts)",
+      "Bash(xargs cat)"
     ],
     "additionalDirectories": [
       "/Users/ok/Documents/projects/milu"
