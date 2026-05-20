@@ -166,26 +166,26 @@ export default function ContactsPage() {
   }
 
   return (
-    <div className="h-full flex flex-col">
+    <div className="p-4 sm:p-6 lg:p-8 h-full flex flex-col">
       {/* Header */}
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-2xl font-bold font-display text-primary-dark">Contacts</h1>
+      <div className="flex items-center justify-between mb-4 sm:mb-6 flex-shrink-0">
+        <div className="min-w-0">
+          <h1 className="text-xl sm:text-2xl font-bold font-display text-primary-dark">Contacts</h1>
           <p className="text-sm text-primary-warm mt-0.5">{total.toLocaleString()} contact{total !== 1 ? 's' : ''}</p>
         </div>
         <button
           onClick={openCreate}
-          className="flex items-center gap-2 px-4 py-2 rounded-xl bg-primary text-cream-light text-sm font-medium hover:bg-primary/90 transition-colors"
+          className="flex items-center gap-2 px-3 sm:px-4 py-2 rounded-xl bg-primary text-cream-light text-sm font-medium hover:bg-primary/90 transition-colors flex-shrink-0"
         >
           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
           </svg>
-          Add contact
+          <span className="hidden sm:inline">Add contact</span>
         </button>
       </div>
 
       {/* Filters */}
-      <div className="flex flex-col sm:flex-row gap-3 mb-5">
+      <div className="flex flex-col sm:flex-row gap-3 mb-4 sm:mb-5 flex-shrink-0">
         <div className="relative flex-1">
           <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-primary-warm/50" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" />

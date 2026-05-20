@@ -11,7 +11,7 @@ import { env } from '../config/env';
 import { logger } from '../config/logger';
 import { getElevenLabsVoiceId, ELEVENLABS_VOICES, DEFAULT_VOICE } from '../config/voices';
 import { notifyBusinessOwners } from '../services/notifications';
-import { sendEscalationAlert } from '../services/whatsapp';
+import { sendEscalationAlert, sendWhatsAppNotification } from '../services/whatsapp';
 import twilio from 'twilio';
 
 // ─── ElevenLabs voice mapping ──────────────────────────────────────────────────
@@ -230,6 +230,19 @@ function buildChatTools(ops: boolean, canEscalate: boolean) {
   return tools;
 }
 
+// ─── Post-call owner WhatsApp notification ────────────────────────────────────
+
+async function sendPostCallWhatsApp(businessId: string, callerNumber: string | null, resolution: string) {
+  try {
+    const [settings] = await db.select({ whatsappNumber: businessSettings.whatsappNumber, whatsappVerified: businessSettings.whatsappVerified })
+      .from(businessSettings).where(eq(businessSettings.businessId, businessId)).limit(1);
+    if (!settings?.whatsappNumber) return;
+    const caller = callerNumber ?? 'Unknown';
+    const body = `A call from ${caller} has ended (handled by AI). Review it in your Milu dashboard.`;
+    await sendWhatsAppNotification(settings.whatsappNumber, 'Call Ended', body);
+  } catch { /* ignore */ }
+}
+
 // ─── Main WebSocket handler ───────────────────────────────────────────────────
 
 export function handleTwilioVoiceStream(ws: WebSocket, req: IncomingMessage) {
@@ -400,6 +413,7 @@ export function handleTwilioVoiceStream(ws: WebSocket, req: IncomingMessage) {
     if (name === 'end_call') {
       await db.update(calls).set({ status: 'COMPLETED', resolution: 'AI', endedAt: new Date() })
         .where(eq(calls.id, callId)).catch(() => null);
+      sendPostCallWhatsApp(callRow.businessId, callRow.callerNumber, 'AI').catch(() => null);
       hangUp(2500).catch(() => null);
       return JSON.stringify({ success: true });
     }
@@ -793,10 +807,14 @@ export function handleTwilioVoiceStream(ws: WebSocket, req: IncomingMessage) {
         logger.info({ streamSid, callId }, 'Twilio stream stopped');
         dgConnection?.finish();
         if (callId) {
-          await db.update(calls)
+          const [updatedCall] = await db.update(calls)
             .set({ status: 'COMPLETED', resolution: 'AI', endedAt: new Date() })
             .where(and(eq(calls.id, callId), eq(calls.status, 'ACTIVE')))
-            .catch(() => null);
+            .returning({ businessId: calls.businessId, callerNumber: calls.callerNumber })
+            .catch(() => []);
+          if (updatedCall) {
+            sendPostCallWhatsApp(updatedCall.businessId, updatedCall.callerNumber, 'AI').catch(() => null);
+          }
         }
         break;
       }

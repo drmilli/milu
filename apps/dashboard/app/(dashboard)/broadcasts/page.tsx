@@ -11,6 +11,7 @@ type RecipientStatus = 'PENDING' | 'SENT' | 'FAILED';
 
 interface Broadcast {
   id: string;
+  title?: string | null;
   message: string;
   status: BroadcastStatus;
   totalRecipients: number;
@@ -72,9 +73,11 @@ export default function BroadcastsPage() {
 
   // Compose modal state
   const [composing, setComposing] = useState(false);
+  const [title, setTitle] = useState('');
   const [message, setMessage] = useState('');
-  const [recipientMode, setRecipientMode] = useState<'all' | 'tags' | 'specific'>('all');
+  const [recipientMode, setRecipientMode] = useState<'all' | 'tags' | 'specific' | 'phone'>('all');
   const [tagInput, setTagInput] = useState('');
+  const [phoneInput, setPhoneInput] = useState('');
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [contactSearch, setContactSearch] = useState('');
   const [selectedContactIds, setSelectedContactIds] = useState<string[]>([]);
@@ -157,9 +160,11 @@ export default function BroadcastsPage() {
   }
 
   function openCompose() {
+    setTitle('');
     setMessage('');
     setRecipientMode('all');
     setTagInput('');
+    setPhoneInput('');
     setSelectedContactIds([]);
     setContactSearch('');
     setSendError('');
@@ -179,12 +184,17 @@ export default function BroadcastsPage() {
     setSendError('');
     try {
       const body: Record<string, unknown> = { message: message.trim() };
+      if (title.trim()) body.title = title.trim();
       if (recipientMode === 'all') {
         body.all = true;
       } else if (recipientMode === 'tags') {
         const tags = tagInput.split(',').map(t => t.trim()).filter(Boolean);
         if (!tags.length) { setSendError('Enter at least one tag.'); setSending(false); return; }
         body.tags = tags;
+      } else if (recipientMode === 'phone') {
+        const phones = phoneInput.split(/[\n,]+/).map(p => p.trim()).filter(Boolean);
+        if (!phones.length) { setSendError('Enter at least one phone number.'); setSending(false); return; }
+        body.phones = phones;
       } else {
         if (!selectedContactIds.length) { setSendError('Select at least one contact.'); setSending(false); return; }
         body.contactIds = selectedContactIds;
@@ -236,7 +246,7 @@ export default function BroadcastsPage() {
   }
 
   return (
-    <div className="p-6 lg:p-8 h-full flex flex-col gap-6">
+    <div className="p-4 sm:p-6 lg:p-8 h-full flex flex-col gap-4 sm:gap-6">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
@@ -286,12 +296,13 @@ export default function BroadcastsPage() {
                 onClick={() => openDetail(b)}
                 className={`text-left bg-white rounded-2xl border transition-colors p-4 hover:border-primary/40 ${selected?.id === b.id ? 'border-primary/50 shadow-sm' : 'border-cream-dark'}`}
               >
-                <div className="flex items-start justify-between gap-2 mb-2">
-                  <p className="text-sm text-primary-dark font-medium line-clamp-2 flex-1">{b.message}</p>
+                <div className="flex items-start justify-between gap-2 mb-1">
+                  <p className="text-sm text-primary-dark font-semibold line-clamp-1 flex-1">{b.title || b.message}</p>
                   <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full flex-shrink-0 ${statusColors[b.status]}`}>
                     {b.status === 'SENDING' ? 'Sending…' : b.status.charAt(0) + b.status.slice(1).toLowerCase()}
                   </span>
                 </div>
+                {b.title && <p className="text-xs text-primary-warm line-clamp-1 mb-1">{b.message}</p>}
                 <div className="flex items-center gap-3 text-xs text-primary-warm mb-3">
                   <span>{b.totalRecipients} recipients</span>
                   {b.sentCount != null && <span>{b.sentCount} sent</span>}
@@ -433,13 +444,25 @@ export default function BroadcastsPage() {
             </div>
 
             <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
-              {/* Message */}
+              {/* Title */}
               <div>
-                <label className="block text-sm font-semibold text-primary-dark mb-1.5">Message</label>
+                <label className="block text-sm font-semibold text-primary-dark mb-1.5">Title</label>
+                <input
+                  type="text"
+                  className="w-full px-3 py-2.5 rounded-xl border border-cream-dark text-sm text-primary-dark placeholder:text-primary-warm/60 focus:outline-none focus:border-primary/50"
+                  placeholder="e.g. Summer Sale Announcement"
+                  value={title}
+                  onChange={e => setTitle(e.target.value)}
+                />
+              </div>
+
+              {/* Body */}
+              <div>
+                <label className="block text-sm font-semibold text-primary-dark mb-1.5">Message Body</label>
                 <textarea
                   rows={4}
                   className="w-full px-3 py-2.5 rounded-xl border border-cream-dark text-sm text-primary-dark placeholder:text-primary-warm/60 focus:outline-none focus:border-primary/50 resize-none"
-                  placeholder="Type your message… this becomes {{3}} in your WhatsApp template"
+                  placeholder="Type your message…"
                   value={message}
                   onChange={e => setMessage(e.target.value)}
                 />
@@ -448,18 +471,36 @@ export default function BroadcastsPage() {
 
               {/* Recipients */}
               <div>
-                <label className="block text-sm font-semibold text-primary-dark mb-1.5">Recipients</label>
-                <div className="flex gap-2 mb-3">
-                  {(['all', 'tags', 'specific'] as const).map(mode => (
+                <label className="block text-sm font-semibold text-primary-dark mb-1.5">Send To</label>
+                <div className="grid grid-cols-2 gap-2 mb-3">
+                  {([
+                    { key: 'phone', label: 'Contact number' },
+                    { key: 'all', label: 'All contacts' },
+                    { key: 'tags', label: 'By tag' },
+                    { key: 'specific', label: 'Select contacts' },
+                  ] as const).map(({ key, label }) => (
                     <button
-                      key={mode}
-                      onClick={() => setRecipientMode(mode)}
-                      className={`flex-1 py-2 rounded-xl text-sm font-medium border transition-colors ${recipientMode === mode ? 'bg-primary text-white border-primary' : 'border-cream-dark text-primary-warm hover:border-primary/40'}`}
+                      key={key}
+                      onClick={() => setRecipientMode(key)}
+                      className={`py-2 px-3 rounded-xl text-sm font-medium border transition-colors text-left ${recipientMode === key ? 'bg-primary text-white border-primary' : 'border-cream-dark text-primary-warm hover:border-primary/40'}`}
                     >
-                      {mode === 'all' ? 'All contacts' : mode === 'tags' ? 'By tag' : 'Specific'}
+                      {label}
                     </button>
                   ))}
                 </div>
+
+                {recipientMode === 'phone' && (
+                  <div>
+                    <textarea
+                      rows={3}
+                      className="w-full px-3 py-2.5 rounded-xl border border-cream-dark text-sm text-primary-dark placeholder:text-primary-warm/60 focus:outline-none focus:border-primary/50 resize-none font-mono"
+                      placeholder={"+2348120889843\n+2349035735555\nOne number per line"}
+                      value={phoneInput}
+                      onChange={e => setPhoneInput(e.target.value)}
+                    />
+                    <p className="text-xs text-primary-warm mt-1">Enter phone numbers with country code, one per line</p>
+                  </div>
+                )}
 
                 {recipientMode === 'tags' && (
                   <input

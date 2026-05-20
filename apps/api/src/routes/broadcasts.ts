@@ -59,42 +59,19 @@ broadcastsRouter.post('/', async (req, res, next) => {
     if (!bid) return res.status(401).json({ error: 'Unauthorized' });
 
     const data = z.object({
+      title: z.string().max(120).optional(),
       message: z.string().min(1).max(1000),
-      // target: send to all contacts, specific contactIds, or contacts with specific tags
       contactIds: z.array(z.string()).optional(),
       tags: z.array(z.string()).optional(),
+      phones: z.array(z.string()).optional(),
       all: z.boolean().optional(),
     }).parse(req.body);
 
-    if (!data.contactIds?.length && !data.tags?.length && !data.all) {
-      return res.status(400).json({ error: 'Specify contactIds, tags, or all: true' });
+    if (!data.contactIds?.length && !data.tags?.length && !data.all && !data.phones?.length) {
+      return res.status(400).json({ error: 'Specify contactIds, tags, phones, or all: true' });
     }
 
-    // Resolve recipient contacts
-    const conditions: any[] = [eq(contacts.businessId, bid)];
-    if (data.contactIds?.length) {
-      conditions.push(inArray(contacts.id, data.contactIds));
-    }
-    // tags filter: contacts whose tags array overlaps with requested tags
-    // (simple approach — filter in JS for now)
-    let targetContacts = await db.select({
-      id: contacts.id,
-      phone: contacts.phone,
-      name: contacts.name,
-      tags: contacts.tags,
-    }).from(contacts).where(and(...conditions)).limit(500);
-
-    if (data.tags?.length && !data.contactIds?.length) {
-      targetContacts = targetContacts.filter(c =>
-        c.tags?.some(t => data.tags!.includes(t))
-      );
-    }
-
-    if (!targetContacts.length) {
-      return res.status(400).json({ error: 'No matching contacts found' });
-    }
-
-    // Load business info for variables {{2}} and {{4}}
+    // Load business info
     const [biz] = await db.select({ name: businesses.name, contactPhone: businesses.contactPhone })
       .from(businesses).where(eq(businesses.id, bid)).limit(1);
     if (!biz) return res.status(404).json({ error: 'Business not found' });
@@ -102,25 +79,57 @@ broadcastsRouter.post('/', async (req, res, next) => {
     const businessName = biz.name;
     const businessPhone = biz.contactPhone ?? '';
 
+    // Resolve recipient contacts
+    let targetContacts: { id: string; phone: string; name: string | null; tags: string[] | null }[] = [];
+
+    if (data.contactIds?.length || data.tags?.length || data.all) {
+      const conditions: any[] = [eq(contacts.businessId, bid)];
+      if (data.contactIds?.length) conditions.push(inArray(contacts.id, data.contactIds));
+      let rows = await db.select({ id: contacts.id, phone: contacts.phone, name: contacts.name, tags: contacts.tags })
+        .from(contacts).where(and(...conditions)).limit(500);
+      if (data.tags?.length && !data.contactIds?.length) {
+        rows = rows.filter(c => c.tags?.some(t => data.tags!.includes(t)));
+      }
+      targetContacts = rows;
+    }
+
+    // Add direct phone numbers (not from contacts)
+    const directPhoneRecipients: { id: string; phone: string; name: string | null; tags: string[] | null }[] = [];
+    if (data.phones?.length) {
+      for (const ph of data.phones) {
+        const normalized = ph.trim();
+        if (normalized && !targetContacts.find(c => c.phone === normalized)) {
+          directPhoneRecipients.push({ id: `direct:${normalized}`, phone: normalized, name: null, tags: null });
+        }
+      }
+    }
+
+    const allRecipients = [...targetContacts, ...directPhoneRecipients];
+    if (!allRecipients.length) {
+      return res.status(400).json({ error: 'No matching recipients found' });
+    }
+
     // Create broadcast record
     const [broadcast] = await db.insert(messageBroadcasts).values({
       businessId: bid,
+      title: data.title ?? null,
       message: data.message,
       recipientFilter: {
         all: data.all,
         contactIds: data.contactIds,
         tags: data.tags,
+        phones: data.phones,
       },
-      totalRecipients: targetContacts.length,
+      totalRecipients: allRecipients.length,
       status: 'SENDING',
       startedAt: new Date(),
     }).returning();
 
     // Insert recipient rows (PENDING)
     await db.insert(broadcastRecipients).values(
-      targetContacts.map(c => ({
+      allRecipients.map(c => ({
         broadcastId: broadcast.id,
-        contactId: c.id,
+        contactId: c.id.startsWith('direct:') ? null : c.id,
         phone: c.phone,
         status: 'PENDING',
       }))
@@ -129,12 +138,12 @@ broadcastsRouter.post('/', async (req, res, next) => {
     // Respond immediately — send in background
     res.status(202).json({
       id: broadcast.id,
-      totalRecipients: targetContacts.length,
+      totalRecipients: allRecipients.length,
       status: 'SENDING',
     });
 
     // Send messages in background (fire and forget with rate limiting)
-    sendBroadcastInBackground(broadcast.id, targetContacts, businessName, data.message, businessPhone)
+    sendBroadcastInBackground(broadcast.id, allRecipients, businessName, data.message, businessPhone)
       .catch(err => logger.error({ err, broadcastId: broadcast.id }, 'Broadcast background sender crashed'));
 
   } catch (err) { next(err); }
