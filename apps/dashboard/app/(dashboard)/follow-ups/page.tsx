@@ -166,7 +166,7 @@ export default function FollowUpsPage() {
 
   if (planReady && !features.crm) {
     return (
-      <div className="p-6 lg:p-8 h-full flex flex-col">
+      <div className="p-4 sm:p-6 lg:p-8 h-full flex flex-col">
         <h1 className="font-heading font-bold text-2xl text-primary-dark mb-1">Follow-ups</h1>
         <p className="text-sm text-primary-warm mb-6">Sales & customer follow-up tasks</p>
         <UpgradeWall
@@ -184,34 +184,34 @@ export default function FollowUpsPage() {
   }
 
   return (
-    <div className="h-full flex flex-col">
+    <div className="h-full flex flex-col p-4 sm:p-6 lg:p-8">
       {/* Header */}
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-2xl font-bold font-display text-primary-dark">Follow-ups</h1>
+      <div className="flex items-center justify-between gap-3 mb-5">
+        <div className="min-w-0">
+          <h1 className="text-xl sm:text-2xl font-bold font-display text-primary-dark">Follow-ups</h1>
           <p className="text-sm text-primary-warm mt-0.5">
             {pending.length} pending{overdue.length > 0 ? `, ${overdue.length} overdue` : ''}
           </p>
         </div>
         <button
           onClick={openCreate}
-          className="flex items-center gap-2 px-4 py-2 rounded-xl bg-primary text-cream-light text-sm font-medium hover:bg-primary/90 transition-colors"
+          className="flex items-center gap-2 px-3 sm:px-4 py-2 rounded-xl bg-primary text-cream-light text-sm font-medium hover:bg-primary/90 transition-colors flex-shrink-0"
         >
           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
           </svg>
-          New follow-up
+          <span className="hidden sm:inline">New follow-up</span>
         </button>
       </div>
 
       {/* Status tabs */}
-      <div className="flex gap-2 mb-5">
+      <div className="flex gap-2 mb-5 overflow-x-auto pb-1 -mx-1 px-1 flex-shrink-0">
         {(['PENDING', 'COMPLETED', 'CANCELLED', ''] as const).map(s => (
           <button
             key={s}
             onClick={() => setStatusFilter(s)}
             className={clsx(
-              'px-4 py-2 rounded-xl text-sm font-medium transition-colors',
+              'px-3 sm:px-4 py-2 rounded-xl text-sm font-medium transition-colors whitespace-nowrap',
               statusFilter === s
                 ? 'bg-primary text-cream-light'
                 : 'bg-white border border-cream-dark text-primary-warm hover:bg-cream-light'
@@ -375,10 +375,10 @@ function FuCard({ fu, contact, onEdit, onDelete, onStatus }: {
 
       {fu.status === 'PENDING' && (
         <div className="flex gap-2 pt-1 border-t border-cream-dark">
-          <button onClick={() => onStatus(fu.id, 'COMPLETED')} className="flex-1 text-[11px] py-1.5 rounded-lg bg-success/10 text-success hover:bg-success/20 transition-colors font-medium">
+          <button onClick={() => onStatus(fu.id, 'COMPLETED')} className="flex-1 text-xs py-1.5 rounded-lg bg-success/10 text-success hover:bg-success/20 transition-colors font-medium">
             Mark done
           </button>
-          <button onClick={() => onStatus(fu.id, 'CANCELLED')} className="flex-1 text-[11px] py-1.5 rounded-lg bg-cream-light text-primary-warm/70 hover:bg-cream-dark transition-colors">
+          <button onClick={() => onStatus(fu.id, 'CANCELLED')} className="flex-1 text-xs py-1.5 rounded-lg bg-cream-light text-primary-warm/70 hover:bg-cream-dark transition-colors">
             Cancel
           </button>
         </div>
