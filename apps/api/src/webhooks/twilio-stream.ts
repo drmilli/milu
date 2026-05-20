@@ -687,7 +687,8 @@ export function handleTwilioVoiceStream(ws: WebSocket, req: IncomingMessage) {
       const speechFinal: boolean = data.speech_final ?? false;
 
       // Barge-in: interrupt agent speech when caller starts talking
-      if (text && agentSpeaking) {
+      // Don't interrupt during the greeting — let it play fully
+      if (text && agentSpeaking && !greetingInProgress) {
         ttsAbortController?.abort();
         clearAudio();
         agentSpeaking = false;
