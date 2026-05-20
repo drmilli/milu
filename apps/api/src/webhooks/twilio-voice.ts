@@ -9,7 +9,13 @@ import { voiceChat, type ChatMessage } from '../services/document-extract';
 import { sendEscalationAlert } from '../services/whatsapp';
 import { notifyBusinessOwners } from '../services/notifications';
 import { redis, ttsStoreSet } from '../utils/redis';
-import { getElevenLabsVoiceId } from '../config/voices';
+import { getElevenLabsVoiceId, ELEVENLABS_VOICES, DEFAULT_VOICE } from '../config/voices';
+
+function resolveElevenLabsVoice(voiceId: string | null | undefined, clonedVoiceId: string | null | undefined): string | null {
+  if (!env.ELEVENLABS_API_KEY) return null;
+  if (clonedVoiceId) return clonedVoiceId;
+  return getElevenLabsVoiceId(voiceId) ?? ELEVENLABS_VOICES[DEFAULT_VOICE] ?? '6aDn1KB0hjpdcocrUkmq';
+}
 
 function twiml(body: string) {
   return `<?xml version="1.0" encoding="UTF-8"?><Response>${body}</Response>`;
@@ -288,8 +294,8 @@ async function elevenLabsTtsUrl(text: string, voiceId: string, baseUrl: string):
       headers: { 'xi-api-key': env.ELEVENLABS_API_KEY, 'Content-Type': 'application/json' },
       body: JSON.stringify({
         text,
-        model_id: 'eleven_turbo_v2_5',
-        voice_settings: { stability: 0.5, similarity_boost: 0.75 },
+        model_id: 'eleven_flash_v2_5',
+        voice_settings: { stability: 0.35, similarity_boost: 0.8, style: 0.2, use_speaker_boost: true },
       }),
       signal: AbortSignal.timeout(8000),
     },
@@ -308,8 +314,8 @@ async function elevenLabsTtsUrl(text: string, voiceId: string, baseUrl: string):
 }
 
 async function ttsUrl(text: string, voiceId: string | null | undefined, clonedVoiceId: string | null | undefined, baseUrl: string): Promise<string | null> {
-  const elevenLabsId = clonedVoiceId ?? getElevenLabsVoiceId(voiceId);
-  if (elevenLabsId && env.ELEVENLABS_API_KEY) {
+  const elevenLabsId = resolveElevenLabsVoice(voiceId, clonedVoiceId);
+  if (elevenLabsId) {
     return elevenLabsTtsUrl(text, elevenLabsId, baseUrl);
   }
 
@@ -366,8 +372,8 @@ async function speakTag(
   const trimmed = text.trim();
   const short = trimmed.length > 700 ? trimmed.slice(0, 700) : trimmed;
 
-  const elevenLabsId = clonedVoiceId ?? getElevenLabsVoiceId(voiceId);
-  const canTts = !!(elevenLabsId ? env.ELEVENLABS_API_KEY : env.OPENAI_API_KEY);
+  const elevenLabsId = resolveElevenLabsVoice(voiceId, clonedVoiceId);
+  const canTts = !!(elevenLabsId || env.OPENAI_API_KEY);
   if (!canTts) return sayTag(short, language);
 
   const url = await Promise.race<string | null>([
