@@ -236,35 +236,41 @@ export default function Sidebar({ mobileOpen, onMobileClose, collapsed }: Sideba
       {/* Logo + business switcher */}
       <div className={clsx(
         'border-b border-white/10 flex-shrink-0',
-        collapsed ? 'px-0 py-4 flex flex-col items-center' : 'px-5 py-4'
+        collapsed ? 'px-0 py-4 flex flex-col items-center gap-3' : 'px-5 py-4'
       )}>
-        {collapsed ? (
-          <img src="/brand/icon-mark.svg" alt="milu." className="h-7 w-7" />
-        ) : (
-          <>
-            <img src="/brand/wordmark.svg" alt="milu." className="h-6 w-auto mb-1" />
-            {ready && (
-              <div className="relative mt-2" ref={bizMenuRef}>
-                <button
-                  onClick={() => user?.role === 'OWNER' && businesses.length > 0 && setBizMenuOpen(v => !v)}
-                  className={clsx(
-                    'flex items-center gap-2 w-full text-left',
-                    user?.role === 'OWNER' && businesses.length > 0 && 'cursor-pointer hover:opacity-80'
-                  )}
-                >
-                  <div className="w-5 h-5 rounded bg-primary/30 flex items-center justify-center flex-shrink-0">
-                    <span className="text-[10px] font-bold text-cream-light">{bizInitial}</span>
-                  </div>
+        <img
+          src={collapsed ? '/brand/icon-mark.svg' : '/brand/wordmark.svg'}
+          alt="milu."
+          className={collapsed ? 'h-7 w-7' : 'h-6 w-auto mb-1'}
+        />
+        {ready && (
+          <div className="relative w-full" ref={bizMenuRef}>
+            <button
+              onClick={() => user?.role === 'OWNER' && setBizMenuOpen(v => !v)}
+              title={collapsed ? displayedBizName : undefined}
+              className={clsx(
+                'flex items-center gap-2 w-full text-left transition-opacity',
+                collapsed ? 'justify-center' : '',
+                user?.role === 'OWNER' ? 'cursor-pointer hover:opacity-80' : 'cursor-default'
+              )}
+            >
+              <div className="w-5 h-5 rounded bg-primary/30 flex items-center justify-center flex-shrink-0">
+                <span className="text-[10px] font-bold text-cream-light">{bizInitial}</span>
+              </div>
+              {!collapsed && (
+                <>
                   <span className="text-xs text-cream/60 truncate flex-1">{displayedBizName}</span>
-                  {user?.role === 'OWNER' && businesses.length > 0 && (
+                  {user?.role === 'OWNER' && (
                     <svg className="w-3 h-3 text-cream/40 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                       <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
                     </svg>
                   )}
+                </>
+              )}
                 </button>
 
                 {bizMenuOpen && (
-                  <div className="absolute left-0 top-full mt-1 w-52 bg-[#2A1A0E] border border-white/10 rounded-xl shadow-xl z-50 py-1 overflow-hidden">
+                  <div className={clsx('absolute left-0 top-full mt-1 w-52 bg-[#2A1A0E] border border-white/10 rounded-xl shadow-xl z-50 py-1 overflow-hidden', collapsed && 'left-full ml-2 top-0')}>
                     {businesses.map(biz => (
                       <button
                         key={biz.id}
@@ -330,9 +336,7 @@ export default function Sidebar({ mobileOpen, onMobileClose, collapsed }: Sideba
                 )}
               </div>
             )}
-          </>
-        )}
-      </div>
+          </div>
 
       {/* Nav */}
       <nav className={clsx('flex-1 py-3 overflow-y-auto space-y-0.5', collapsed ? 'px-2' : 'px-3')}>
