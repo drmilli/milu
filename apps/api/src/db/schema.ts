@@ -1,4 +1,4 @@
-import { pgTable, text, timestamp, integer, jsonb, pgEnum, boolean } from 'drizzle-orm/pg-core';
+import { pgTable, text, timestamp, integer, jsonb, pgEnum, boolean, real } from 'drizzle-orm/pg-core';
 import { relations } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 
@@ -194,6 +194,7 @@ export const calls = pgTable('calls', {
   intent: intentEnum('intent'),
   duration: integer('duration'),
   recordingUrl: text('recording_url'),
+  topEmotion: text('top_emotion'),
   startedAt: timestamp('started_at', { withTimezone: true }).defaultNow().notNull(),
   endedAt: timestamp('ended_at', { withTimezone: true }),
 });
@@ -204,6 +205,8 @@ export const transcripts = pgTable('transcripts', {
   speaker: text('speaker').notNull(),
   text: text('text').notNull(),
   intent: intentEnum('intent'),
+  emotion: text('emotion'),
+  emotionScore: real('emotion_score').default(0),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 });
 

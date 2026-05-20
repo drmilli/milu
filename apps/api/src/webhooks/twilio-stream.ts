@@ -12,6 +12,7 @@ import { logger } from '../config/logger';
 import { getElevenLabsVoiceId, ELEVENLABS_VOICES, DEFAULT_VOICE } from '../config/voices';
 import { notifyBusinessOwners } from '../services/notifications';
 import { sendEscalationAlert, sendWhatsAppNotification } from '../services/whatsapp';
+import { HumeStream } from '../services/hume';
 import twilio from 'twilio';
 
 // ─── ElevenLabs voice mapping ──────────────────────────────────────────────────
@@ -294,6 +295,11 @@ export function handleTwilioVoiceStream(ws: WebSocket, req: IncomingMessage) {
   let llmRunning = false;
   let pendingCallerSpeech: string | null = null;
 
+  // Hume emotion detection
+  let humeStream: HumeStream | null = null;
+  let currentEmotionNote = '';        // injected into LLM system prompt when caller shows strong emotion
+  let pendingTextTranscriptId: string | undefined; // last caller transcript awaiting Hume text emotion
+
   // ── Send helpers ────────────────────────────────────────────────────────────
 
   function toTwilio(obj: object) {
@@ -561,7 +567,7 @@ export function handleTwilioVoiceStream(ws: WebSocket, req: IncomingMessage) {
         headers: { Authorization: `Bearer ${env.OPENAI_API_KEY}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
           model: 'gpt-4o',
-          messages: [{ role: 'system', content: systemInstructions }, ...conversationHistory],
+          messages: [{ role: 'system', content: currentEmotionNote + systemInstructions }, ...conversationHistory],
           tools,
           tool_choice: 'auto',
           temperature: 0.6,
@@ -776,7 +782,20 @@ export function handleTwilioVoiceStream(ws: WebSocket, req: IncomingMessage) {
 
     llmRunning = true;
     logger.info({ callId, text: text.slice(0, 200) }, 'Caller speech final');
-    db.insert(transcripts).values({ callId, speaker: 'caller', text }).catch(() => null);
+
+    // Insert transcript and (fire-and-forget) update it with Hume text emotion
+    const transcriptId = await db.insert(transcripts)
+      .values({ callId, speaker: 'caller', text })
+      .returning({ id: transcripts.id })
+      .then(r => r[0]?.id)
+      .catch(() => undefined);
+
+    if (transcriptId && humeStream) {
+      humeStream.sendText(text); // Hume callback will update this row when result arrives
+      // Store the pending transcript ID so the callback can update it
+      pendingTextTranscriptId = transcriptId;
+    }
+
     try {
       const reply = await streamLLMAndTTS(text);
       if (reply) await db.insert(transcripts).values({ callId, speaker: 'agent', text: reply }).catch(() => null);
@@ -805,12 +824,12 @@ export function handleTwilioVoiceStream(ws: WebSocket, req: IncomingMessage) {
 
     const dgClient = createClient(env.DEEPGRAM_API_KEY);
     const conn = dgClient.listen.live({
-      model: 'nova-2-phonecall', // optimised for 8kHz phone audio
-      language: 'en',            // better accuracy than 'multi' for English/Pidgin
+      model: 'nova-2',
+      language: 'en',
       smart_format: true,
       interim_results: true,
-      endpointing: 100,
-      utterance_end_ms: 500,
+      endpointing: 300,       // 300ms silence threshold — prevents mid-sentence splits
+      utterance_end_ms: 1000,
       encoding: 'mulaw',
       sample_rate: 8000,
     });
@@ -838,12 +857,17 @@ export function handleTwilioVoiceStream(ws: WebSocket, req: IncomingMessage) {
         agentSpeaking = false;
       }
 
-      if (isFinal && speechFinal && text.trim()) {
+      if (isFinal && speechFinal) {
+        logger.info({ callId, text: text.slice(0, 200), len: text.trim().length }, 'Deepgram speech_final');
+      }
+      // Require at least 2 chars — filters out single-char noise detections
+      if (isFinal && speechFinal && text.trim().length >= 2) {
+        const trimmed = text.trim();
         if (greetingInProgress) {
           // Greeting is still playing — queue the speech, don't fire LLM yet
-          queuedCallerSpeech = text.trim();
+          queuedCallerSpeech = trimmed;
         } else {
-          handleCallerSpeech(text.trim()).catch(err =>
+          handleCallerSpeech(trimmed).catch(err =>
             logger.error({ err, callId }, 'handleCallerSpeech error'),
           );
         }
@@ -943,6 +967,37 @@ export function handleTwilioVoiceStream(ws: WebSocket, req: IncomingMessage) {
 
             logger.info({ callId, agentVoiceId, ops, canEscalate }, 'Call context loaded — connecting to Deepgram');
             connectToDeepgram();
+
+            // Start Hume emotion detection for this call
+            if (env.HUME_API_KEY) {
+              humeStream = new HumeStream(env.HUME_API_KEY, (emotions, source) => {
+                const top = emotions[0];
+                if (!top) return;
+                logger.info({ callId, emotion: top.name, score: +(top.score.toFixed(3)), source }, 'Hume emotion');
+
+                // Update the call's top emotion
+                db.update(calls).set({ topEmotion: top.name }).where(eq(calls.id, callId)).catch(() => null);
+
+                // For language (text) emotions, update the pending transcript row
+                if (source === 'language' && pendingTextTranscriptId) {
+                  const tid = pendingTextTranscriptId;
+                  pendingTextTranscriptId = undefined;
+                  db.update(transcripts)
+                    .set({ emotion: top.name, emotionScore: top.score })
+                    .where(eq(transcripts.id, tid))
+                    .catch(() => null);
+                }
+
+                // Inject emotion context into LLM when caller shows strong negative emotion
+                const negative = ['Anger', 'Anxiety', 'Distress', 'Fear', 'Frustration', 'Confusion', 'Contempt'];
+                if (negative.includes(top.name) && top.score > 0.3) {
+                  currentEmotionNote = `[Caller emotional state: ${top.name} — be extra empathetic, patient and helpful]\n`;
+                } else if (top.score > 0.5) {
+                  currentEmotionNote = ''; // positive/neutral — clear the note
+                }
+              });
+            }
+
             sendGreeting().catch(err => logger.error({ err, callId }, 'Greeting error'));
           })
           .catch(err => {
@@ -962,12 +1017,16 @@ export function handleTwilioVoiceStream(ws: WebSocket, req: IncomingMessage) {
           const ab = chunk.buffer.slice(chunk.byteOffset, chunk.byteOffset + chunk.byteLength) as ArrayBuffer;
           dgConnection?.send(ab);
         }
+        // Forward raw audio to Hume for voice emotion (prosody) analysis
+        humeStream?.sendAudio(chunk);
         break;
       }
 
       case 'stop': {
         logger.info({ streamSid, callId }, 'Twilio stream stopped');
         dgConnection?.finish();
+        humeStream?.close();
+        humeStream = null;
         if (callId) {
           const [updatedCall] = await db.update(calls)
             .set({ status: 'COMPLETED', resolution: 'AI', endedAt: new Date() })
@@ -985,11 +1044,13 @@ export function handleTwilioVoiceStream(ws: WebSocket, req: IncomingMessage) {
 
   ws.on('close', () => {
     dgConnection?.finish();
+    humeStream?.close();
     logger.info({ streamSid, callId }, 'Twilio WebSocket closed');
   });
 
   ws.on('error', err => {
     logger.error({ err, streamSid }, 'Twilio WebSocket error');
     dgConnection?.finish();
+    humeStream?.close();
   });
 }

@@ -20,6 +20,7 @@ const envSchema = z.object({
   TWILIO_WHATSAPP_MISSED_CALL_CONTENT_SID: z.string().optional(),
   TWILIO_WHATSAPP_WEEKLY_SUMMARY_CONTENT_SID: z.string().optional(),
   TWILIO_WHATSAPP_BROADCAST_CONTENT_SID: z.string().optional(),
+  HUME_API_KEY: z.string().min(1).optional(),
   DEEPGRAM_API_KEY: z.string().min(1).optional(),
   ANTHROPIC_API_KEY: z.string().min(1).optional(),
   OPENAI_API_KEY: z.string().min(1).optional(),
