@@ -407,13 +407,28 @@ export function handleTwilioVoiceStream(ws: WebSocket, req: IncomingMessage) {
     return JSON.stringify({ success: false, error: 'Unknown function' });
   }
 
-  // ── Call LLM (OpenAI Chat API with function calling) ──────────────────────
+  // ── Sentence splitter (for streaming TTS) ────────────────────────────────
+
+  function takeSentences(buf: string): [sentences: string[], remainder: string] {
+    const sentences: string[] = [];
+    let rest = buf;
+    // Match text ending in .!? followed by whitespace (next sentence starts) or end of string
+    while (rest.length) {
+      const m = rest.match(/^(.*?[.!?])(\s+|$)/s);
+      if (!m) break;
+      const s = m[1].trim();
+      if (s.length >= 4) sentences.push(s);
+      rest = rest.slice(m[1].length + m[2].length);
+    }
+    return [sentences, rest];
+  }
+
+  // ── LLM streaming with sentence-level TTS ────────────────────────────────
 
   let callEnded = false;
 
-  async function callLLM(userText: string): Promise<string> {
-    if (!env.OPENAI_API_KEY) return "I'm sorry, I'm having trouble responding right now.";
-    if (callEnded) return '';
+  async function streamLLMAndTTS(userText: string): Promise<string> {
+    if (!env.OPENAI_API_KEY || callEnded) return '';
 
     conversationHistory.push({ role: 'user', content: userText });
     const tools = buildChatTools(ops, canEscalate);
@@ -423,66 +438,115 @@ export function handleTwilioVoiceStream(ws: WebSocket, req: IncomingMessage) {
 
       const res = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
-        headers: {
-          Authorization: `Bearer ${env.OPENAI_API_KEY}`,
-          'Content-Type': 'application/json',
-        },
+        headers: { Authorization: `Bearer ${env.OPENAI_API_KEY}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
           model: 'gpt-4o-mini',
-          messages: [
-            { role: 'system', content: systemInstructions },
-            ...conversationHistory,
-          ],
+          messages: [{ role: 'system', content: systemInstructions }, ...conversationHistory],
           tools,
           tool_choice: 'auto',
           temperature: 0.6,
           max_tokens: 200,
+          stream: true,
         }),
-        signal: AbortSignal.timeout(12000),
+        signal: AbortSignal.timeout(15000),
       });
 
-      if (!res.ok) {
+      if (!res.ok || !res.body) {
         const err = await res.text().catch(() => '');
-        logger.warn({ status: res.status, err: err.slice(0, 200) }, 'OpenAI Chat API error');
-        return "I'm having trouble responding right now. Please try again.";
+        logger.warn({ status: res.status, err: err.slice(0, 200) }, 'OpenAI stream error');
+        const sorry = "I'm having trouble responding right now.";
+        await streamTTS(sorry);
+        return sorry;
       }
 
-      const data = await res.json() as any;
-      const message = data.choices?.[0]?.message;
-      if (!message) break;
+      // Accumulate streaming response
+      const reader = res.body.getReader();
+      const dec = new TextDecoder();
+      type TcAccum = { id: string; name: string; args: string };
+      const tcMap = new Map<number, TcAccum>();
+      let textBuf = '';
+      let fullText = '';
+      let finishReason = '';
 
-      if (message.tool_calls?.length) {
-        // Push assistant message with tool_calls exactly as returned by API
-        conversationHistory.push(message);
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          for (const line of dec.decode(value, { stream: true }).split('\n')) {
+            if (!line.startsWith('data: ')) continue;
+            const raw = line.slice(6).trim();
+            if (raw === '[DONE]') break;
+            let chunk: any;
+            try { chunk = JSON.parse(raw); } catch { continue; }
+            const choice = chunk.choices?.[0];
+            if (!choice) continue;
+            if (choice.finish_reason) finishReason = choice.finish_reason;
+            const delta = choice.delta ?? {};
 
-        for (const tc of message.tool_calls) {
+            // Stream text → sentence-level TTS
+            if (delta.content) {
+              textBuf += delta.content;
+              fullText += delta.content;
+              const [ready, rest] = takeSentences(textBuf);
+              textBuf = rest;
+              for (const s of ready) {
+                if (!callEnded) await streamTTS(s);
+              }
+            }
+
+            // Accumulate tool calls
+            if (delta.tool_calls) {
+              for (const tc of delta.tool_calls as any[]) {
+                if (!tcMap.has(tc.index)) tcMap.set(tc.index, { id: '', name: '', args: '' });
+                const acc = tcMap.get(tc.index)!;
+                if (tc.id) acc.id = tc.id;
+                if (tc.function?.name) acc.name = tc.function.name;
+                if (tc.function?.arguments) acc.args += tc.function.arguments;
+              }
+            }
+          }
+        }
+      } finally {
+        reader.releaseLock();
+      }
+
+      // Flush any remaining partial sentence
+      if (textBuf.trim() && !callEnded) {
+        fullText += textBuf;
+        await streamTTS(textBuf.trim());
+      }
+
+      if (finishReason === 'tool_calls' && tcMap.size > 0) {
+        const tcs = Array.from(tcMap.values());
+        conversationHistory.push({
+          role: 'assistant',
+          content: fullText || null,
+          tool_calls: tcs.map(tc => ({ id: tc.id, type: 'function', function: { name: tc.name, arguments: tc.args } })),
+        } as any);
+
+        for (const tc of tcs) {
           let fnArgs: Record<string, any> = {};
-          try { fnArgs = JSON.parse(tc.function.arguments ?? '{}'); } catch { /* ignore */ }
-          logger.info({ callId, fnName: tc.function.name }, 'Function call');
-
-          const result = await executeFn(tc.function.name, fnArgs).catch(err => {
-            logger.error({ err, fnName: tc.function.name }, 'Function execution error');
+          try { fnArgs = JSON.parse(tc.args || '{}'); } catch { /* ignore */ }
+          logger.info({ callId, fnName: tc.name }, 'Function call');
+          const result = await executeFn(tc.name, fnArgs).catch(err => {
+            logger.error({ err, fnName: tc.name }, 'Function execution error');
             return JSON.stringify({ success: false });
           });
-
-          // Include tool_call_id so OpenAI knows which call this result belongs to
           conversationHistory.push({ role: 'tool', tool_call_id: tc.id, content: result } as any);
-
-          // If end_call or escalate was triggered, stop processing
-          if (tc.function.name === 'end_call' || tc.function.name === 'escalate_to_human') {
+          if (tc.name === 'end_call' || tc.name === 'escalate_to_human') {
             callEnded = true;
             return '';
           }
         }
-        continue;
+        continue; // Loop to get the text reply after tool execution
       }
 
-      const text = (message.content ?? '').trim();
-      if (text) conversationHistory.push({ role: 'assistant', content: text });
-      return text;
+      const reply = fullText.trim();
+      if (reply) conversationHistory.push({ role: 'assistant', content: reply });
+      return reply;
     }
 
-    return "I'm sorry, I couldn't process that. Please try again.";
+    return '';
   }
 
   // ── Stream TTS → Twilio (ElevenLabs primary, OpenAI fallback) ───────────────
@@ -502,7 +566,7 @@ export function handleTwilioVoiceStream(ws: WebSocket, req: IncomingMessage) {
           headers: { 'xi-api-key': env.ELEVENLABS_API_KEY, 'Content-Type': 'application/json' },
           body: JSON.stringify({
             text,
-            model_id: 'eleven_turbo_v2_5',
+            model_id: 'eleven_flash_v2_5',
             voice_settings: {
               stability: 0.35,
               similarity_boost: 0.8,
@@ -560,15 +624,10 @@ export function handleTwilioVoiceStream(ws: WebSocket, req: IncomingMessage) {
   async function handleCallerSpeech(text: string) {
     if (!ctx) return;
     logger.info({ callId, text: text.slice(0, 200) }, 'Caller speech final');
-
     await db.insert(transcripts).values({ callId, speaker: 'caller', text }).catch(() => null);
-
     try {
-      const reply = await callLLM(text);
-      if (!reply) return;
-
-      await db.insert(transcripts).values({ callId, speaker: 'agent', text: reply }).catch(() => null);
-      await streamTTS(reply);
+      const reply = await streamLLMAndTTS(text);
+      if (reply) await db.insert(transcripts).values({ callId, speaker: 'agent', text: reply }).catch(() => null);
     } catch (err) {
       logger.error({ err, callId }, 'Error handling caller speech');
     }
@@ -589,7 +648,7 @@ export function handleTwilioVoiceStream(ws: WebSocket, req: IncomingMessage) {
       language: 'multi',
       smart_format: true,
       interim_results: true,
-      endpointing: 300,
+      endpointing: 200,
       utterance_end_ms: 1000,
       encoding: 'mulaw',
       sample_rate: 8000,
