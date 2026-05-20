@@ -705,15 +705,15 @@ export function handleTwilioVoiceStream(ws: WebSocket, req: IncomingMessage) {
       const bizName = bizRow?.name ?? '';
       const agentName = agentRow?.name ?? '';
 
+      const isReturning = ctx.previousSnippets.length > 0;
+
       let greeting: string;
       if (agentRow?.greeting?.trim()) {
-        // Use the exact greeting script the user configured in the dashboard
         greeting = agentRow.greeting.trim();
-        // Simple substitution for placeholders if any
         if (callerName) greeting = greeting.replace(/\{name\}/gi, callerName);
         greeting = greeting.replace(/\{business\}/gi, bizName).replace(/\{agent\}/gi, agentName);
-      } else if (callerName) {
-        greeting = `Welcome back, ${callerName}! How can I help you today?`;
+      } else if (isReturning) {
+        greeting = 'Welcome back! How may I help you today?';
       } else {
         greeting = `Hello! Thank you for calling ${bizName || 'us'}. How can I help you today?`;
       }
