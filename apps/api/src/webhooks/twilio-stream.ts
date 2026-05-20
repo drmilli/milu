@@ -141,6 +141,7 @@ function buildInstructions(ctx: CallContext): string {
     kbRow?.escalationNumber
       ? `ESCALATION: If you cannot help or the customer requests a human agent, call the escalate_to_human function.`
       : `If you cannot help, let the customer know the team will follow up.`,
+    `CALLER NAME: If you mispronounce the caller's name and they correct you, or if they give you their name for the first time, immediately call update_caller_name with the correct name and then use it from that point on.`,
     `END CALL: When the conversation is naturally complete and the customer is satisfied, call the end_call function. Do not just say goodbye — call the function.`,
   ].filter(Boolean).join('\n');
 }
@@ -217,6 +218,19 @@ function buildChatTools(ops: boolean, canEscalate: boolean) {
       },
     });
   }
+
+  tools.push({
+    type: 'function',
+    function: {
+      name: 'update_caller_name',
+      description: 'Update the caller\'s name when they correct you or provide their name for the first time.',
+      parameters: {
+        type: 'object',
+        properties: { name: { type: 'string', description: 'The correct name as the caller stated it' } },
+        required: ['name'],
+      },
+    },
+  });
 
   tools.push({
     type: 'function',
@@ -416,6 +430,32 @@ export function handleTwilioVoiceStream(ws: WebSocket, req: IncomingMessage) {
       return JSON.stringify({ success: true });
     }
 
+    if (name === 'update_caller_name') {
+      const newName = (args.name ?? '').trim();
+      if (!newName) return JSON.stringify({ success: false, error: 'Name is empty' });
+
+      // Update the calls row so post-call records reflect the corrected name
+      await db.update(calls).set({ callerName: newName }).where(eq(calls.id, callId)).catch(() => null);
+
+      // Also update the linked contact if one exists
+      if (callRow.contactId) {
+        await db.update(contacts).set({ name: newName, updatedAt: new Date() })
+          .where(eq(contacts.id, callRow.contactId)).catch(() => null);
+      }
+
+      // Patch the live system instructions so subsequent LLM turns use the correct name
+      systemInstructions = systemInstructions.replace(
+        /Caller's name: .+?\./,
+        `Caller's name: ${newName}.`,
+      );
+      if (!systemInstructions.includes(`Caller's name:`)) {
+        systemInstructions = `Caller's name: ${newName}.\n` + systemInstructions;
+      }
+
+      logger.info({ callId, newName }, 'Caller name updated');
+      return JSON.stringify({ success: true });
+    }
+
     if (name === 'end_call') {
       await db.update(calls).set({ status: 'COMPLETED', resolution: 'AI', endedAt: new Date() })
         .where(eq(calls.id, callId)).catch(() => null);
@@ -474,11 +514,12 @@ export function handleTwilioVoiceStream(ws: WebSocket, req: IncomingMessage) {
           elWs!.send(JSON.stringify({
             text: ' ',
             voice_settings: { stability: 0.35, similarity_boost: 0.8, style: 0.2, use_speaker_boost: true },
-            generation_config: { chunk_length_schedule: [120] },
+            // Low threshold so audio starts on the first ~10 words, not after 120 chars
+            generation_config: { chunk_length_schedule: [50] },
           }));
           // Flush any tokens that arrived before WS opened
           for (const t of pendingText) {
-            elWs!.send(JSON.stringify({ text: t }));
+            elWs!.send(JSON.stringify({ text: t, try_trigger_generation: true }));
             elTextSent = true;
           }
           pendingText.length = 0;
@@ -488,7 +529,12 @@ export function handleTwilioVoiceStream(ws: WebSocket, req: IncomingMessage) {
           if (myAbort.signal.aborted) { elWs!.close(); return; }
           try {
             const msg = JSON.parse(data.toString());
-            if (msg.audio) sendAudio(msg.audio);
+            if (msg.audio) {
+              // Mark as speaking only once audio actually arrives — prevents false
+              // barge-in abort during the OpenAI "thinking" phase
+              agentSpeaking = true;
+              sendAudio(msg.audio);
+            }
             if (msg.isFinal) { elAudioFinished = true; elDoneResolve(); }
           } catch { /* ignore */ }
         });
@@ -504,7 +550,7 @@ export function handleTwilioVoiceStream(ws: WebSocket, req: IncomingMessage) {
           if (!elAudioFinished) elDoneResolve();
         });
 
-        agentSpeaking = true;
+        // Do NOT set agentSpeaking=true here — wait for actual audio to arrive
       } else {
         elDoneResolve(); // nothing to wait for
       }
@@ -514,7 +560,7 @@ export function handleTwilioVoiceStream(ws: WebSocket, req: IncomingMessage) {
         method: 'POST',
         headers: { Authorization: `Bearer ${env.OPENAI_API_KEY}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          model: 'gpt-4o-mini',
+          model: 'gpt-4o',
           messages: [{ role: 'system', content: systemInstructions }, ...conversationHistory],
           tools,
           tool_choice: 'auto',
@@ -562,7 +608,7 @@ export function handleTwilioVoiceStream(ws: WebSocket, req: IncomingMessage) {
               fullText += delta.content;
               if (elWs) {
                 if (elState.v === 'open') {
-                  elWs.send(JSON.stringify({ text: delta.content }));
+                  elWs.send(JSON.stringify({ text: delta.content, try_trigger_generation: true }));
                   elTextSent = true;
                 } else if (elState.v === 'connecting') {
                   pendingText.push(delta.content);
@@ -759,8 +805,8 @@ export function handleTwilioVoiceStream(ws: WebSocket, req: IncomingMessage) {
 
     const dgClient = createClient(env.DEEPGRAM_API_KEY);
     const conn = dgClient.listen.live({
-      model: 'nova-2',
-      language: 'multi',
+      model: 'nova-2-phonecall', // optimised for 8kHz phone audio
+      language: 'en',            // better accuracy than 'multi' for English/Pidgin
       smart_format: true,
       interim_results: true,
       endpointing: 100,
