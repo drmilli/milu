@@ -273,6 +273,9 @@ export function handleTwilioVoiceStream(ws: WebSocket, req: IncomingMessage) {
   // TTS / barge-in state
   let agentSpeaking = false;
   let ttsAbortController: AbortController | null = null;
+  // Greeting guard: queue caller speech until greeting finishes to prevent LLM firing mid-greeting
+  let greetingInProgress = false;
+  let queuedCallerSpeech: string | null = null;
 
   // ── Send helpers ────────────────────────────────────────────────────────────
 
@@ -691,9 +694,14 @@ export function handleTwilioVoiceStream(ws: WebSocket, req: IncomingMessage) {
       }
 
       if (isFinal && speechFinal && text.trim()) {
-        handleCallerSpeech(text.trim()).catch(err =>
-          logger.error({ err, callId }, 'handleCallerSpeech error'),
-        );
+        if (greetingInProgress) {
+          // Greeting is still playing — queue the speech, don't fire LLM yet
+          queuedCallerSpeech = text.trim();
+        } else {
+          handleCallerSpeech(text.trim()).catch(err =>
+            logger.error({ err, callId }, 'handleCallerSpeech error'),
+          );
+        }
       }
     });
 
@@ -736,10 +744,19 @@ export function handleTwilioVoiceStream(ws: WebSocket, req: IncomingMessage) {
       conversationHistory.push({ role: 'assistant', content: greeting });
 
       await db.insert(transcripts).values({ callId, speaker: 'agent', text: greeting }).catch(() => null);
+      greetingInProgress = true;
       await streamTTS(greeting, () => {
         logger.warn({ callId }, 'Greeting TTS failed — redirecting to gather path');
+        greetingInProgress = false;
         fallbackToGatherPath();
       });
+      greetingInProgress = false;
+      // Process any caller speech that arrived while greeting was playing
+      if (queuedCallerSpeech) {
+        const queued = queuedCallerSpeech;
+        queuedCallerSpeech = null;
+        handleCallerSpeech(queued).catch(err => logger.error({ err, callId }, 'handleCallerSpeech (queued) error'));
+      }
     } catch (err) {
       logger.error({ err, callId }, 'Failed to send greeting — redirecting to gather path');
       fallbackToGatherPath();
