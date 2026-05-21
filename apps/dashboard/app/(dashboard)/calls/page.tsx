@@ -87,6 +87,7 @@ function CallsPageInner() {
   const [loadingTranscript, setLoadingTranscript] = useState(false);
   const [playingUrl, setPlayingUrl] = useState<string | null>(null);
   const [loadingRecording, setLoadingRecording] = useState(false);
+  const [recordingError, setRecordingError] = useState('');
   const [upgradeMsg, setUpgradeMsg] = useState('');
   const [contact, setContact] = useState<{ id: string; phone: string; name?: string | null; location?: string | null; totalCalls?: number; lastCallAt?: string | null } | null>(null);
   const [historyCalls, setHistoryCalls] = useState<Call[]>([]);
@@ -157,17 +158,23 @@ function CallsPageInner() {
   useEffect(() => {
     setPlayingUrl(null);
     setLoadingRecording(false);
+    setRecordingError('');
   }, [selected?.id]);
 
   async function playRecording() {
     if (!selected || !token) return;
     setLoadingRecording(true);
+    setRecordingError('');
     try {
       const res = await apiGet<{ url: string }>(`/calls/${selected.id}/recording`, token);
       setPlayingUrl(res.url);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : '';
-      if (msg.toLowerCase().includes('upgrade')) setUpgradeMsg(msg);
+      if (msg.toLowerCase().includes('upgrade')) {
+        setUpgradeMsg(msg);
+      } else {
+        setRecordingError('No recording available for this call.');
+      }
       setPlayingUrl(null);
     } finally {
       setLoadingRecording(false);
@@ -349,16 +356,30 @@ function CallsPageInner() {
                 )}
               </div>
               <div className="flex items-center gap-2">
-                <button
-                  onClick={playRecording}
-                  disabled={loadingRecording}
-                  className="inline-flex items-center justify-center w-9 h-9 rounded-lg border border-cream-dark text-primary-warm hover:text-primary hover:border-primary/30 transition-colors disabled:opacity-50"
-                  title="Play recording"
-                >
-                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M5.25 5.25v13.5l13.5-6.75-13.5-6.75z" />
-                  </svg>
-                </button>
+                <div className="relative">
+                  <button
+                    onClick={playRecording}
+                    disabled={loadingRecording}
+                    className="inline-flex items-center justify-center w-9 h-9 rounded-lg border border-cream-dark text-primary-warm hover:text-primary hover:border-primary/30 transition-colors disabled:opacity-50"
+                    title="Play recording"
+                  >
+                    {loadingRecording ? (
+                      <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                      </svg>
+                    ) : (
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M5.25 5.25v13.5l13.5-6.75-13.5-6.75z" />
+                      </svg>
+                    )}
+                  </button>
+                  {recordingError && (
+                    <div className="absolute right-0 top-10 z-10 bg-primary-dark text-cream-light text-xs px-3 py-1.5 rounded-lg whitespace-nowrap shadow-lg">
+                      {recordingError}
+                    </div>
+                  )}
+                </div>
                 <span className={clsx('text-xs font-medium px-3 py-1.5 rounded-full', statusCls[resolutionLabel(selected.resolution)])}>
                   {resolutionLabel(selected.resolution)}
                 </span>

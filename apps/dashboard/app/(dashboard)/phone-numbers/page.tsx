@@ -41,15 +41,23 @@ type PhoneNumberRequest = {
 
 type Step = 'idle' | 'sending' | 'awaiting_code' | 'verifying' | 'done';
 type VirtualStep = 'idle' | 'searching' | 'selecting' | 'buying' | 'done';
-type Carrier = 'mtn' | 'airtel' | 'glo' | '9mobile';
+type CarrierRegion = 'nigeria' | 'pakistan';
+type Carrier = 'mtn' | 'airtel' | 'glo' | '9mobile' | 'ufone' | 'jazz';
 
 const inputCls = 'w-full px-4 py-2.5 rounded-xl border border-cream-dark bg-cream-light text-sm text-primary-dark placeholder:text-cream-dark focus:outline-none focus:border-primary/50 focus:ring-2 focus:ring-primary/10 transition-all';
 
-const FORWARDING_CODES: Record<string, { label: string; code: (n: string) => string }> = {
-  mtn:   { label: 'MTN',   code: n => `*21*${n}#` },
-  airtel: { label: 'Airtel', code: n => `**21*${n}#` },
-  glo:   { label: 'Glo',   code: n => `*62*${n}#` },
-  '9mobile': { label: '9mobile', code: n => `*62*${n}#` },
+const FORWARDING_CODES: Record<Carrier, { label: string; code: (n: string) => string; cancel: string }> = {
+  mtn:      { label: 'MTN',     code: n => `*21*${n}#`,   cancel: '##21#' },
+  airtel:   { label: 'Airtel',  code: n => `**21*${n}#`,  cancel: '##21#' },
+  glo:      { label: 'Glo',     code: n => `*62*${n}#`,   cancel: '#62#' },
+  '9mobile':{ label: '9mobile', code: n => `*62*${n}#`,   cancel: '#62#' },
+  ufone:    { label: 'Ufone',   code: n => `*21*${n}#`,   cancel: '##21#' },
+  jazz:     { label: 'Jazz',    code: n => `**21*${n}#`,  cancel: '##21#' },
+};
+
+const CARRIERS_BY_REGION: Record<CarrierRegion, Carrier[]> = {
+  nigeria:  ['mtn', 'airtel', 'glo', '9mobile'],
+  pakistan: ['ufone', 'jazz'],
 };
 
 export default function PhoneNumbersPage() {
@@ -66,6 +74,7 @@ export default function PhoneNumbersPage() {
   const [reqError, setReqError] = useState('');
   const [reqNote, setReqNote] = useState('');
   const [forwardingInfo, setForwardingInfo] = useState<ForwardingInstructions | null>(null);
+  const [selectedRegion, setSelectedRegion] = useState<CarrierRegion>('nigeria');
   const [selectedCarrier, setSelectedCarrier] = useState<Carrier>('mtn');
   const [copied, setCopied] = useState<string | null>(null);
 
@@ -279,11 +288,18 @@ export default function PhoneNumbersPage() {
             </div>
             <div className="space-y-2">
               <p className="text-xs font-semibold text-primary-dark uppercase tracking-wide">Set up call forwarding from your SIM:</p>
-              {Object.entries(FORWARDING_CODES).map(([key, { label, code: codeFn }]) => (
-                <div key={key} className="flex items-center gap-3 p-3 bg-cream-light rounded-xl">
-                  <span className="text-xs font-semibold text-primary w-16 flex-shrink-0">{label}</span>
-                  <code className="text-sm text-primary-dark font-mono bg-white px-2 py-0.5 rounded-lg border border-cream-dark">{codeFn(forwardingInfo.virtualNumber)}</code>
-                  <span className="text-xs text-primary-warm">then dial</span>
+              {(['nigeria', 'pakistan'] as CarrierRegion[]).map(region => (
+                <div key={region}>
+                  <p className="text-[10px] font-semibold text-primary-warm uppercase tracking-wider mb-1.5 mt-2">
+                    {region === 'nigeria' ? '🇳🇬 Nigeria' : '🇵🇰 Pakistan'}
+                  </p>
+                  {CARRIERS_BY_REGION[region].map(key => (
+                    <div key={key} className="flex items-center gap-3 p-3 bg-cream-light rounded-xl mb-1.5">
+                      <span className="text-xs font-semibold text-primary w-16 flex-shrink-0">{FORWARDING_CODES[key].label}</span>
+                      <code className="text-sm text-primary-dark font-mono bg-white px-2 py-0.5 rounded-lg border border-cream-dark">{FORWARDING_CODES[key].code(forwardingInfo.virtualNumber)}</code>
+                      <span className="text-xs text-primary-warm">then call</span>
+                    </div>
+                  ))}
                 </div>
               ))}
             </div>
@@ -542,20 +558,33 @@ export default function PhoneNumbersPage() {
                       <p className="text-xs font-semibold text-primary">Set up call forwarding on your SIM</p>
                     </div>
                     <div className="p-4 space-y-4 bg-white">
-                      {/* Step 1 — pick carrier */}
+                      {/* Step 1 — pick region then carrier */}
                       <div className="space-y-2">
                         <p className="text-xs font-semibold text-primary-dark flex items-center gap-1.5">
                           <span className="w-5 h-5 rounded-full bg-primary text-cream-light flex items-center justify-center text-[10px] font-bold flex-shrink-0">1</span>
-                          Select your network carrier
+                          Select your country & network
                         </p>
-                        <div className="grid grid-cols-4 gap-1.5">
-                          {(Object.entries(FORWARDING_CODES) as [Carrier, typeof FORWARDING_CODES[Carrier]][]).map(([key, { label }]) => (
+                        {/* Region toggle */}
+                        <div className="flex gap-1.5">
+                          {([['nigeria', '🇳🇬 Nigeria'], ['pakistan', '🇵🇰 Pakistan']] as [CarrierRegion, string][]).map(([r, label]) => (
+                            <button
+                              key={r}
+                              onClick={() => { setSelectedRegion(r); setSelectedCarrier(CARRIERS_BY_REGION[r][0]); }}
+                              className={`flex-1 py-1.5 rounded-lg text-xs font-medium transition-all border ${selectedRegion === r ? 'bg-primary text-cream-light border-primary' : 'border-cream-dark text-primary-warm hover:border-primary/40'}`}
+                            >
+                              {label}
+                            </button>
+                          ))}
+                        </div>
+                        {/* Carrier pills */}
+                        <div className="flex gap-1.5 flex-wrap">
+                          {CARRIERS_BY_REGION[selectedRegion].map(key => (
                             <button
                               key={key}
                               onClick={() => setSelectedCarrier(key)}
-                              className={`py-1.5 rounded-lg text-xs font-medium transition-all border ${selectedCarrier === key ? 'bg-primary text-cream-light border-primary' : 'border-cream-dark text-primary-warm hover:border-primary/40 hover:text-primary-dark'}`}
+                              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all border ${selectedCarrier === key ? 'bg-primary text-cream-light border-primary' : 'border-cream-dark text-primary-warm hover:border-primary/40 hover:text-primary-dark'}`}
                             >
-                              {label}
+                              {FORWARDING_CODES[key].label}
                             </button>
                           ))}
                         </div>
@@ -598,7 +627,7 @@ export default function PhoneNumbersPage() {
                         <p className="text-xs text-primary-warm">
                           To cancel forwarding later, dial{' '}
                           <code className="font-mono text-primary-dark bg-cream px-1 py-0.5 rounded">
-                            {selectedCarrier === 'mtn' ? '##21#' : selectedCarrier === 'airtel' ? '##21#' : '#62#'}
+                            {FORWARDING_CODES[selectedCarrier].cancel}
                           </code>{' '}
                           from your SIM.
                         </p>

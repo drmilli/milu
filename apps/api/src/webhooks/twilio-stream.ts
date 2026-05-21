@@ -107,7 +107,7 @@ async function loadCallContext(callId: string): Promise<CallContext | null> {
 
 // ─── System instructions ──────────────────────────────────────────────────────
 
-function buildInstructions(ctx: CallContext): string {
+function buildInstructions(ctx: CallContext, ops: boolean): string {
   const { callRow, agentRow, bizRow, kbRow, kbDocs, contactRow, previousSnippets, catalogSummary } = ctx;
   const callerName = callRow.callerName ?? contactRow?.name ?? null;
   const callerLocation = callRow.callerLocation ?? contactRow?.location ?? null;
@@ -137,10 +137,10 @@ function buildInstructions(ctx: CallContext): string {
       ? `Products & services catalog (source of truth):\n${catalogSummary}\nOnly mention items and prices that appear in the catalog above.`
       : null,
     ``,
-    `APPOINTMENTS: When the customer wants to book an appointment, collect the date, time, service type, and name. Then call the create_appointment function. After booking, confirm with the customer and ask if there is anything else you can help with — do NOT end the call immediately.`,
-    `ORDERS: When the customer wants to place an order, collect all items, quantities, delivery address, and their name. Then call the create_order function. After the order is placed, confirm the details and ask if there is anything else — do NOT end the call immediately.`,
+    ops ? `APPOINTMENTS: When the customer wants to book an appointment, collect the date, time, service type, and name. Then call the create_appointment function. After booking, confirm with the customer and ask if there is anything else you can help with — do NOT end the call immediately.` : null,
+    ops ? `ORDERS: When the customer wants to place an order, collect all items, quantities, delivery address, and their name. Then call the create_order function. After the order is placed, confirm the details and ask if there is anything else — do NOT end the call immediately.` : null,
     kbRow?.escalationNumber
-      ? `ESCALATION: If you cannot help or the customer requests a human agent, call the escalate_to_human function.`
+      ? `ESCALATION: If you cannot help, the customer requests a human agent, or the caller expresses any urgent, emergency, or time-sensitive need (e.g. medical emergency, safety issue, extreme frustration), call the escalate_to_human function immediately — do NOT ask clarifying questions when the need is urgent.`
       : `If you cannot help, let the customer know the team will follow up.`,
     `CALLER NAME: If you mispronounce the caller's name and they correct you, or if they give you their name for the first time, immediately call update_caller_name with the correct name and then use it from that point on.`,
     `END CALL: When the conversation is naturally complete and the customer is satisfied, call the end_call function. Do not just say goodbye — call the function.`,
@@ -349,7 +349,11 @@ export function handleTwilioVoiceStream(ws: WebSocket, req: IncomingMessage) {
 
     if (name === 'create_appointment') {
       const scheduledAt = new Date(args.scheduledAt);
-      if (Number.isNaN(scheduledAt.getTime())) return JSON.stringify({ success: false, error: 'Invalid date/time' });
+      logger.info({ callId, args }, 'create_appointment called');
+      if (Number.isNaN(scheduledAt.getTime())) {
+        logger.warn({ callId, scheduledAt: args.scheduledAt }, 'create_appointment — invalid date');
+        return JSON.stringify({ success: false, error: 'Invalid date/time' });
+      }
 
       const [row] = await db.insert(appointments).values({
         businessId: callRow.businessId,
@@ -376,6 +380,7 @@ export function handleTwilioVoiceStream(ws: WebSocket, req: IncomingMessage) {
     }
 
     if (name === 'create_order') {
+      logger.info({ callId, args }, 'create_order called');
       const orderNumber = `ORD-${Date.now().toString(36).toUpperCase()}`;
       const items = ((args.items ?? []) as any[]).map(i => ({ name: i.name, qty: i.qty, price: i.price ?? 0 }));
       const totalAmount = typeof args.totalAmount === 'number'
@@ -463,10 +468,11 @@ export function handleTwilioVoiceStream(ws: WebSocket, req: IncomingMessage) {
     }
 
     if (name === 'end_call') {
+      await streamTTS('Enjoy the rest of your day and thank you for calling.');
       await db.update(calls).set({ status: 'COMPLETED', resolution: 'AI', endedAt: new Date() })
         .where(eq(calls.id, callId)).catch(() => null);
       sendPostCallWhatsApp(callRow.businessId, callRow.callerNumber, 'AI').catch(() => null);
-      hangUp(2500).catch(() => null);
+      hangUp(1500).catch(() => null);
       return JSON.stringify({ success: true });
     }
 
@@ -770,8 +776,19 @@ export function handleTwilioVoiceStream(ws: WebSocket, req: IncomingMessage) {
 
   // ── Handle a final transcript from Deepgram ────────────────────────────────
 
+  // Urgency keywords that should trigger immediate escalation before the LLM responds
+  const URGENT_PATTERN = /\b(emergency|ambulance|fire brigade|fire service|police|dying|can'?t breathe|heart attack|stroke|life threatening|life-threatening|armed robbery|kidnap|bleeding badly|someone broke in)\b/i;
+
   async function handleCallerSpeech(text: string) {
     if (!ctx) return;
+
+    // Immediate escalation for genuine emergencies — don't wait for the LLM
+    if (canEscalate && URGENT_PATTERN.test(text)) {
+      logger.info({ callId, text: text.slice(0, 100) }, 'Urgent keyword detected — escalating immediately');
+      await streamTTS('I understand this is urgent. I am connecting you to someone right away.').catch(() => null);
+      await executeFn('escalate_to_human', { reason: `Caller said: "${text.slice(0, 200)}"` }).catch(() => null);
+      return;
+    }
 
     // Serialise LLM calls: if one is already running, queue the latest speech
     if (llmRunning) {
@@ -957,7 +974,7 @@ export function handleTwilioVoiceStream(ws: WebSocket, req: IncomingMessage) {
             agentClonedVoiceId = loaded.agentRow?.clonedVoiceId;
             ops = loaded.bizRow ? opsEnabled(loaded.bizRow) : true;
             canEscalate = !!loaded.kbRow?.escalationNumber;
-            systemInstructions = buildInstructions(loaded);
+            systemInstructions = buildInstructions(loaded, ops);
 
             if (!env.DEEPGRAM_API_KEY) {
               logger.error({ callId }, 'No DEEPGRAM_API_KEY — redirecting to fallback greeting path');
@@ -965,7 +982,7 @@ export function handleTwilioVoiceStream(ws: WebSocket, req: IncomingMessage) {
               return;
             }
 
-            logger.info({ callId, agentVoiceId, ops, canEscalate }, 'Call context loaded — connecting to Deepgram');
+            logger.info({ callId, agentVoiceId, ops, canEscalate, tier: loaded.bizRow?.subscriptionTier }, 'Call context loaded — connecting to Deepgram');
             connectToDeepgram();
 
             // Start Hume emotion detection for this call

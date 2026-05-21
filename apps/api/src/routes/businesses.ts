@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { eq, and, desc, sql } from 'drizzle-orm';
+import { eq, and, desc, sql, or } from 'drizzle-orm';
 import { db, businesses, knowledgeBases, knowledgeDocuments, kbChats, phoneNumbers, users, phoneVerifications, notifications, catalogItems, phoneNumberRequests, dataConnectors } from '../db';
 import { authMiddleware } from '../middleware/auth';
 import { sendCustomSms } from '../services/sms';
@@ -33,6 +33,16 @@ businessesRouter.get('/mine', async (req, res, next) => {
   try {
     const userId = req.user?.userId;
     if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+
+    // Also look up the user's primary businessId — older accounts may have ownerId = NULL
+    // on their original business, so we include it by ID from the users table
+    const [userRow] = await db.select({ businessId: users.businessId })
+      .from(users).where(eq(users.id, userId)).limit(1);
+
+    const ownerFilter = userRow?.businessId
+      ? or(eq(businesses.ownerId, userId), eq(businesses.id, userRow.businessId))
+      : eq(businesses.ownerId, userId);
+
     const rows = await db.select({
       id: businesses.id,
       name: businesses.name,
@@ -40,7 +50,7 @@ businessesRouter.get('/mine', async (req, res, next) => {
       subscriptionTier: businesses.subscriptionTier,
       isActive: businesses.isActive,
       createdAt: businesses.createdAt,
-    }).from(businesses).where(eq(businesses.ownerId, userId)).orderBy(businesses.createdAt);
+    }).from(businesses).where(ownerFilter).orderBy(businesses.createdAt);
     return res.json({ businesses: rows });
   } catch (err) { next(err); }
 });
