@@ -32,7 +32,7 @@ declare global {
 }
 
 function trialEndsAt(createdAt: Date) {
-  return new Date(createdAt.getTime() + 30 * 24 * 60 * 60 * 1000);
+  return new Date(createdAt.getTime() + 10 * 24 * 60 * 60 * 1000);
 }
 
 function buildPlan(input: { billingTier: 'STARTER' | 'GROWTH' | 'ENTERPRISE' | 'ONE_TIME'; isTrial: boolean; createdAt: Date }) {
