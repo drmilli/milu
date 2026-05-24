@@ -242,7 +242,7 @@ adminRouter.get('/businesses', async (req, res, next) => {
       ]);
       const owner = ownerRows[0];
       const planMrr: Record<string, number> = { STARTER: 25, GROWTH: 45, ONE_TIME: 0, ENTERPRISE: 0 };
-      const isTrial = b.subscriptionTier === 'STARTER' && (Date.now() - new Date(b.createdAt).getTime()) < 10 * 24 * 60 * 60 * 1000;
+      const isTrial = b.subscriptionTier === 'STARTER' && (Date.now() - new Date(b.createdAt).getTime()) < 30 * 24 * 60 * 60 * 1000;
       return {
         id: b.id,
         name: b.name,

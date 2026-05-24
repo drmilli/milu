@@ -28,7 +28,7 @@ function resolveElevenLabsVoiceId(voiceId: string | null | undefined, clonedVoic
 
 function effectiveTier(biz: { subscriptionTier: string | null; createdAt: Date }) {
   const tier = (biz.subscriptionTier ?? 'STARTER') as 'STARTER' | 'GROWTH' | 'ENTERPRISE';
-  const isTrial = tier === 'STARTER' && new Date() < new Date(biz.createdAt.getTime() + 10 * 24 * 60 * 60 * 1000);
+  const isTrial = tier === 'STARTER' && new Date() < new Date(biz.createdAt.getTime() + 30 * 24 * 60 * 60 * 1000);
   return isTrial ? 'GROWTH' : tier;
 }
 
