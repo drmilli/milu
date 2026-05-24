@@ -37,7 +37,25 @@
       "Bash(git -C /Users/ok/Documents/projects/milu diff --stat HEAD)",
       "Bash(git -C /Users/ok/Documents/projects/milu status --short)",
       "Bash(TWILIO_WHATSAPP_BROADCAST_CONTENT_SID=HXd411089a82ac6c11278014f5653e9119 npx tsx test-broadcast.ts)",
-      "Bash(xargs cat)"
+      "Bash(xargs cat)",
+      "Bash(psql \"postgresql://neondb_owner:npg_gdpNomzr6bY0@ep-patient-flower-any6fv4i-pooler.c-6.us-east-1.aws.neon.tech/neondb?sslmode=require\" -c \"SELECT id, name, subscription_tier, created_at FROM businesses ORDER BY created_at DESC LIMIT 10;\")",
+      "Bash(npx --yes pg-cli)",
+      "Bash(grep \"^pg$\")",
+      "Bash(curl -s -X POST https://api.miluai.app/api/v1/admin/auth/login -H 'Content-Type: application/json' -d '{\"email\":\"dev@sabiride.net\",\"password\":\"admin123\"}')",
+      "Bash(curl -s https://api.miluai.app/api/v1/admin/businesses?limit=20 -H 'Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJhZG1pbiIsInJvbGUiOiJBRE1JTiIsImlhdCI6MTc3OTYyNjQxOSwiZXhwIjoxNzc5NjMwMDE5fQ.xNVb4wN1UnnkQlcO8obro3-ZvR9TMnPRxBv12HoRrN8')",
+      "Bash(python3 -m json.tool)",
+      "Bash(curl -sv https://api.miluai.app/api/v1/admin/businesses?limit=20 -H 'Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJhZG1pbiIsInJvbGUiOiJBRE1JTiIsImlhdCI6MTc3OTYyNjQxOSwiZXhwIjoxNzc5NjMwMDE5fQ.xNVb4wN1UnnkQlcO8obro3-ZvR9TMnPRxBv12HoRrN8')",
+      "Bash(node_modules/.bin/tsx /tmp/fix-tier.ts)",
+      "Bash(node_modules/.bin/tsx /tmp/check-calls.ts)",
+      "Bash(git -C /Users/ok/Documents/projects/milu log --oneline -8)",
+      "Bash(git -C /Users/ok/Documents/projects/milu status)",
+      "Bash(git -C /Users/ok/Documents/projects/milu diff HEAD apps/api/src/webhooks/twilio-stream.ts apps/api/src/middleware/auth.ts)",
+      "Bash(git -C /Users/ok/Documents/projects/milu show HEAD:apps/api/src/webhooks/twilio-stream.ts)",
+      "Bash(node_modules/.bin/tsx /tmp/fix-old-starters.ts)",
+      "Bash(git -C /Users/ok/Documents/projects/milu add apps/api/src/webhooks/twilio-stream.ts apps/api/src/middleware/auth.ts apps/api/src/routes/admin.ts)",
+      "Bash(git -C /Users/ok/Documents/projects/milu commit -m ' *)",
+      "Bash(git -C /Users/ok/Documents/projects/milu push origin main)",
+      "Bash(git -C /Users/ok/Documents/projects/milu remote -v)"
     ],
     "additionalDirectories": [
       "/Users/ok/Documents/projects/milu"
