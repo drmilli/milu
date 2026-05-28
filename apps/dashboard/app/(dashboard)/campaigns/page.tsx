@@ -173,9 +173,15 @@ export default function CampaignsPage() {
     setError('');
     try {
       const res = await apiPost<{ url: string }>(`/campaigns/${campaign.id}/checkout`, {}, token);
-      if (res.url) window.location.href = res.url;
+      if (res.url) {
+        window.location.href = res.url;
+      } else {
+        setError('Payment provider did not return a checkout URL. Please try again.');
+        setCheckingOut(false);
+      }
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Failed to create checkout session. Make sure Stripe is configured.');
+      const msg = err instanceof Error ? err.message : 'Failed to create checkout session.';
+      setError(msg);
       setCheckingOut(false);
     }
   }

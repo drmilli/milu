@@ -16,31 +16,51 @@ const MIN_CALLS = 4;
 async function createWhopCheckout(campaignId: string, businessId: string, amountUsd: number): Promise<string> {
   if (!env.WHOP_API_KEY) throw new Error('Whop is not configured');
 
-  // Checkout configurations are on Whop's v5 API
+  const body = {
+    plan: {
+      initial_price: amountUsd,
+      billing_period: 0,
+    },
+    metadata: { campaignId, businessId },
+    redirect_url: `${env.APP_URL}/campaigns?paid=${campaignId}`,
+    cancel_url: `${env.APP_URL}/campaigns?cancelled=${campaignId}`,
+  };
+
   const res = await fetch('https://api.whop.com/v5/checkout-configurations', {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${env.WHOP_API_KEY}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({
-      plan: {
-        initial_price: amountUsd,
-        billing_period: 0,
-      },
-      metadata: { campaignId, businessId },
-      redirect_url: `${env.APP_URL}/campaigns?paid=${campaignId}`,
-      cancel_url: `${env.APP_URL}/campaigns?cancelled=${campaignId}`,
-    }),
+    body: JSON.stringify(body),
   });
 
+  const raw = await res.text();
+  logger.info({ status: res.status, body: raw.slice(0, 500), campaignId }, 'Whop checkout-configurations response');
+
   if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`Whop checkout configuration failed ${res.status}: ${body}`);
+    throw new Error(`Whop checkout configuration failed ${res.status}: ${raw}`);
   }
 
-  const data = await res.json() as { id: string; checkout_url?: string };
-  return data.checkout_url ?? `https://whop.com/checkout/${data.id}/`;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const data = JSON.parse(raw) as any;
+
+  // Whop may return the URL under several field names depending on API version
+  const checkoutUrl: string =
+    data?.checkout_url ??
+    data?.url ??
+    data?.data?.checkout_url ??
+    data?.data?.url ??
+    (data?.id ? `https://whop.com/checkout/${data.id}/` : null) ??
+    (data?.data?.id ? `https://whop.com/checkout/${data.data.id}/` : null);
+
+  if (!checkoutUrl) {
+    logger.error({ data: raw.slice(0, 500), campaignId }, 'Whop checkout response missing URL');
+    throw new Error('Whop did not return a checkout URL. Check Railway logs for the full response.');
+  }
+
+  logger.info({ checkoutUrl, campaignId }, 'Whop checkout URL created');
+  return checkoutUrl;
 }
 
 // ─── POST /campaigns — create campaign + contacts ──────────────────────────────
