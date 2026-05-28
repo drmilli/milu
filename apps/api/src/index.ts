@@ -19,7 +19,7 @@ import { analyticsRouter } from './routes/analytics';
 import { adminRouter, adminAuthRouter } from './routes/admin';
 import { usersRouter } from './routes/users';
 import { billingRouter, handleWhopWebhook } from './routes/billing';
-import { handleTwilioVoiceWebhook, handleTwilioVoiceGather, handleTwilioVoiceRespond, handleTwilioVoiceEnd, handleTwilioVoiceRecording, handleTwilioVoiceStatus, handleTwilioMessageStatus, handleTwilioIncomingMessage, handleTwilioIncomingMessageFallback, handleTwilioVoiceFallbackGreeting } from './webhooks/twilio-voice';
+import { handleTwilioVoiceWebhook, handleTwilioVoiceGather, handleTwilioVoiceRespond, handleTwilioVoiceEnd, handleTwilioVoiceRecording, handleTwilioVoiceStatus, handleTwilioMessageStatus, handleTwilioIncomingMessage, handleTwilioIncomingMessageFallback, handleTwilioVoiceFallbackGreeting, handleTwilioOutboundVoice } from './webhooks/twilio-voice';
 import { handleTwilioVoiceStream } from './webhooks/twilio-stream';
 import { WebSocketServer } from 'ws';
 // Infobip voice removed — using Twilio only for calls
@@ -43,6 +43,7 @@ import { sendNotification } from './services/notifications';
 import { affiliateAuthRouter, affiliateRouter } from './routes/affiliate';
 import { followUpsRouter } from './routes/followUps';
 import { broadcastsRouter } from './routes/broadcasts';
+import { campaignsRouter } from './routes/campaigns';
 
 const app: Express = express();
 const server = http.createServer(app);
@@ -95,6 +96,7 @@ app.post('/webhooks/twilio/voice/respond', handleTwilioVoiceRespond);
 app.post('/webhooks/twilio/voice/end', handleTwilioVoiceEnd);
 app.post('/webhooks/twilio/voice/recording', handleTwilioVoiceRecording);
 app.post('/webhooks/twilio/voice/status', handleTwilioVoiceStatus);
+app.post('/api/v1/twilio/voice/outbound', handleTwilioOutboundVoice);
 app.post('/webhooks/twilio/message-status', handleTwilioMessageStatus);
 app.post('/webhooks/twilio/incoming-message', handleTwilioIncomingMessage);
 app.post('/webhooks/twilio/incoming-message/fallback', handleTwilioIncomingMessageFallback);
@@ -234,6 +236,7 @@ app.use('/api/v1/affiliate/auth', affiliateAuthRouter);
 app.use('/api/v1/affiliate', affiliateRouter);
 app.use('/api/v1/follow-ups', followUpsRouter);
 app.use('/api/v1/broadcasts', broadcastsRouter);
+app.use('/api/v1/campaigns', campaignsRouter);
 
 app.use(errorHandler);
 

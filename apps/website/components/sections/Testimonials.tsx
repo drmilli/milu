@@ -40,7 +40,7 @@ export function Testimonials() {
         <AnimateIn className="text-center mb-20">
           <p className="text-sm font-medium text-primary-warm uppercase tracking-widest mb-3">Testimonials</p>
           <h2 className="font-heading font-bold text-4xl md:text-5xl text-primary-dark">
-            Trusted by African businesses
+            Trusted by businesses across Africa & the UAE
           </h2>
         </AnimateIn>
 

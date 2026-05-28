@@ -23,6 +23,8 @@ export const followUpTypeEnum = pgEnum('follow_up_type', ['CALL', 'WHATSAPP', 'N
 export const followUpStatusEnum = pgEnum('follow_up_status', ['PENDING', 'COMPLETED', 'CANCELLED']);
 export const broadcastStatusEnum = pgEnum('broadcast_status', ['DRAFT', 'SENDING', 'COMPLETED', 'FAILED']);
 export const templateStatusEnum = pgEnum('template_status', ['DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'REJECTED']);
+export const campaignStatusEnum = pgEnum('campaign_status', ['DRAFT', 'PENDING_PAYMENT', 'RUNNING', 'COMPLETED', 'CANCELLED']);
+export const campaignContactStatusEnum = pgEnum('campaign_contact_status', ['PENDING', 'CALLING', 'ANSWERED', 'VOICEMAIL', 'NO_ANSWER', 'FAILED']);
 
 // ─── Core ─────────────────────────────────────────────────────────────────────
 export const businesses = pgTable('businesses', {
@@ -195,6 +197,8 @@ export const calls = pgTable('calls', {
   duration: integer('duration'),
   recordingUrl: text('recording_url'),
   topEmotion: text('top_emotion'),
+  direction: text('direction').default('INBOUND').notNull(),
+  campaignContactId: text('campaign_contact_id'),
   startedAt: timestamp('started_at', { withTimezone: true }).defaultNow().notNull(),
   endedAt: timestamp('ended_at', { withTimezone: true }),
 });
@@ -487,6 +491,38 @@ export const dataConnectors = pgTable('data_connectors', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 });
 
+// ─── Campaigns ────────────────────────────────────────────────────────────────
+export const campaigns = pgTable('campaigns', {
+  id: text('id').primaryKey().$defaultFn(() => randomUUID()),
+  businessId: text('business_id').notNull().references(() => businesses.id),
+  name: text('name').notNull(),
+  goal: text('goal').notNull(),
+  script: text('script'),
+  status: campaignStatusEnum('status').default('DRAFT').notNull(),
+  contactCount: integer('contact_count').default(0).notNull(),
+  dialedCount: integer('dialed_count').default(0).notNull(),
+  answeredCount: integer('answered_count').default(0).notNull(),
+  voicemailCount: integer('voicemail_count').default(0).notNull(),
+  totalCost: text('total_cost').notNull(),
+  stripeCheckoutSessionId: text('stripe_checkout_session_id'),
+  paidAt: timestamp('paid_at', { withTimezone: true }),
+  completedAt: timestamp('completed_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+export const campaignContacts = pgTable('campaign_contacts', {
+  id: text('id').primaryKey().$defaultFn(() => randomUUID()),
+  campaignId: text('campaign_id').notNull().references(() => campaigns.id, { onDelete: 'cascade' }),
+  name: text('name'),
+  phoneNumber: text('phone_number').notNull(),
+  callId: text('call_id').references(() => calls.id, { onDelete: 'set null' }),
+  status: campaignContactStatusEnum('status').default('PENDING').notNull(),
+  calledAt: timestamp('called_at', { withTimezone: true }),
+  notes: text('notes'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
 // ─── Relations ────────────────────────────────────────────────────────────────
 export const businessesRelations = relations(businesses, ({ many, one }) => ({
   phoneNumbers: many(phoneNumbers),
@@ -567,6 +603,16 @@ export const affiliateWithdrawalRequestsRelations = relations(affiliateWithdrawa
   agent: one(affiliateAgents, { fields: [affiliateWithdrawalRequests.affiliateAgentId], references: [affiliateAgents.id] }),
 }));
 
+export const campaignsRelations = relations(campaigns, ({ one, many }) => ({
+  business: one(businesses, { fields: [campaigns.businessId], references: [businesses.id] }),
+  contacts: many(campaignContacts),
+}));
+
+export const campaignContactsRelations = relations(campaignContacts, ({ one }) => ({
+  campaign: one(campaigns, { fields: [campaignContacts.campaignId], references: [campaigns.id] }),
+  call: one(calls, { fields: [campaignContacts.callId], references: [calls.id] }),
+}));
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 export type Business = typeof businesses.$inferSelect;
 export type User = typeof users.$inferSelect;
@@ -591,6 +637,8 @@ export type PhoneVerification = typeof phoneVerifications.$inferSelect;
 export type ContactSubmission = typeof contactSubmissions.$inferSelect;
 export type PhoneNumberRequest = typeof phoneNumberRequests.$inferSelect;
 export type DataConnector = typeof dataConnectors.$inferSelect;
+export type Campaign = typeof campaigns.$inferSelect;
+export type CampaignContact = typeof campaignContacts.$inferSelect;
 export type FollowUp = typeof followUps.$inferSelect;
 export type MessageTemplate = typeof messageTemplates.$inferSelect;
 export type MessageBroadcast = typeof messageBroadcasts.$inferSelect;

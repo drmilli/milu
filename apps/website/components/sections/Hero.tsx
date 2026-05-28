@@ -29,7 +29,7 @@ export function Hero() {
           className="inline-flex items-center gap-2 bg-primary/8 border border-primary/15 text-primary text-sm px-4 py-1.5 rounded-full mb-10"
         >
           <span className="w-1.5 h-1.5 rounded-full bg-success animate-pulse" />
-          Now live — Africa&apos;s Talking integration
+          Try for free now!
         </motion.div>
 
         {/* Headline */}

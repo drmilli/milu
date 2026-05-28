@@ -8,6 +8,7 @@ import { env } from '../config/env';
 import { sendSubscriptionConfirmEmail, sendSubscriptionCancelledEmail } from '../utils/email';
 import { logger } from '../config/logger';
 import { sendNotification } from '../services/notifications';
+import { activateCampaignPayment } from './campaigns';
 
 export const billingRouter: Router = Router();
 
@@ -313,6 +314,15 @@ export async function handleWhopWebhook(req: import('express').Request, res: imp
       case 'membership.went_valid':
       case 'payment.completed': {
         const meta = (event.data.metadata ?? {}) as Record<string, string>;
+
+        // Campaign one-time payment — activate and start dialer
+        if (meta.campaignId) {
+          await activateCampaignPayment(meta.campaignId).catch(err =>
+            logger.error({ err, campaignId: meta.campaignId }, 'Failed to activate campaign after Whop payment')
+          );
+          break;
+        }
+
         const businessId = meta.businessId;
         const planId = (event.data.plan_id ?? event.data.product_id ?? '') as string;
         const planKey = planId.toLowerCase();

@@ -28,20 +28,28 @@ export const viewport: Viewport = {
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
   title: {
-    default: 'Milu — AI Voice Customer Service for African Businesses',
+    default: 'Milu — AI Voice Customer Service for Businesses',
     template: '%s — Milu',
   },
   description:
-    'Milu is an AI voice agent that answers your business calls 24/7 — handling FAQs, booking appointments, and escalating to you when it matters. Built for Africa.',
+    'Milu is an AI voice agent that answers your business calls 24/7 — handling FAQs, booking appointments, and escalating to you when it matters. Built for Africa and the UAE.',
   keywords: [
     'AI voice agent Africa',
     'AI customer service Nigeria',
     'automated phone answering Nigeria',
     'AI receptionist Africa',
     'voice AI small business',
-    'Africa\'s Talking voice AI',
     'business phone automation Nigeria',
     'AI call answering Lagos',
+    'AI voice agent UAE',
+    'AI customer service Dubai',
+    'AI receptionist Dubai',
+    'business phone automation UAE',
+    'AI call center Dubai',
+    'automated answering service Abu Dhabi',
+    'AI voice assistant UAE',
+    'AI phone agent Middle East',
+    'small business AI UAE',
   ],
   authors: [{ name: 'Milu Technologies', url: siteUrl }],
   creator: 'Milu Technologies',
@@ -51,27 +59,28 @@ export const metadata: Metadata = {
 
   openGraph: {
     type: 'website',
-    locale: 'en_NG',
+    locale: 'en_US',
+    alternateLocale: ['en_NG', 'en_AE'],
     url: siteUrl,
     siteName: 'Milu',
-    title: 'Milu — AI Voice Customer Service for African Businesses',
+    title: 'Milu — AI Voice Customer Service for Businesses',
     description:
-      'Every call answered, every customer kept. Milu is an AI voice agent built for African businesses — 24/7, multilingual, on your existing number.',
+      'Every call answered, every customer kept. Milu is an AI voice agent built for businesses in Africa and the UAE — 24/7, multilingual, on your existing number.',
     images: [
       {
         url: '/og-image.png',
         width: 1200,
         height: 630,
-        alt: 'Milu — AI Voice Customer Service for African Businesses',
+        alt: 'Milu — AI Voice Customer Service for Businesses',
       },
     ],
   },
 
   twitter: {
     card: 'summary_large_image',
-    title: 'Milu — AI Voice Customer Service for African Businesses',
+    title: 'Milu — AI Voice Customer Service for Businesses',
     description:
-      'Every call answered, every customer kept. AI voice agent built for African businesses.',
+      'Every call answered, every customer kept. AI voice agent built for businesses.',
     images: ['/og-image.png'],
     creator: '@miluai',
     site: '@miluai',

@@ -2,7 +2,8 @@ import type { Request, Response } from 'express';
 import crypto from 'crypto';
 import twilio from 'twilio';
 import { and, desc, eq, gte, ne, sql } from 'drizzle-orm';
-import { db, phoneNumbers, agentConfigs, businesses, calls, escalations, notifications, transcripts, knowledgeBases, knowledgeDocuments, businessSettings, contacts, orders, appointments, catalogItems } from '../db';
+import { db, phoneNumbers, agentConfigs, businesses, calls, escalations, notifications, transcripts, knowledgeBases, knowledgeDocuments, businessSettings, contacts, orders, appointments, catalogItems, campaignContacts, campaigns } from '../db';
+import { handleOutboundCallStatus } from '../services/campaign-dialer';
 import { logger } from '../config/logger';
 import { env } from '../config/env';
 import { voiceChat, type ChatMessage } from '../services/document-extract';
@@ -353,6 +354,24 @@ async function ttsUrl(text: string, voiceId: string | null | undefined, clonedVo
 
 const twilioTwimlCache = new Map<string, { xml: string; expiresAt: number }>();
 
+function agentLangToTwilioLocale(lang: string | null | undefined): string {
+  const map: Record<string, string> = {
+    ar: 'ar-SA', en: 'en-US', yo: 'en-US', ig: 'en-US', ha: 'en-US',
+    pcm: 'en-US', sw: 'sw-TZ', fr: 'fr-FR',
+  };
+  return map[lang ?? 'en'] ?? 'en-US';
+}
+
+async function resolveCallLanguage(callId: string): Promise<string> {
+  try {
+    const [callRow] = await db.select({ businessId: calls.businessId }).from(calls).where(eq(calls.id, callId)).limit(1);
+    if (!callRow) return 'en-US';
+    const [agentRow] = await db.select({ language: agentConfigs.language }).from(agentConfigs)
+      .where(eq(agentConfigs.businessId, callRow.businessId)).limit(1);
+    return agentLangToTwilioLocale(agentRow?.language);
+  } catch { return 'en-US'; }
+}
+
 function sayTag(text: string, language: string) {
   return `<Say voice="alice" language="${language}">${escapeXml(text)}</Say>`;
 }
@@ -453,8 +472,6 @@ function redirectToRespond(callId: string, baseUrl: string, attempt: number) {
 }
 
 async function computeTwilioTurn(callId: string, speechResult: string, baseUrl: string) {
-  const language = 'en-US';
-
   const [callRow] = await db.select().from(calls).where(eq(calls.id, callId)).limit(1);
   if (!callRow) {
     return twiml('<Say voice="alice">Something went wrong. Goodbye.</Say><Hangup/>');
@@ -501,6 +518,7 @@ async function computeTwilioTurn(callId: string, speechResult: string, baseUrl: 
     { role: 'user' as const, content: speechResult },
   ];
 
+  const language = agentLangToTwilioLocale(agentRow?.language);
   const urgent = isUrgent(speechResult);
   const plan = bizRow?.createdAt ? buildPlanFromBusinessRow({ subscriptionTier: bizRow.subscriptionTier ?? null, createdAt: bizRow.createdAt }) : null;
   const {
@@ -517,7 +535,7 @@ async function computeTwilioTurn(callId: string, speechResult: string, baseUrl: 
       callerLocation: callRow.callerLocation ?? contactRow?.location ?? null,
       previousCallerSnippets: previousSnippets.slice().reverse().map(s => `${s.speaker}: ${s.text}`),
       agentName: agentRow?.name,
-      agentLanguage: agentRow?.language,
+      agentLanguage: agentRow?.language ?? 'en',
       faqs: (kbRow?.faqs as { question: string; answer: string }[]) ?? [],
       websiteSummary: kbRow?.websiteSummary,
       docSummaries: kbDocs.map(d => d.summary ?? '').filter(Boolean),
@@ -703,8 +721,8 @@ export async function handleTwilioVoiceGather(req: Request, res: Response) {
 
   const callId = typeof req.query.callId === 'string' ? req.query.callId : '';
   const speechResult = (req.body.SpeechResult as string | undefined) ?? '';
-  const language = 'en-US';
   const baseUrl = getBaseUrl(req);
+  const language = await resolveCallLanguage(callId);
 
   logger.info({ callId, speechResult: speechResult.slice(0, 200) }, 'Twilio voice gather input');
 
@@ -792,9 +810,9 @@ export async function handleTwilioVoiceRespond(req: Request, res: Response) {
   const callId = typeof req.query.callId === 'string' ? req.query.callId : '';
   const attempt = typeof req.query.attempt === 'string' ? parseInt(req.query.attempt, 10) : 0;
   const baseUrl = getBaseUrl(req);
-  const language = 'en-US';
 
   if (!callId) return res.send(twiml('<Hangup/>'));
+  const language = await resolveCallLanguage(callId);
 
   const cached = await twilioCachePopPersistent(callId);
   if (cached) return res.send(cached);
@@ -912,14 +930,31 @@ export async function handleTwilioVoiceRecording(req: Request, res: Response) {
 export async function handleTwilioVoiceStatus(req: Request, res: Response) {
   res.sendStatus(200);
   const body = req.body as Record<string, unknown>;
+  const callStatus = (body.CallStatus as string) ?? '';
+  const answeredBy = (body.AnsweredBy as string) ?? '';
+
   logger.info({
     callSid: body.CallSid,
-    callStatus: body.CallStatus,
+    callStatus,
     to: body.To ? maskPhone(body.To as string) : undefined,
     from: body.From ? maskPhone(body.From as string) : undefined,
     direction: body.Direction,
     duration: body.CallDuration ?? null,
   }, 'Twilio voice status');
+
+  // Update campaign contact status for outbound calls
+  if (body.Direction === 'outbound-api') {
+    const to = (body.To as string) ?? '';
+    const [callRow] = await db.select({ id: calls.id, campaignContactId: calls.campaignContactId })
+      .from(calls)
+      .where(and(eq(calls.callerNumber, to), eq(calls.direction, 'OUTBOUND'), eq(calls.status, 'ACTIVE')))
+      .orderBy(desc(calls.startedAt))
+      .limit(1)
+      .catch(() => [undefined]);
+    if (callRow?.id) {
+      handleOutboundCallStatus(callRow.id, callStatus, answeredBy).catch(() => null);
+    }
+  }
 }
 
 function maskPhone(value: string) {
@@ -1030,9 +1065,9 @@ export async function handleTwilioVoiceFallbackGreeting(req: Request, res: Respo
   res.set('Content-Type', 'text/xml');
   const callId = typeof req.query.callId === 'string' ? req.query.callId : '';
   const baseUrl = getBaseUrl(req);
-  const language = 'en-US';
 
   if (!callId) return res.send(twiml('<Hangup/>'));
+  const language = await resolveCallLanguage(callId);
 
   logger.info({ callId }, 'Fallback greeting — Realtime path failed, using gather path');
 
@@ -1060,5 +1095,65 @@ export async function handleTwilioVoiceFallbackGreeting(req: Request, res: Respo
     logger.error({ err, callId }, 'Fallback greeting failed');
     const speak = sayTag("Hello! How can I help you today?", language);
     return res.send(twiml(speak + gatherTurn(callId, language, baseUrl)));
+  }
+}
+
+// ─── Outbound campaign call TwiML ─────────────────────────────────────────────
+export async function handleTwilioOutboundVoice(req: Request, res: Response) {
+  res.set('Content-Type', 'text/xml');
+  const callId = typeof req.query.callId === 'string' ? req.query.callId : '';
+  const answeredBy = (req.body?.AnsweredBy as string) ?? '';
+
+  if (!callId) return res.send(twiml('<Hangup/>'));
+
+  // Voicemail / machine detected — leave a brief message then hang up
+  if (answeredBy === 'machine_start' || answeredBy === 'machine_end_beep' || answeredBy === 'machine_end_silence') {
+    logger.info({ callId, answeredBy }, 'Outbound call answered by machine — leaving voicemail');
+    try {
+      const [callRow] = await db.select({ businessId: calls.businessId, campaignContactId: calls.campaignContactId })
+        .from(calls).where(eq(calls.id, callId)).limit(1);
+
+      let voicemailText = 'Hi, you have a message. Please call us back at your earliest convenience. Thank you.';
+      if (callRow?.campaignContactId) {
+        const [cc] = await db.select({ campaignId: campaignContacts.campaignId, name: campaignContacts.name })
+          .from(campaignContacts).where(eq(campaignContacts.id, callRow.campaignContactId)).limit(1);
+        if (cc) {
+          const [camp] = await db.select({ goal: campaigns.goal, name: campaigns.name })
+            .from(campaigns).where(eq(campaigns.id, cc.campaignId)).limit(1);
+          const [[biz], [agent]] = await Promise.all([
+            db.select({ name: businesses.name }).from(businesses).where(eq(businesses.id, callRow.businessId)).limit(1),
+            db.select({ name: agentConfigs.name }).from(agentConfigs).where(eq(agentConfigs.businessId, callRow.businessId)).limit(1),
+          ]);
+          const greeting = cc.name ? `Hi ${cc.name}, ` : 'Hi, ';
+          voicemailText = `${greeting}this is ${agent?.name ?? 'an assistant'} from ${biz?.name ?? 'us'}. I was calling regarding ${camp?.goal ?? 'a follow-up'}. Please call us back when you get a chance. Thank you.`;
+        }
+      }
+      await db.update(calls).set({ endedAt: new Date(), status: 'COMPLETED' }).where(eq(calls.id, callId));
+      return res.send(twiml(`<Say voice="alice">${escapeXml(voicemailText)}</Say><Hangup/>`));
+    } catch (err) {
+      logger.error({ err, callId }, 'Error handling outbound voicemail');
+      return res.send(twiml('<Say voice="alice">Sorry, I will try again later.</Say><Hangup/>'));
+    }
+  }
+
+  try {
+    const [callRow] = await db.select({ businessId: calls.businessId })
+      .from(calls).where(eq(calls.id, callId)).limit(1);
+    if (!callRow) return res.send(twiml('<Hangup/>'));
+
+    const baseUrl = getBaseUrl(req);
+    const wsUrl = baseUrl.replace(/^http/, 'ws') + `/webhooks/twilio/voice/stream`;
+
+    // Always record outbound campaign calls
+    const record = `<Start><Record recordingStatusCallback="${escapeXml(`${baseUrl}/webhooks/twilio/voice/recording?callId=${encodeURIComponent(callId)}`)}" recordingStatusCallbackMethod="POST" recordingChannels="dual" /></Start>`;
+
+    logger.info({ callId, businessId: callRow.businessId }, 'Outbound call answered — connecting to stream');
+    return res.send(twiml(
+      record +
+      `<Connect><Stream url="${escapeXml(wsUrl)}"><Parameter name="callId" value="${escapeXml(callId)}" /></Stream></Connect>`,
+    ));
+  } catch (err) {
+    logger.error({ err, callId }, 'Error handling outbound voice TwiML');
+    return res.send(twiml('<Say voice="alice">Sorry, we are experiencing difficulties. Goodbye.</Say><Hangup/>'));
   }
 }

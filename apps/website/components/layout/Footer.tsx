@@ -27,7 +27,7 @@ export function Footer() {
               <Image src="/brand/wordmark.svg" alt="milu." width={80} height={28} className="h-7 w-auto" />
             </Link>
             <p className="text-cream/50 text-sm leading-relaxed max-w-xs">
-              AI voice customer service for African businesses. Every call answered, every customer kept.
+              AI voice customer service for businesses. Every call answered, every customer kept.
             </p>
           </div>
 
@@ -52,7 +52,7 @@ export function Footer() {
         </div>
 
         <div className="mt-14 pt-8 border-t border-cream/8 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-cream/30">
-          <p>© 2026 Milu Technologies. Built in Nigeria, for Africa.</p>
+          <p>© 2026 Milu Technologies. Built in Nigeria, for Africa &amp; the UAE.</p>
           <p>dev@miluai.app</p>
         </div>
       </div>

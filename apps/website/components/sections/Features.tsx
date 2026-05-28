@@ -89,7 +89,7 @@ const features = [
       </svg>
     ),
     title: 'Local telephony',
-    description: "Works directly with Africa's Talking — your existing number, no SIP required.",
+    description: 'Works with your existing number via Twilio or local carriers — no SIP required.',
   },
   {
     icon: (

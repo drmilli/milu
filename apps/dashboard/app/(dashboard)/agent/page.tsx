@@ -30,6 +30,7 @@ const TONES = ['professional', 'friendly', 'concise', 'empathetic', 'formal'];
 
 const LANGUAGES = [
   { code: 'en', label: 'English' },
+  { code: 'ar', label: 'Arabic (العربية)' },
   { code: 'yo', label: 'Yoruba' },
   { code: 'ig', label: 'Igbo' },
   { code: 'ha', label: 'Hausa' },

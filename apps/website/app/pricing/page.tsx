@@ -4,11 +4,18 @@ import { dashboardUrl } from '../../lib/config';
 
 export const metadata: Metadata = {
   title: 'Pricing',
-  description: 'Simple, transparent pricing for African businesses. Start from ₦15,000/month. 14-day free trial, no credit card required.',
+  description: 'Simple, transparent pricing for businesses in Africa and the UAE. Start from $25/month. 10-day free trial, no credit card required.',
   alternates: { canonical: '/pricing' },
+  keywords: [
+    'AI voice agent pricing',
+    'AI customer service pricing Nigeria',
+    'AI call answering cost Dubai',
+    'AI receptionist UAE price',
+    'business phone AI subscription',
+  ],
   openGraph: {
-    title: 'Milu Pricing — Plans Starting at ₦15,000/month',
-    description: 'Simple pricing for African businesses of all sizes. 10-day free trial, no credit card required.',
+    title: 'Milu Pricing — AI Voice Agent for Africa & UAE',
+    description: 'Simple pricing for businesses of all sizes in Africa and the UAE. 10-day free trial, no credit card required.',
   },
 };
 

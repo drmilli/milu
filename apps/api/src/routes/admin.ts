@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { eq, desc, ilike, and, or, sql, gte, inArray, lt } from 'drizzle-orm';
 import bcrypt from 'bcryptjs';
 import twilio from 'twilio';
-import { db, businesses, users, calls, escalations, phoneNumbers, agentConfigs, notifications, catalogItems, contactSubmissions, phoneNumberRequests, dataConnectors, affiliateAgents, affiliateReferrals, affiliateCommissions, affiliateWithdrawalRequests, affiliateSettings, contacts, followUps } from '../db';
+import { db, businesses, users, calls, escalations, phoneNumbers, agentConfigs, notifications, catalogItems, contactSubmissions, phoneNumberRequests, dataConnectors, affiliateAgents, affiliateReferrals, affiliateCommissions, affiliateWithdrawalRequests, affiliateSettings, contacts, followUps, campaigns, campaignContacts } from '../db';
 import { logger } from '../config/logger';
 import { adminGuard } from '../middleware/admin-guard';
 import { signAdminToken, verifyAdminToken } from '../utils/jwt';
@@ -1722,3 +1722,54 @@ adminRouter.get('/contacts', async (req, res, next) => {
     return res.json({ contacts: rows, total: Number(countResult[0].n), page, limit });
   } catch (err) { next(err); }
 });
+
+// ─── Admin: Campaigns ─────────────────────────────────────────────────────────
+
+adminRouter.get('/campaigns', async (req, res, next) => {
+  try {
+    const { page = '1', limit = '25', businessId: qBid } = req.query as Record<string, string>;
+    const pgNum = Math.max(1, parseInt(page));
+    const pgSize = Math.min(100, Math.max(1, parseInt(limit)));
+
+    const where = qBid ? eq(campaigns.businessId, qBid) : undefined;
+    const [rows, countResult, revenueResult] = await Promise.all([
+      db.select({
+        id: campaigns.id,
+        businessId: campaigns.businessId,
+        name: campaigns.name,
+        goal: campaigns.goal,
+        status: campaigns.status,
+        contactCount: campaigns.contactCount,
+        dialedCount: campaigns.dialedCount,
+        answeredCount: campaigns.answeredCount,
+        totalCost: campaigns.totalCost,
+        paidAt: campaigns.paidAt,
+        createdAt: campaigns.createdAt,
+      }).from(campaigns).where(where).orderBy(desc(campaigns.createdAt))
+        .limit(pgSize).offset((pgNum - 1) * pgSize),
+      db.select({ n: sql<number>`count(*)` }).from(campaigns).where(where),
+      db.select({ total: sql<string>`sum(total_cost::numeric)` }).from(campaigns)
+        .where(and(where, sql`paid_at is not null`)),
+    ]);
+
+    return res.json({
+      campaigns: rows,
+      total: Number(countResult[0]?.n ?? 0),
+      totalRevenue: revenueResult[0]?.total ?? '0',
+      page: pgNum,
+      limit: pgSize,
+    });
+  } catch (err) { next(err); }
+});
+
+adminRouter.patch('/campaigns/:id', async (req, res, next) => {
+  try {
+    const { status } = z.object({ status: z.string().optional() }).parse(req.body);
+    const update: Record<string, unknown> = { updatedAt: new Date() };
+    if (status) update.status = status.toUpperCase();
+    const [result] = await db.update(campaigns).set(update).where(eq(campaigns.id, req.params.id)).returning();
+    if (!result) return res.status(404).json({ error: 'Campaign not found' });
+    return res.json({ ok: true });
+  } catch (err) { next(err); }
+});
+

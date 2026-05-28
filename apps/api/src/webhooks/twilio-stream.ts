@@ -5,7 +5,7 @@ import { and, desc, eq, ne } from 'drizzle-orm';
 import {
   db, calls, contacts, agentConfigs, businesses, knowledgeBases,
   knowledgeDocuments, transcripts, appointments, orders, escalations,
-  catalogItems, businessSettings,
+  catalogItems, businessSettings, campaignContacts, campaigns,
 } from '../db';
 import { env } from '../config/env';
 import { logger } from '../config/logger';
@@ -54,6 +54,8 @@ type CallContext = {
   contactRow: { id: string; name: string | null; location: string | null } | undefined;
   previousSnippets: string[];
   catalogSummary: string | null;
+  campaignGoal: string | null;
+  campaignScript: string | null;
 };
 
 async function loadCallContext(callId: string): Promise<CallContext | null> {
@@ -102,13 +104,28 @@ async function loadCallContext(callId: string): Promise<CallContext | null> {
     catalogSummary = parts.join('\n\n');
   }
 
-  return { callRow, agentRow, bizRow, kbRow, kbDocs, contactRow, previousSnippets, catalogSummary };
+  // Load campaign context for outbound calls
+  let campaignGoal: string | null = null;
+  let campaignScript: string | null = null;
+  if (callRow.direction === 'OUTBOUND' && callRow.campaignContactId) {
+    const [cc] = await db.select({ campaignId: campaignContacts.campaignId })
+      .from(campaignContacts).where(eq(campaignContacts.id, callRow.campaignContactId)).limit(1);
+    if (cc) {
+      const [camp] = await db.select({ goal: campaigns.goal, script: campaigns.script })
+        .from(campaigns).where(eq(campaigns.id, cc.campaignId)).limit(1);
+      campaignGoal = camp?.goal ?? null;
+      campaignScript = camp?.script ?? null;
+    }
+  }
+
+  return { callRow, agentRow, bizRow, kbRow, kbDocs, contactRow, previousSnippets, catalogSummary, campaignGoal, campaignScript };
 }
 
 // ─── System instructions ──────────────────────────────────────────────────────
 
 function buildInstructions(ctx: CallContext, ops: boolean): string {
-  const { callRow, agentRow, bizRow, kbRow, kbDocs, contactRow, previousSnippets, catalogSummary } = ctx;
+  const { callRow, agentRow, bizRow, kbRow, kbDocs, contactRow, previousSnippets, catalogSummary, campaignGoal, campaignScript } = ctx;
+  const isOutbound = callRow.direction === 'OUTBOUND';
   const callerName = callRow.callerName ?? contactRow?.name ?? null;
   const callerLocation = callRow.callerLocation ?? contactRow?.location ?? null;
   const agentName = agentRow?.name ?? 'your agent';
@@ -117,19 +134,24 @@ function buildInstructions(ctx: CallContext, ops: boolean): string {
   const faqs: { question: string; answer: string }[] = (kbRow?.faqs as any) ?? [];
 
   return [
-    `You are ${agentName}, a phone customer service agent for "${bizName}". Your name is ${agentName} — never call yourself "Milu" or any other name.`,
+    isOutbound
+      ? `You are ${agentName}, a phone sales and follow-up agent for "${bizName}". Your name is ${agentName} — never call yourself "Milu" or any other name.`
+      : `You are ${agentName}, a phone customer service agent for "${bizName}". Your name is ${agentName} — never call yourself "Milu" or any other name.`,
     `Tone: ${tone}. Speak naturally as on a real phone call — concise, 1 to 3 short sentences max per turn.`,
     `Never use bullet points, numbered lists, or markdown. Never start with filler words like "Alright", "Sure", "Okay", "Certainly".`,
     `Start directly with your answer or question.`,
-    callerName ? `Caller's name: ${callerName}.` : null,
-    callerLocation ? `Calling from: ${callerLocation}.` : null,
+    isOutbound ? `You are making an OUTBOUND call. You called the customer, not the other way around. Open with a brief friendly introduction and state the purpose of your call.` : null,
+    isOutbound && campaignGoal ? `CALL PURPOSE: ${campaignGoal}` : null,
+    isOutbound && campaignScript ? `OPENING SCRIPT HINT: ${campaignScript}` : null,
+    callerName ? `Contact name: ${callerName}.` : null,
+    callerLocation ? `Location: ${callerLocation}.` : null,
     callRow.callerNumber ? `Phone: ${callRow.callerNumber}.` : null,
     previousSnippets.length
-      ? `Previous conversations with this caller (most recent last):\n${previousSnippets.join('\n')}`
+      ? `Previous conversations with this contact (most recent last):\n${previousSnippets.join('\n')}`
       : null,
     `If the customer seems frustrated or upset, acknowledge their feelings first before answering.`,
     `Never reveal you are an AI unless directly asked.`,
-    `Respond in the same language or dialect the customer uses — English, Nigerian Pidgin, Yoruba, Igbo, Hausa. Match their style naturally.`,
+    `Respond in the same language or dialect the customer uses — English, Arabic, Nigerian Pidgin, Yoruba, Igbo, Hausa. If the caller speaks Arabic, respond fully in Arabic. Match their style naturally.`,
     bizRow && kbRow?.websiteSummary ? `About ${bizName}: ${kbRow.websiteSummary.slice(0, 600)}` : null,
     faqs.length ? `Common questions:\n${faqs.slice(0, 10).map(f => `Q: ${f.question}\nA: ${f.answer}`).join('\n')}` : null,
     kbDocs.length ? `Additional info: ${kbDocs.slice(0, 3).map(d => (d.summary ?? '').slice(0, 300)).join(' ')}` : null,
@@ -840,9 +862,10 @@ export function handleTwilioVoiceStream(ws: WebSocket, req: IncomingMessage) {
     }
 
     const dgClient = createClient(env.DEEPGRAM_API_KEY);
+    // detect_language lets callers speak English, Arabic, or any other Deepgram-supported language
     const conn = dgClient.listen.live({
       model: 'nova-2',
-      language: 'en',
+      detect_language: true,
       smart_format: true,
       interim_results: true,
       endpointing: 300,       // 300ms silence threshold — prevents mid-sentence splits
@@ -908,15 +931,19 @@ export function handleTwilioVoiceStream(ws: WebSocket, req: IncomingMessage) {
   async function sendGreeting() {
     if (!ctx) return;
     try {
-      const { agentRow, bizRow, callRow, contactRow } = ctx;
+      const { agentRow, bizRow, callRow, contactRow, campaignGoal } = ctx;
       const callerName = callRow.callerName ?? contactRow?.name ?? null;
       const bizName = bizRow?.name ?? '';
       const agentName = agentRow?.name ?? '';
+      const isOutbound = callRow.direction === 'OUTBOUND';
 
       const isReturning = ctx.previousSnippets.length > 0;
 
       let greeting: string;
-      if (agentRow?.greeting?.trim()) {
+      if (isOutbound) {
+        const nameGreet = callerName ? `Hi ${callerName}, ` : 'Hello, ';
+        greeting = `${nameGreet}this is ${agentName || 'an assistant'} from ${bizName || 'us'}. I hope I'm not catching you at a bad time. ${campaignGoal ? `I'm calling regarding ${campaignGoal}.` : 'I just wanted to follow up with you.'} Do you have a moment to chat?`;
+      } else if (agentRow?.greeting?.trim()) {
         greeting = agentRow.greeting.trim();
         if (callerName) greeting = greeting.replace(/\{name\}/gi, callerName);
         greeting = greeting.replace(/\{business\}/gi, bizName).replace(/\{agent\}/gi, agentName);
