@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { eq, and, desc } from 'drizzle-orm';
-import { db, campaigns, campaignContacts, businesses, phoneNumbers, payments } from '../db';
+import { db, campaigns, campaignContacts, businesses, phoneNumbers, payments, contacts } from '../db';
 import { authMiddleware } from '../middleware/auth';
 import { env } from '../config/env';
 import { logger } from '../config/logger';
@@ -12,12 +12,12 @@ campaignsRouter.use(authMiddleware);
 
 const PRICE_PER_CALL = 0.25;
 const MIN_CALLS = 4;
-const WHOP_API_BASE = 'https://api.whop.com/api/v2';
 
 async function createWhopCheckout(campaignId: string, businessId: string, amountUsd: number): Promise<string> {
   if (!env.WHOP_API_KEY) throw new Error('Whop is not configured');
 
-  const res = await fetch(`${WHOP_API_BASE}/checkout-configurations`, {
+  // Checkout configurations are on Whop's v5 API
+  const res = await fetch('https://api.whop.com/v5/checkout-configurations', {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${env.WHOP_API_KEY}`,
@@ -135,6 +135,22 @@ campaignsRouter.post('/:id/checkout', async (req, res, next) => {
       .where(eq(campaigns.id, campaign.id));
 
     return res.json({ url: checkoutUrl });
+  } catch (err) { next(err); }
+});
+
+// ─── GET /campaigns/contacts — existing business contacts for picker ──────────
+campaignsRouter.get('/contacts/list', async (req, res, next) => {
+  try {
+    const businessId = req.headers['x-business-id'] as string;
+    if (!businessId) return res.status(400).json({ error: 'Business ID required' });
+
+    const rows = await db.select({ id: contacts.id, name: contacts.name, phone: contacts.phone })
+      .from(contacts)
+      .where(eq(contacts.businessId, businessId))
+      .orderBy(contacts.name)
+      .limit(500);
+
+    return res.json({ contacts: rows });
   } catch (err) { next(err); }
 });
 

@@ -1,9 +1,10 @@
 'use client';
 
-import { useState, useEffect, useCallback, Suspense } from 'react';
+import { useState, useEffect, useCallback, useRef, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { useAuth } from '../../../hooks/useAuth';
 import { apiGet, apiPost, apiDelete } from '../../../lib/api';
+import * as XLSX from 'xlsx';
 
 const PRICE_PER_CALL = 0.25;
 const MIN_CALLS = 4;
@@ -38,6 +39,12 @@ interface CampaignContact {
 interface ContactInput {
   name: string;
   phoneNumber: string;
+}
+
+interface BusinessContact {
+  id: string;
+  name: string | null;
+  phone: string;
 }
 
 const STATUS_LABELS: Record<CampaignStatus, string> = {
@@ -95,6 +102,14 @@ export default function CampaignsPage() {
   const [contacts, setContacts] = useState<ContactInput[]>([{ name: '', phoneNumber: '' }]);
   const [creating, setCreating] = useState(false);
   const [newCampaign, setNewCampaign] = useState<Campaign | null>(null);
+
+  // Contact import / picker state
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [bizContacts, setBizContacts] = useState<BusinessContact[]>([]);
+  const [showPicker, setShowPicker] = useState(false);
+  const [pickerSearch, setPickerSearch] = useState('');
+  const [pickerSelected, setPickerSelected] = useState<Set<string>>(new Set());
+  const [loadingBizContacts, setLoadingBizContacts] = useState(false);
 
   const callCount = Math.max(contacts.filter(c => c.phoneNumber.trim()).length, MIN_CALLS);
   const totalCost = (callCount * PRICE_PER_CALL).toFixed(2);
@@ -189,6 +204,64 @@ export default function CampaignsPage() {
 
   function removeContact(idx: number) {
     setContacts(prev => prev.filter((_, i) => i !== idx));
+  }
+
+  function handleExcelImport(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      try {
+        const wb = XLSX.read(evt.target?.result, { type: 'binary' });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        const rows = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1 });
+        const imported: ContactInput[] = [];
+        for (const row of rows as unknown[][]) {
+          if (!row || row.length === 0) continue;
+          const phone = String(row[0] ?? '').trim();
+          const name = String(row[1] ?? '').trim();
+          if (phone && phone.match(/^\+?[\d\s\-().]{5,}/)) {
+            imported.push({ phoneNumber: phone, name });
+          }
+        }
+        if (imported.length > 0) {
+          setContacts(prev => {
+            const existing = prev.filter(c => c.phoneNumber.trim());
+            const merged = [...existing, ...imported];
+            return merged.length > 0 ? merged : [{ name: '', phoneNumber: '' }];
+          });
+        }
+      } catch { /* ignore parse errors */ }
+    };
+    reader.readAsBinaryString(file);
+    e.target.value = '';
+  }
+
+  async function openContactPicker() {
+    setShowPicker(true);
+    if (bizContacts.length > 0) return;
+    setLoadingBizContacts(true);
+    try {
+      const res = await apiGet<{ contacts: BusinessContact[] }>('/campaigns/contacts/list', token);
+      setBizContacts(res.contacts);
+    } catch { /* ignore */ } finally {
+      setLoadingBizContacts(false);
+    }
+  }
+
+  function confirmPickerSelection() {
+    const toAdd = bizContacts
+      .filter(c => pickerSelected.has(c.id))
+      .map(c => ({ name: c.name ?? '', phoneNumber: c.phone }));
+    if (toAdd.length > 0) {
+      setContacts(prev => {
+        const existing = prev.filter(c => c.phoneNumber.trim());
+        return [...existing, ...toAdd];
+      });
+    }
+    setShowPicker(false);
+    setPickerSelected(new Set());
+    setPickerSearch('');
   }
 
   function resetCreate() {
@@ -351,6 +424,10 @@ export default function CampaignsPage() {
 
   // ── Create Step 2: Contacts ────────────────────────────────────────────────
   if (step === 'create-2') {
+    const filteredBizContacts = bizContacts.filter(c =>
+      !pickerSearch || (c.name ?? c.phone).toLowerCase().includes(pickerSearch.toLowerCase()) || c.phone.includes(pickerSearch)
+    );
+
     return (
       <div className="p-6 max-w-xl mx-auto">
         <button onClick={() => setStep('create-1')} className="flex items-center gap-1.5 text-sm text-primary/60 hover:text-primary mb-6">
@@ -358,12 +435,89 @@ export default function CampaignsPage() {
           Back
         </button>
 
-        <div className="mb-6">
+        <div className="mb-5">
           <h1 className="text-2xl font-bold text-primary">Add Contacts</h1>
           <p className="text-sm text-primary/60 mt-1">Step 2 of 2 — Who should be called?</p>
         </div>
 
-        <div className="space-y-3 max-h-96 overflow-y-auto pr-1">
+        {/* Import actions */}
+        <div className="flex gap-2 mb-4">
+          <button
+            onClick={openContactPicker}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-sand bg-white text-sm text-primary hover:bg-sand-light transition-colors"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+            From Contacts
+          </button>
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-sand bg-white text-sm text-primary hover:bg-sand-light transition-colors"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+            Import Excel
+          </button>
+          <input ref={fileInputRef} type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={handleExcelImport} />
+          <p className="text-xs text-primary/40 self-center">Column A: phone, Column B: name</p>
+        </div>
+
+        {/* Contacts picker modal */}
+        {showPicker && (
+          <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md flex flex-col max-h-[80vh]">
+              <div className="p-4 border-b border-sand flex items-center justify-between">
+                <h3 className="font-semibold text-primary">Select Contacts</h3>
+                <button onClick={() => { setShowPicker(false); setPickerSelected(new Set()); }} className="text-primary/40 hover:text-primary">
+                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                </button>
+              </div>
+              <div className="p-3 border-b border-sand">
+                <input
+                  type="text"
+                  placeholder="Search by name or phone…"
+                  value={pickerSearch}
+                  onChange={e => setPickerSearch(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border border-sand text-sm text-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+                />
+              </div>
+              <div className="overflow-y-auto flex-1 divide-y divide-sand/50">
+                {loadingBizContacts ? (
+                  <div className="py-8 text-center text-primary/40 text-sm">Loading contacts…</div>
+                ) : filteredBizContacts.length === 0 ? (
+                  <div className="py-8 text-center text-primary/40 text-sm">No contacts found</div>
+                ) : filteredBizContacts.map(c => (
+                  <label key={c.id} className="flex items-center gap-3 px-4 py-3 hover:bg-sand-light cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={pickerSelected.has(c.id)}
+                      onChange={e => setPickerSelected(prev => {
+                        const next = new Set(prev);
+                        if (e.target.checked) { next.add(c.id); } else { next.delete(c.id); }
+                        return next;
+                      })}
+                      className="rounded border-sand text-primary focus:ring-primary/20"
+                    />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-primary truncate">{c.name || 'Unknown'}</p>
+                      <p className="text-xs text-primary/50 font-mono">{c.phone}</p>
+                    </div>
+                  </label>
+                ))}
+              </div>
+              <div className="p-4 border-t border-sand flex items-center justify-between gap-3">
+                <span className="text-xs text-primary/50">{pickerSelected.size} selected</span>
+                <button
+                  onClick={confirmPickerSelection}
+                  disabled={pickerSelected.size === 0}
+                  className="px-4 py-2 bg-primary text-cream-light rounded-xl text-sm font-medium hover:bg-primary/90 disabled:opacity-40"
+                >
+                  Add {pickerSelected.size > 0 ? `${pickerSelected.size} ` : ''}Contact{pickerSelected.size !== 1 ? 's' : ''}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        <div className="space-y-3 max-h-72 overflow-y-auto pr-1">
           {contacts.map((c, i) => (
             <div key={i} className="flex gap-2 items-start">
               <div className="flex-1 grid grid-cols-2 gap-2">
