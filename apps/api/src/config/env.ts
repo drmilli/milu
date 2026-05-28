@@ -40,6 +40,7 @@ const envSchema = z.object({
   BREVO_SMTP_PASSWORD: z.string().optional(),
   // Whop
   WHOP_API_KEY: z.string().optional(),
+  WHOP_COMPANY_API_KEY: z.string().optional(), // Company/seller key — required for checkout configurations
   WHOP_WEBHOOK_SECRET: z.string().optional(),
   WHOP_COMPANY_ID: z.string().optional(),
   // WhatsApp Business Cloud API
