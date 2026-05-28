@@ -14,23 +14,32 @@ const PRICE_PER_CALL = 0.25;
 const MIN_CALLS = 4;
 
 async function createWhopCheckout(campaignId: string, businessId: string, amountUsd: number): Promise<string> {
-  // Use WHOP_COMPANY_API_KEY (seller key) if set, fall back to WHOP_API_KEY
   const apiKey = env.WHOP_COMPANY_API_KEY ?? env.WHOP_API_KEY;
-  if (!apiKey) throw new Error('Whop is not configured — set WHOP_COMPANY_API_KEY in Railway');
+  if (!apiKey) throw new Error('Whop is not configured');
+  if (!env.WHOP_COMPANY_ID) throw new Error('WHOP_COMPANY_ID is not set');
 
+  // Whop API v1 — checkout_configurations
+  // Docs: https://docs.whop.com/api-reference/checkout-configurations/create-checkout-configuration
   const payload = {
+    mode: 'payment',
     plan: {
-      initial_price: amountUsd,
-      billing_period: 0,
+      company_id: env.WHOP_COMPANY_ID,
+      currency: 'usd',
+      initial_price: amountUsd,        // one-time charge amount
+      title: `Outbound Campaign (${campaignId.slice(0, 8)})`,
+      product: {
+        external_identifier: `milu-campaign-${campaignId}`,
+        title: 'Milu Outbound Campaign',
+        visibility: 'hidden',
+      },
     },
     metadata: { campaignId, businessId },
     redirect_url: `${env.APP_URL}/campaigns?paid=${campaignId}`,
-    cancel_url: `${env.APP_URL}/campaigns?cancelled=${campaignId}`,
   };
 
-  logger.info({ campaignId, amountUsd, apiKeyPrefix: apiKey.slice(0, 12) }, 'Creating Whop checkout configuration');
+  logger.info({ campaignId, amountUsd, apiKeyPrefix: apiKey.slice(0, 10) }, 'Creating Whop checkout configuration');
 
-  const res = await fetch('https://api.whop.com/v5/checkout-configurations', {
+  const res = await fetch('https://api.whop.com/api/v1/checkout_configurations', {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${apiKey}`,
@@ -40,7 +49,7 @@ async function createWhopCheckout(campaignId: string, businessId: string, amount
   });
 
   const raw = await res.text();
-  logger.info({ status: res.status, body: raw.slice(0, 800), campaignId }, 'Whop checkout-configurations response');
+  logger.info({ status: res.status, body: raw.slice(0, 800), campaignId }, 'Whop checkout_configurations response');
 
   if (!res.ok) {
     throw new Error(`Whop checkout configuration failed ${res.status}: ${raw}`);
@@ -48,20 +57,15 @@ async function createWhopCheckout(campaignId: string, businessId: string, amount
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const data = JSON.parse(raw) as any;
+  const id: string | undefined = data?.id ?? data?.data?.id;
 
-  // Whop may nest the response under `data` or return fields at the top level
-  const inner = data?.data ?? data;
-  const checkoutUrl: string | undefined =
-    inner?.checkout_url ??
-    inner?.url ??
-    (inner?.id ? `https://whop.com/checkout/${inner.id}/` : undefined);
-
-  if (!checkoutUrl) {
-    logger.error({ raw: raw.slice(0, 800), campaignId }, 'Whop checkout response missing URL — full response logged above');
-    throw new Error('Whop did not return a checkout URL. Check Railway logs.');
+  if (!id) {
+    logger.error({ raw: raw.slice(0, 800), campaignId }, 'Whop checkout response missing id');
+    throw new Error('Whop did not return a checkout configuration ID. Check Railway logs.');
   }
 
-  logger.info({ checkoutUrl, campaignId }, 'Whop checkout URL ready');
+  const checkoutUrl = `https://whop.com/checkout/${id}/`;
+  logger.info({ checkoutUrl, id, campaignId }, 'Whop checkout URL ready');
   return checkoutUrl;
 }
 
