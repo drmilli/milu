@@ -149,6 +149,7 @@ function buildInstructions(ctx: CallContext, ops: boolean): string {
     previousSnippets.length
       ? `Previous conversations with this contact (most recent last):\n${previousSnippets.join('\n')}`
       : null,
+    `Do NOT ask for the caller's name or location at the start of the call. Only ask once the conversation is naturally wrapping up — before ending, say something like "Before I let you go, may I get your name and location so we can follow up if needed?" Then use their name going forward.`,
     `If the customer seems frustrated or upset, acknowledge their feelings first before answering.`,
     `Never reveal you are an AI unless directly asked.`,
     `Respond in the same language or dialect the customer uses — English, Arabic, Nigerian Pidgin, Yoruba, Igbo, Hausa. If the caller speaks Arabic, respond fully in Arabic. Match their style naturally.`,
@@ -602,7 +603,7 @@ export function handleTwilioVoiceStream(ws: WebSocket, req: IncomingMessage) {
           max_tokens: 200,
           stream: true,
         }),
-        signal: AbortSignal.timeout(15000),
+        signal: AbortSignal.timeout(25000),
       });
 
       if (!res.ok || !res.body) {
@@ -610,7 +611,7 @@ export function handleTwilioVoiceStream(ws: WebSocket, req: IncomingMessage) {
         logger.warn({ status: res.status, err: err.slice(0, 200) }, 'OpenAI stream error');
         elWs?.close();
         agentSpeaking = false;
-        const sorry = "I'm having trouble responding right now.";
+        const sorry = "Sorry, could you repeat that? I didn't quite catch it.";
         await streamTTS(sorry);
         return sorry;
       }
@@ -789,7 +790,18 @@ export function handleTwilioVoiceStream(ws: WebSocket, req: IncomingMessage) {
       const ok = await streamElevenLabsTTS(text, ttsAbortController);
       if (!ok) {
         logger.error({ callId }, 'ElevenLabs TTS failed — no audio sent');
-        onFail?.();
+        if (onFail) {
+          onFail();
+        } else {
+          // No fallback provided — keep the call alive by saying sorry via Twilio REST
+          const client = getTwilioClient();
+          if (client && callSid) {
+            const sorry = encodeURIComponent("Sorry, I couldn't hear you clearly. Could you say that again?");
+            client.calls(callSid)
+              .update({ twiml: `<Response><Say voice="alice">${decodeURIComponent(sorry)}</Say></Response>` })
+              .catch(() => null);
+          }
+        }
       }
     } finally {
       agentSpeaking = false;
@@ -914,9 +926,19 @@ export function handleTwilioVoiceStream(ws: WebSocket, req: IncomingMessage) {
       }
     });
 
+    let dgRetried = false;
     conn.on(LiveTranscriptionEvents.Error, (err: any) => {
       logger.error({ err, callId }, 'Deepgram STT error');
-      fallbackToGatherPath();
+      if (!dgRetried) {
+        dgRetried = true;
+        logger.info({ callId }, 'Deepgram error — retrying connection once');
+        setTimeout(() => {
+          if (ws.readyState === WebSocket.OPEN) connectToDeepgram();
+          else fallbackToGatherPath();
+        }, 1500);
+      } else {
+        fallbackToGatherPath();
+      }
     });
 
     conn.on(LiveTranscriptionEvents.Close, () => {

@@ -601,17 +601,17 @@ async function computeTwilioTurn(callId: string, speechResult: string, baseUrl: 
   if (action === 'escalate') {
     await handleEscalation(callId, callRow.businessId, callRow.callerNumber ?? '', speechResult);
     await db.update(calls).set({ status: 'COMPLETED', resolution: 'HUMAN', endedAt: new Date() }).where(eq(calls.id, callId));
-    const speak = await speakTag(reply, agentRow?.voiceId, agentRow?.clonedVoiceId, language, baseUrl, 2500);
+    const speak = await speakTag(reply, agentRow?.voiceId, agentRow?.clonedVoiceId, language, baseUrl, 8000);
     return twiml(`${speak}<Hangup/>`);
   }
 
   if (action === 'end') {
     await db.update(calls).set({ status: 'COMPLETED', resolution: 'AI', endedAt: new Date() }).where(eq(calls.id, callId));
-    const speak = await speakTag(reply, agentRow?.voiceId, agentRow?.clonedVoiceId, language, baseUrl, 2500);
+    const speak = await speakTag(reply, agentRow?.voiceId, agentRow?.clonedVoiceId, language, baseUrl, 8000);
     return twiml(`${speak}<Hangup/>`);
   }
 
-  const speak = await speakTag(reply, agentRow?.voiceId, agentRow?.clonedVoiceId, language, baseUrl, 2500);
+  const speak = await speakTag(reply, agentRow?.voiceId, agentRow?.clonedVoiceId, language, baseUrl, 8000);
   return twiml(speak + gatherTurn(callId, language, baseUrl));
 }
 
@@ -774,7 +774,7 @@ export async function handleTwilioVoiceGather(req: Request, res: Response) {
       }
 
       await db.insert(transcripts).values({ callId, speaker: 'agent', text: prompt }).catch(() => null);
-      const speak = await speakTag(prompt, null, null, language, baseUrl, 2000);
+      const speak = await speakTag(prompt, null, null, language, baseUrl, 8000);
       return res.send(twiml(
         speak +
         gatherTurn(callId, language, baseUrl, stillAwaiting ? 6 : 4),
@@ -1089,7 +1089,7 @@ export async function handleTwilioVoiceFallbackGreeting(req: Request, res: Respo
       : `Hello! You've reached ${bizName}. I'm ${agentName}. How can I help you today?`;
 
     await db.insert(transcripts).values({ callId, speaker: 'agent', text: greeting }).catch(() => null);
-    const speak = await speakTag(greeting, agentRow?.voiceId, agentRow?.clonedVoiceId, language, baseUrl, 5000);
+    const speak = await speakTag(greeting, agentRow?.voiceId, agentRow?.clonedVoiceId, language, baseUrl, 8000);
     return res.send(twiml(speak + gatherTurn(callId, language, baseUrl)));
   } catch (err) {
     logger.error({ err, callId }, 'Fallback greeting failed');
