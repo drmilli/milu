@@ -25,6 +25,7 @@ export const broadcastStatusEnum = pgEnum('broadcast_status', ['DRAFT', 'SENDING
 export const templateStatusEnum = pgEnum('template_status', ['DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'REJECTED']);
 export const campaignStatusEnum = pgEnum('campaign_status', ['DRAFT', 'PENDING_PAYMENT', 'RUNNING', 'COMPLETED', 'CANCELLED']);
 export const campaignContactStatusEnum = pgEnum('campaign_contact_status', ['PENDING', 'CALLING', 'ANSWERED', 'VOICEMAIL', 'NO_ANSWER', 'FAILED']);
+export const paymentTypeEnum = pgEnum('payment_type', ['SUBSCRIPTION', 'CAMPAIGN']);
 
 // ─── Core ─────────────────────────────────────────────────────────────────────
 export const businesses = pgTable('businesses', {
@@ -491,6 +492,19 @@ export const dataConnectors = pgTable('data_connectors', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 });
 
+// ─── Payments ─────────────────────────────────────────────────────────────────
+export const payments = pgTable('payments', {
+  id: text('id').primaryKey().$defaultFn(() => randomUUID()),
+  businessId: text('business_id').references(() => businesses.id, { onDelete: 'set null' }),
+  campaignId: text('campaign_id'),
+  type: paymentTypeEnum('type').notNull(),
+  plan: text('plan'),
+  description: text('description').notNull(),
+  amountUsd: real('amount_usd').notNull(),
+  whopRef: text('whop_ref'),
+  paidAt: timestamp('paid_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
 // ─── Campaigns ────────────────────────────────────────────────────────────────
 export const campaigns = pgTable('campaigns', {
   id: text('id').primaryKey().$defaultFn(() => randomUUID()),
@@ -639,6 +653,7 @@ export type PhoneNumberRequest = typeof phoneNumberRequests.$inferSelect;
 export type DataConnector = typeof dataConnectors.$inferSelect;
 export type Campaign = typeof campaigns.$inferSelect;
 export type CampaignContact = typeof campaignContacts.$inferSelect;
+export type Payment = typeof payments.$inferSelect;
 export type FollowUp = typeof followUps.$inferSelect;
 export type MessageTemplate = typeof messageTemplates.$inferSelect;
 export type MessageBroadcast = typeof messageBroadcasts.$inferSelect;

@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { eq, and, desc } from 'drizzle-orm';
-import { db, campaigns, campaignContacts, businesses, phoneNumbers } from '../db';
+import { db, campaigns, campaignContacts, businesses, phoneNumbers, payments } from '../db';
 import { authMiddleware } from '../middleware/auth';
 import { env } from '../config/env';
 import { logger } from '../config/logger';
@@ -166,6 +166,16 @@ export async function activateCampaignPayment(campaignId: string) {
   if (!campaign) return;
 
   logger.info({ campaignId, businessId: campaign.businessId }, 'Campaign paid via Whop — starting dialer');
+
+  // Log to payment history
+  await db.insert(payments).values({
+    businessId: campaign.businessId,
+    campaignId: campaign.id,
+    type: 'CAMPAIGN',
+    description: `Outbound campaign: ${campaign.name}`,
+    amountUsd: parseFloat(campaign.totalCost),
+    whopRef: campaignId,
+  }).catch(() => null);
 
   const [phoneRow] = await db.select({ number: phoneNumbers.number })
     .from(phoneNumbers)

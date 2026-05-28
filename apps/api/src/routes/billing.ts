@@ -2,7 +2,7 @@ import { Router } from 'express';
 import crypto from 'crypto';
 import { z } from 'zod';
 import { and, eq, sql, gte } from 'drizzle-orm';
-import { db, businesses, users, calls, affiliateAgents, affiliateCommissions, affiliateReferrals, affiliateSettings } from '../db';
+import { db, businesses, users, calls, affiliateAgents, affiliateCommissions, affiliateReferrals, affiliateSettings, payments } from '../db';
 import { authMiddleware } from '../middleware/auth';
 import { env } from '../config/env';
 import { sendSubscriptionConfirmEmail, sendSubscriptionCancelledEmail } from '../utils/email';
@@ -357,6 +357,18 @@ export async function handleWhopWebhook(req: import('express').Request, res: imp
               (event.data as any).membership_id ??
               (rawBody ? crypto.createHash('sha256').update(rawBody).digest('hex') : `${Date.now()}`),
             );
+
+            // Log payment to history
+            const planPrices: Record<string, number> = { STARTER: 25, GROWTH: 45, ENTERPRISE: 0, ONE_TIME: 0 };
+            const amountFromEvent = Number((event.data as any).amount ?? (event.data as any).amount_usd ?? 0);
+            await db.insert(payments).values({
+              businessId,
+              type: 'SUBSCRIPTION',
+              plan: tier,
+              description: `${tier.charAt(0) + tier.slice(1).toLowerCase()} plan subscription`,
+              amountUsd: amountFromEvent || planPrices[tier] || 0,
+              whopRef: paymentRef,
+            }).onConflictDoNothing().catch(() => null);
 
             const [bizRow] = await db.select({
               affiliateAgentId: businesses.affiliateAgentId,

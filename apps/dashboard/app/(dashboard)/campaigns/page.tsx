@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { useAuth } from '../../../hooks/useAuth';
 import { apiGet, apiPost, apiDelete } from '../../../lib/api';
@@ -67,10 +67,18 @@ const CONTACT_STATUS_COLORS: Record<ContactStatus, string> = {
 
 type Step = 'list' | 'create-1' | 'create-2' | 'create-3' | 'detail';
 
+function PaymentReturnHandler({ onPaid }: { onPaid: () => void }) {
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  useEffect(() => {
+    if (searchParams.get('paid')) { onPaid(); router.replace('/campaigns'); }
+    if (searchParams.get('cancelled')) { router.replace('/campaigns'); }
+  }, [searchParams, onPaid, router]);
+  return null;
+}
+
 export default function CampaignsPage() {
   const { token } = useAuth();
-  const router = useRouter();
-  const searchParams = useSearchParams();
 
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [loading, setLoading] = useState(true);
@@ -106,19 +114,6 @@ export default function CampaignsPage() {
   }, [token]);
 
   useEffect(() => { loadCampaigns(); }, [loadCampaigns]);
-
-  // Handle Stripe return
-  useEffect(() => {
-    const paid = searchParams.get('paid');
-    const cancelled = searchParams.get('cancelled');
-    if (paid) {
-      loadCampaigns();
-      router.replace('/campaigns');
-    }
-    if (cancelled) {
-      router.replace('/campaigns');
-    }
-  }, [searchParams, loadCampaigns, router]);
 
   async function loadDetail(campaign: Campaign) {
     setSelected(campaign);
@@ -489,6 +484,9 @@ export default function CampaignsPage() {
   // ── Campaign List ──────────────────────────────────────────────────────────
   return (
     <div className="p-6 max-w-5xl mx-auto">
+      <Suspense fallback={null}>
+        <PaymentReturnHandler onPaid={loadCampaigns} />
+      </Suspense>
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold text-primary">Campaigns</h1>

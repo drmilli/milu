@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { eq, desc, ilike, and, or, sql, gte, inArray, lt } from 'drizzle-orm';
 import bcrypt from 'bcryptjs';
 import twilio from 'twilio';
-import { db, businesses, users, calls, escalations, phoneNumbers, agentConfigs, notifications, catalogItems, contactSubmissions, phoneNumberRequests, dataConnectors, affiliateAgents, affiliateReferrals, affiliateCommissions, affiliateWithdrawalRequests, affiliateSettings, contacts, followUps, campaigns, campaignContacts } from '../db';
+import { db, businesses, users, calls, escalations, phoneNumbers, agentConfigs, notifications, catalogItems, contactSubmissions, phoneNumberRequests, dataConnectors, affiliateAgents, affiliateReferrals, affiliateCommissions, affiliateWithdrawalRequests, affiliateSettings, contacts, followUps, campaigns, campaignContacts, payments } from '../db';
 import { logger } from '../config/logger';
 import { adminGuard } from '../middleware/admin-guard';
 import { signAdminToken, verifyAdminToken } from '../utils/jwt';
@@ -1770,6 +1770,54 @@ adminRouter.patch('/campaigns/:id', async (req, res, next) => {
     const [result] = await db.update(campaigns).set(update).where(eq(campaigns.id, req.params.id)).returning();
     if (!result) return res.status(404).json({ error: 'Campaign not found' });
     return res.json({ ok: true });
+  } catch (err) { next(err); }
+});
+
+// ─── Admin: Payment History ───────────────────────────────────────────────────
+
+adminRouter.get('/payments', async (req, res, next) => {
+  try {
+    const { page = '1', limit = '50', type, businessId: qBid, from, to } = req.query as Record<string, string>;
+    const pgNum = Math.max(1, parseInt(page));
+    const pgSize = Math.min(100, Math.max(1, parseInt(limit)));
+
+    const conditions: ReturnType<typeof eq>[] = [];
+    if (type) conditions.push(eq(payments.type, type.toUpperCase() as 'SUBSCRIPTION' | 'CAMPAIGN'));
+    if (qBid) conditions.push(eq(payments.businessId, qBid));
+    if (from) conditions.push(sql`${payments.paidAt} >= ${new Date(from)}`);
+    if (to) conditions.push(sql`${payments.paidAt} <= ${new Date(to)}`);
+    const where = conditions.length ? and(...conditions) : undefined;
+
+    const [rows, countResult, totalResult] = await Promise.all([
+      db.select({
+        id: payments.id,
+        businessId: payments.businessId,
+        businessName: businesses.name,
+        campaignId: payments.campaignId,
+        type: payments.type,
+        plan: payments.plan,
+        description: payments.description,
+        amountUsd: payments.amountUsd,
+        whopRef: payments.whopRef,
+        paidAt: payments.paidAt,
+      })
+        .from(payments)
+        .leftJoin(businesses, eq(payments.businessId, businesses.id))
+        .where(where)
+        .orderBy(desc(payments.paidAt))
+        .limit(pgSize)
+        .offset((pgNum - 1) * pgSize),
+      db.select({ n: sql<number>`count(*)` }).from(payments).where(where),
+      db.select({ total: sql<number>`coalesce(sum(amount_usd), 0)` }).from(payments).where(where),
+    ]);
+
+    return res.json({
+      payments: rows,
+      total: Number(countResult[0]?.n ?? 0),
+      totalRevenue: Number(totalResult[0]?.total ?? 0),
+      page: pgNum,
+      limit: pgSize,
+    });
   } catch (err) { next(err); }
 });
 
