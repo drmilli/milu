@@ -25,7 +25,8 @@ async function createWhopCheckout(campaignId: string, businessId: string, amount
     plan: {
       company_id: env.WHOP_COMPANY_ID,
       currency: 'usd',
-      initial_price: amountUsd,        // one-time charge amount
+      plan_type: 'one_time',
+      initial_price: amountUsd,
       title: `Outbound Campaign (${campaignId.slice(0, 8)})`,
       product: {
         external_identifier: `milu-campaign-${campaignId}`,
