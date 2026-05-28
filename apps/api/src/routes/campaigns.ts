@@ -26,6 +26,7 @@ async function createWhopCheckout(campaignId: string, businessId: string, amount
       company_id: env.WHOP_COMPANY_ID,
       currency: 'usd',
       plan_type: 'one_time',
+      adaptive_pricing_enabled: false,
       initial_price: amountUsd,
       title: `Outbound Campaign (${campaignId.slice(0, 8)})`,
       product: {
