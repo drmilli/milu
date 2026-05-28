@@ -23,7 +23,7 @@ export const followUpTypeEnum = pgEnum('follow_up_type', ['CALL', 'WHATSAPP', 'N
 export const followUpStatusEnum = pgEnum('follow_up_status', ['PENDING', 'COMPLETED', 'CANCELLED']);
 export const broadcastStatusEnum = pgEnum('broadcast_status', ['DRAFT', 'SENDING', 'COMPLETED', 'FAILED']);
 export const templateStatusEnum = pgEnum('template_status', ['DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'REJECTED']);
-export const campaignStatusEnum = pgEnum('campaign_status', ['DRAFT', 'PENDING_PAYMENT', 'RUNNING', 'COMPLETED', 'CANCELLED']);
+export const campaignStatusEnum = pgEnum('campaign_status', ['DRAFT', 'PENDING_PAYMENT', 'SCHEDULED', 'RUNNING', 'COMPLETED', 'CANCELLED']);
 export const campaignContactStatusEnum = pgEnum('campaign_contact_status', ['PENDING', 'CALLING', 'ANSWERED', 'VOICEMAIL', 'NO_ANSWER', 'FAILED']);
 export const paymentTypeEnum = pgEnum('payment_type', ['SUBSCRIPTION', 'CAMPAIGN']);
 
@@ -519,6 +519,7 @@ export const campaigns = pgTable('campaigns', {
   voicemailCount: integer('voicemail_count').default(0).notNull(),
   totalCost: text('total_cost').notNull(),
   stripeCheckoutSessionId: text('stripe_checkout_session_id'),
+  scheduledAt: timestamp('scheduled_at', { withTimezone: true }),
   paidAt: timestamp('paid_at', { withTimezone: true }),
   completedAt: timestamp('completed_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),

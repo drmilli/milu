@@ -43,7 +43,7 @@ import { sendNotification } from './services/notifications';
 import { affiliateAuthRouter, affiliateRouter } from './routes/affiliate';
 import { followUpsRouter } from './routes/followUps';
 import { broadcastsRouter } from './routes/broadcasts';
-import { campaignsRouter } from './routes/campaigns';
+import { campaignsRouter, runScheduledCampaigns } from './routes/campaigns';
 
 const app: Express = express();
 const server = http.createServer(app);
@@ -290,6 +290,11 @@ server.listen(env.PORT, async () => {
 
   // Then run every 5 minutes as a safety net
   setInterval(closeStaleActiveCalls, 5 * 60 * 1000);
+
+  // Check for scheduled campaigns every minute
+  setInterval(() => {
+    runScheduledCampaigns().catch(err => logger.error({ err }, 'Scheduled campaign runner error'));
+  }, 60 * 1000);
 });
 
 export default app;

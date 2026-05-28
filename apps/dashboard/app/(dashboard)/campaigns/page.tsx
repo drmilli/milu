@@ -9,7 +9,7 @@ import * as XLSX from 'xlsx';
 const PRICE_PER_CALL = 0.25;
 const MIN_CALLS = 4;
 
-type CampaignStatus = 'DRAFT' | 'PENDING_PAYMENT' | 'RUNNING' | 'COMPLETED' | 'CANCELLED';
+type CampaignStatus = 'DRAFT' | 'PENDING_PAYMENT' | 'SCHEDULED' | 'RUNNING' | 'COMPLETED' | 'CANCELLED';
 type ContactStatus = 'PENDING' | 'CALLING' | 'ANSWERED' | 'VOICEMAIL' | 'NO_ANSWER' | 'FAILED';
 
 interface Campaign {
@@ -23,6 +23,7 @@ interface Campaign {
   answeredCount: number;
   voicemailCount: number;
   totalCost: string;
+  scheduledAt?: string | null;
   paidAt?: string | null;
   completedAt?: string | null;
   createdAt: string;
@@ -50,6 +51,7 @@ interface BusinessContact {
 const STATUS_LABELS: Record<CampaignStatus, string> = {
   DRAFT: 'Draft',
   PENDING_PAYMENT: 'Awaiting Payment',
+  SCHEDULED: 'Scheduled',
   RUNNING: 'Running',
   COMPLETED: 'Completed',
   CANCELLED: 'Cancelled',
@@ -58,6 +60,7 @@ const STATUS_LABELS: Record<CampaignStatus, string> = {
 const STATUS_COLORS: Record<CampaignStatus, string> = {
   DRAFT: 'bg-sand-light text-primary',
   PENDING_PAYMENT: 'bg-yellow-100 text-yellow-800',
+  SCHEDULED: 'bg-purple-100 text-purple-700',
   RUNNING: 'bg-green-100 text-green-700',
   COMPLETED: 'bg-blue-100 text-blue-700',
   CANCELLED: 'bg-red-100 text-red-700',
@@ -98,7 +101,7 @@ export default function CampaignsPage() {
   const [error, setError] = useState('');
 
   // Create form state
-  const [form, setForm] = useState({ name: '', goal: '', script: '' });
+  const [form, setForm] = useState({ name: '', goal: '', script: '', scheduledAt: '' });
   const [contacts, setContacts] = useState<ContactInput[]>([{ name: '', phoneNumber: '' }]);
   const [creating, setCreating] = useState(false);
   const [newCampaign, setNewCampaign] = useState<Campaign | null>(null);
@@ -156,6 +159,7 @@ export default function CampaignsPage() {
         name: form.name,
         goal: form.goal,
         script: form.script || undefined,
+        scheduledAt: form.scheduledAt ? new Date(form.scheduledAt).toISOString() : undefined,
         contacts: validContacts,
       }, token);
       setNewCampaign(res.campaign);
@@ -271,7 +275,7 @@ export default function CampaignsPage() {
   }
 
   function resetCreate() {
-    setForm({ name: '', goal: '', script: '' });
+    setForm({ name: '', goal: '', script: '', scheduledAt: '' });
     setContacts([{ name: '', phoneNumber: '' }]);
     setNewCampaign(null);
     setError('');
@@ -412,6 +416,23 @@ export default function CampaignsPage() {
               placeholder="e.g. Mention the 20% discount offer that expires this Friday."
               className="w-full px-4 py-2.5 rounded-xl border border-sand bg-white text-primary text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 resize-none"
             />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-primary mb-1.5">
+              Schedule <span className="text-primary/40 font-normal">(optional — leave blank to start immediately after payment)</span>
+            </label>
+            <input
+              type="datetime-local"
+              value={form.scheduledAt}
+              min={new Date(Date.now() + 5 * 60 * 1000).toISOString().slice(0, 16)}
+              onChange={e => setForm(p => ({ ...p, scheduledAt: e.target.value }))}
+              className="w-full px-4 py-2.5 rounded-xl border border-sand bg-white text-primary text-sm focus:outline-none focus:ring-2 focus:ring-primary/20"
+            />
+            {form.scheduledAt && (
+              <p className="text-xs text-primary/50 mt-1">
+                Calls will start at {new Date(form.scheduledAt).toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+              </p>
+            )}
           </div>
         </div>
 
@@ -704,6 +725,11 @@ export default function CampaignsPage() {
                     <span className="text-xs text-primary/40">{c.answeredCount} answered</span>
                     <span className="text-xs font-medium text-primary">${c.totalCost}</span>
                   </div>
+                  {c.scheduledAt && c.status === 'SCHEDULED' && (
+                    <p className="text-xs text-purple-600 mt-1">
+                      Starts {new Date(c.scheduledAt).toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                    </p>
+                  )}
                 </div>
                 <div className="flex items-center gap-2 flex-shrink-0" onClick={e => e.stopPropagation()}>
                   {c.status === 'PENDING_PAYMENT' && (

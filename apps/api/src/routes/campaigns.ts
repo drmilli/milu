@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { eq, and, desc } from 'drizzle-orm';
+import { eq, and, desc, sql } from 'drizzle-orm';
 import { db, campaigns, campaignContacts, businesses, phoneNumbers, payments, contacts } from '../db';
 import { authMiddleware } from '../middleware/auth';
 import { env } from '../config/env';
@@ -81,6 +81,7 @@ campaignsRouter.post('/', async (req, res, next) => {
       name: z.string().min(1),
       goal: z.string().min(1),
       script: z.string().optional(),
+      scheduledAt: z.string().datetime().optional(),
       contacts: z.array(z.object({
         name: z.string().optional(),
         phoneNumber: z.string().min(5),
@@ -89,12 +90,14 @@ campaignsRouter.post('/', async (req, res, next) => {
 
     const billedCount = Math.max(body.contacts.length, MIN_CALLS);
     const totalCost = (billedCount * PRICE_PER_CALL).toFixed(2);
+    const scheduledAt = body.scheduledAt ? new Date(body.scheduledAt) : null;
 
     const [campaign] = await db.insert(campaigns).values({
       businessId,
       name: body.name,
       goal: body.goal,
       script: body.script,
+      scheduledAt,
       status: 'PENDING_PAYMENT',
       contactCount: body.contacts.length,
       totalCost,
@@ -202,14 +205,23 @@ campaignsRouter.delete('/:id', async (req, res, next) => {
 
 // ─── activateCampaignPayment — called by Whop webhook ─────────────────────────
 export async function activateCampaignPayment(campaignId: string) {
-  const [campaign] = await db.update(campaigns)
-    .set({ status: 'RUNNING', paidAt: new Date(), updatedAt: new Date() })
+  const now = new Date();
+  const [existing] = await db.select().from(campaigns)
     .where(and(eq(campaigns.id, campaignId), eq(campaigns.status, 'PENDING_PAYMENT')))
+    .limit(1);
+  if (!existing) return;
+
+  const isScheduled = existing.scheduledAt && existing.scheduledAt > now;
+  const newStatus = isScheduled ? 'SCHEDULED' : 'RUNNING';
+
+  const [campaign] = await db.update(campaigns)
+    .set({ status: newStatus, paidAt: now, updatedAt: now })
+    .where(eq(campaigns.id, campaignId))
     .returning();
 
   if (!campaign) return;
 
-  logger.info({ campaignId, businessId: campaign.businessId }, 'Campaign paid via Whop — starting dialer');
+  logger.info({ campaignId, businessId: campaign.businessId, status: newStatus, scheduledAt: campaign.scheduledAt }, 'Campaign paid via Whop');
 
   // Log to payment history
   await db.insert(payments).values({
@@ -221,12 +233,38 @@ export async function activateCampaignPayment(campaignId: string) {
     whopRef: campaignId,
   }).catch(() => null);
 
-  const [phoneRow] = await db.select({ number: phoneNumbers.number })
-    .from(phoneNumbers)
-    .where(eq(phoneNumbers.businessId, campaign.businessId))
-    .limit(1);
+  if (newStatus === 'RUNNING') {
+    const [phoneRow] = await db.select({ number: phoneNumbers.number })
+      .from(phoneNumbers)
+      .where(eq(phoneNumbers.businessId, campaign.businessId))
+      .limit(1);
 
-  startCampaign(campaign.id, campaign.businessId, phoneRow?.number ?? null).catch(err =>
-    logger.error({ err, campaignId }, 'Campaign dialer error')
-  );
+    startCampaign(campaign.id, campaign.businessId, phoneRow?.number ?? null).catch(err =>
+      logger.error({ err, campaignId }, 'Campaign dialer error')
+    );
+  }
+}
+
+// ─── runScheduledCampaigns — called every minute from index.ts ─────────────────
+export async function runScheduledCampaigns() {
+  const due = await db.select().from(campaigns)
+    .where(and(
+      eq(campaigns.status, 'SCHEDULED'),
+      sql`${campaigns.scheduledAt} <= now()`
+    ));
+
+  for (const campaign of due) {
+    logger.info({ campaignId: campaign.id }, 'Scheduled campaign is due — starting dialer');
+    await db.update(campaigns).set({ status: 'RUNNING', updatedAt: new Date() })
+      .where(eq(campaigns.id, campaign.id));
+
+    const [phoneRow] = await db.select({ number: phoneNumbers.number })
+      .from(phoneNumbers)
+      .where(eq(phoneNumbers.businessId, campaign.businessId))
+      .limit(1);
+
+    startCampaign(campaign.id, campaign.businessId, phoneRow?.number ?? null).catch(err =>
+      logger.error({ err, campaignId: campaign.id }, 'Scheduled campaign dialer error')
+    );
+  }
 }
