@@ -892,7 +892,7 @@ export function handleTwilioVoiceStream(ws: WebSocket, req: IncomingMessage) {
       smart_format: true,
       interim_results: true,
       endpointing: 300,
-      utterance_end_ms: 500,  // reduced from 1000ms — faster response initiation
+      utterance_end_ms: 1000,
       encoding: 'mulaw',
       sample_rate: 8000,
     });
