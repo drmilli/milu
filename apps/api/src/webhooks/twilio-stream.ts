@@ -149,7 +149,7 @@ function buildInstructions(ctx: CallContext, ops: boolean): string {
     previousSnippets.length
       ? `Previous conversations with this contact (most recent last):\n${previousSnippets.join('\n')}`
       : null,
-    `Do NOT ask for the caller's name or location at the start of the call. Only ask once the conversation is naturally wrapping up — before ending, say something like "Before I let you go, may I get your name and location so we can follow up if needed?" Then use their name going forward.`,
+    `Do NOT ask for the caller's name or location at the start of the call. Only ask once the conversation is naturally wrapping up — say something like "Before I let you go, may I get your name and your location?" After they answer, call update_caller_profile with both the name and location, then acknowledge only the name in your reply (e.g. "Thank you, John!") before ending.`,
     `If the customer seems frustrated or upset, acknowledge their feelings first before answering.`,
     `Never reveal you are an AI unless directly asked.`,
     `Respond in the same language or dialect the customer uses — English, Arabic, Nigerian Pidgin, Yoruba, Igbo, Hausa. If the caller speaks Arabic, respond fully in Arabic. Match their style naturally.`,
@@ -165,7 +165,7 @@ function buildInstructions(ctx: CallContext, ops: boolean): string {
     kbRow?.escalationNumber
       ? `ESCALATION: If you cannot help, the customer requests a human agent, or the caller expresses any urgent, emergency, or time-sensitive need (e.g. medical emergency, safety issue, extreme frustration), call the escalate_to_human function immediately — do NOT ask clarifying questions when the need is urgent.`
       : `If you cannot help, let the customer know the team will follow up.`,
-    `CALLER NAME: If you mispronounce the caller's name and they correct you, or if they give you their name for the first time, immediately call update_caller_name with the correct name and then use it from that point on.`,
+    `CALLER PROFILE: If the caller corrects their name or provides their name/location at any point, immediately call update_caller_profile with the name and/or location and use it going forward.`,
     `END CALL: When the conversation is naturally complete and the customer is satisfied, call the end_call function. Do not just say goodbye — call the function.`,
   ].filter(Boolean).join('\n');
 }
@@ -246,12 +246,15 @@ function buildChatTools(ops: boolean, canEscalate: boolean) {
   tools.push({
     type: 'function',
     function: {
-      name: 'update_caller_name',
-      description: 'Update the caller\'s name when they correct you or provide their name for the first time.',
+      name: 'update_caller_profile',
+      description: 'Save the caller\'s name and/or location when they provide or correct this information.',
       parameters: {
         type: 'object',
-        properties: { name: { type: 'string', description: 'The correct name as the caller stated it' } },
-        required: ['name'],
+        properties: {
+          name: { type: 'string', description: 'The caller\'s name as they stated it' },
+          location: { type: 'string', description: 'The caller\'s location or area (city, region, etc.)' },
+        },
+        required: [],
       },
     },
   });
@@ -464,29 +467,42 @@ export function handleTwilioVoiceStream(ws: WebSocket, req: IncomingMessage) {
       return JSON.stringify({ success: true });
     }
 
-    if (name === 'update_caller_name') {
+    if (name === 'update_caller_profile' || name === 'update_caller_name') {
       const newName = (args.name ?? '').trim();
-      if (!newName) return JSON.stringify({ success: false, error: 'Name is empty' });
+      const newLocation = (args.location ?? '').trim();
 
-      // Update the calls row so post-call records reflect the corrected name
-      await db.update(calls).set({ callerName: newName }).where(eq(calls.id, callId)).catch(() => null);
+      if (!newName && !newLocation) return JSON.stringify({ success: false, error: 'Nothing to update' });
 
-      // Also update the linked contact if one exists
-      if (callRow.contactId) {
-        await db.update(contacts).set({ name: newName, updatedAt: new Date() })
+      // Update the calls row
+      const callUpdate: Record<string, string> = {};
+      if (newName) callUpdate.callerName = newName;
+      if (newLocation) callUpdate.callerLocation = newLocation;
+      await db.update(calls).set(callUpdate).where(eq(calls.id, callId)).catch(() => null);
+
+      // Also update the linked contact
+      if (callRow.contactId && (newName || newLocation)) {
+        const contactUpdate: Record<string, string | Date> = { updatedAt: new Date() };
+        if (newName) contactUpdate.name = newName;
+        if (newLocation) contactUpdate.location = newLocation;
+        await db.update(contacts).set(contactUpdate as any)
           .where(eq(contacts.id, callRow.contactId)).catch(() => null);
       }
 
-      // Patch the live system instructions so subsequent LLM turns use the correct name
-      systemInstructions = systemInstructions.replace(
-        /Caller's name: .+?\./,
-        `Caller's name: ${newName}.`,
-      );
-      if (!systemInstructions.includes(`Caller's name:`)) {
-        systemInstructions = `Caller's name: ${newName}.\n` + systemInstructions;
+      // Patch live system instructions so subsequent turns reflect updates
+      if (newName) {
+        systemInstructions = systemInstructions.replace(/Contact name: .+?\./, `Contact name: ${newName}.`);
+        if (!systemInstructions.includes('Contact name:')) {
+          systemInstructions = `Contact name: ${newName}.\n` + systemInstructions;
+        }
+      }
+      if (newLocation) {
+        systemInstructions = systemInstructions.replace(/Location: .+?\./, `Location: ${newLocation}.`);
+        if (!systemInstructions.includes('Location:')) {
+          systemInstructions = `Location: ${newLocation}.\n` + systemInstructions;
+        }
       }
 
-      logger.info({ callId, newName }, 'Caller name updated');
+      logger.info({ callId, newName, newLocation }, 'Caller profile updated');
       return JSON.stringify({ success: true });
     }
 
