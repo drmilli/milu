@@ -599,8 +599,8 @@ export function handleTwilioVoiceStream(ws: WebSocket, req: IncomingMessage) {
           messages: [{ role: 'system', content: currentEmotionNote + systemInstructions }, ...conversationHistory],
           tools,
           tool_choice: 'auto',
-          temperature: 0.6,
-          max_tokens: 200,
+          temperature: 0.4,
+          max_tokens: 120,
           stream: true,
         }),
         signal: AbortSignal.timeout(25000),
@@ -692,6 +692,12 @@ export function handleTwilioVoiceStream(ws: WebSocket, req: IncomingMessage) {
       }
       if (elWs && elState.v !== 'closed') elWs.close();
       agentSpeaking = false;
+
+      // ElevenLabs WS closed/failed before audio played — fall back to HTTP TTS so caller hears something
+      if (!elAudioFinished && fullText.trim() && finishReason !== 'tool_calls' && !myAbort.signal.aborted) {
+        logger.warn({ callId, elTextSent }, 'ElevenLabs WS audio incomplete — falling back to HTTP TTS');
+        await streamTTS(fullText);
+      }
 
       if (finishReason === 'tool_calls' && tcMap.size > 0) {
         const tcs = Array.from(tcMap.values());
@@ -874,14 +880,19 @@ export function handleTwilioVoiceStream(ws: WebSocket, req: IncomingMessage) {
     }
 
     const dgClient = createClient(env.DEEPGRAM_API_KEY);
-    // detect_language lets callers speak English, Arabic, or any other Deepgram-supported language
+
+    // Use the agent's configured language for fast fixed-language STT
+    // detect_language adds significant latency — only use per-language models
+    const agentLang = ctx?.agentRow?.language ?? 'en';
+    const dgLanguage = agentLang === 'ar' ? 'ar' : 'en';
+
     const conn = dgClient.listen.live({
       model: 'nova-2',
-      detect_language: true,
+      language: dgLanguage,
       smart_format: true,
       interim_results: true,
-      endpointing: 300,       // 300ms silence threshold — prevents mid-sentence splits
-      utterance_end_ms: 1000,
+      endpointing: 300,
+      utterance_end_ms: 500,  // reduced from 1000ms — faster response initiation
       encoding: 'mulaw',
       sample_rate: 8000,
     });
