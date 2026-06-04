@@ -38,6 +38,7 @@ export const businesses = pgTable('businesses', {
   affiliateReferredAt: timestamp('affiliate_referred_at', { withTimezone: true }),
   subscriptionTier: subscriptionTierEnum('subscription_tier').default('STARTER').notNull(),
   isActive: boolean('is_active').default(true).notNull(),
+  trialEndedAt: timestamp('trial_ended_at', { withTimezone: true }),
   config: jsonb('config').$type<Record<string, unknown>>().default({}).notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),

@@ -55,7 +55,7 @@ contactsRouter.get('/', async (req, res, next) => {
       search: z.string().max(100).optional(),
       stage: z.string().optional(),
       page: z.coerce.number().min(1).default(1),
-      limit: z.coerce.number().min(1).max(100).default(20),
+      limit: z.coerce.number().min(1).max(500).default(20),
     }).parse(req.query);
 
     const bid = req.user?.businessId;

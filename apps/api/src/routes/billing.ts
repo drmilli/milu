@@ -335,7 +335,7 @@ export async function handleWhopWebhook(req: import('express').Request, res: imp
 
         if (businessId) {
           await db.update(businesses)
-            .set({ subscriptionTier: tier, isActive: true, updatedAt: new Date() })
+            .set({ subscriptionTier: tier, isActive: true, trialEndedAt: null, updatedAt: new Date() })
             .where(eq(businesses.id, businessId));
 
           const owner = await db

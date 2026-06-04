@@ -9,9 +9,9 @@ import { swaggerSpec } from './swagger';
 import { apiLimiter, contactLimiter } from './middleware/rate-limit';
 import { errorHandler } from './middleware/error-handler';
 import { httpLogger } from './middleware/http-logger';
-import { and, eq, lt, sql as drizzleSql } from 'drizzle-orm';
+import { and, eq, lt, isNull, sql as drizzleSql } from 'drizzle-orm';
 import { z } from 'zod';
-import { db, calls, contactSubmissions } from './db';
+import { db, calls, contactSubmissions, businesses, users } from './db';
 import { authRouter } from './routes/auth';
 import { businessesRouter } from './routes/businesses';
 import { callsRouter } from './routes/calls';
@@ -44,6 +44,7 @@ import { affiliateAuthRouter, affiliateRouter } from './routes/affiliate';
 import { followUpsRouter } from './routes/followUps';
 import { broadcastsRouter } from './routes/broadcasts';
 import { campaignsRouter, runScheduledCampaigns } from './routes/campaigns';
+import { sendTrialEndedEmail } from './utils/email';
 
 const app: Express = express();
 const server = http.createServer(app);
@@ -295,6 +296,50 @@ server.listen(env.PORT, async () => {
   setInterval(() => {
     runScheduledCampaigns().catch(err => logger.error({ err }, 'Scheduled campaign runner error'));
   }, 60 * 1000);
+
+  // Check for expired trials every hour
+  async function expireTrials() {
+    try {
+      const TRIAL_MS = 10 * 24 * 60 * 60 * 1000;
+      const trialCutoff = new Date(Date.now() - TRIAL_MS);
+
+      // Find STARTER businesses past their trial that haven't been marked yet
+      const expired = await db
+        .select({ id: businesses.id, name: businesses.name })
+        .from(businesses)
+        .where(and(
+          eq(businesses.subscriptionTier, 'STARTER'),
+          eq(businesses.isActive, true),
+          isNull(businesses.trialEndedAt),
+          lt(businesses.createdAt, trialCutoff),
+        ));
+
+      for (const biz of expired) {
+        await db.update(businesses)
+          .set({ isActive: false, trialEndedAt: new Date(), updatedAt: new Date() })
+          .where(eq(businesses.id, biz.id));
+
+        // Email all owners of this business
+        const owners = await db
+          .select({ email: users.email })
+          .from(users)
+          .where(eq(users.businessId, biz.id));
+
+        for (const owner of owners) {
+          sendTrialEndedEmail(owner.email, biz.name).catch(err =>
+            logger.error({ err, businessId: biz.id }, 'Failed to send trial ended email')
+          );
+        }
+
+        logger.info({ businessId: biz.id, name: biz.name }, 'Trial expired — business deactivated, email sent');
+      }
+    } catch (err) {
+      logger.error({ err }, 'Trial expiry check failed');
+    }
+  }
+
+  await expireTrials();
+  setInterval(expireTrials, 60 * 60 * 1000); // every hour
 });
 
 export default app;

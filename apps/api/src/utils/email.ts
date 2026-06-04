@@ -388,6 +388,18 @@ export async function sendSubscriptionCancelledEmail(to: string, businessName: s
   `, 'Your Milu subscription has been cancelled'));
 }
 
+export async function sendTrialEndedEmail(to: string, businessName: string) {
+  await send(to, 'Your Milu free trial has ended', layout(`
+    ${heading('Your free trial has ended')}
+    ${para(`Hi, your 10-day free trial for <strong>${businessName}</strong> has come to an end.`)}
+    ${infoBox(`<p style="font-size:14px; color:#5C3D2E; margin:0;">Your Milu number has been <strong>paused</strong>. Calls to your number will no longer be answered until you upgrade to a paid plan.</p>`)}
+    ${para('Upgrade now to keep your AI agent active and never miss another customer call.')}
+    ${ctaButton(`${env.APP_URL}/billing`, 'Upgrade my plan')}
+    ${divider()}
+    <p style="font-size:13px; color:#7A5230;">Questions? Reply to this email or contact us at <a href="mailto:${env.GMAIL_USER ?? 'info.miluai@gmail.com'}" style="color:#5C3D2E;">${env.GMAIL_USER ?? 'info.miluai@gmail.com'}</a></p>
+  `, 'Your Milu free trial has ended'));
+}
+
 export async function sendPhoneNumberAssignedEmail(to: string, businessName: string, miluNumber: string) {
   const instructions = `
     <p style="font-size:13px; font-weight:600; color:#3B2314; margin-bottom:10px;">Call forwarding instructions</p>

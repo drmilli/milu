@@ -154,9 +154,11 @@ export default function BroadcastsPage() {
   async function loadContacts() {
     if (!token) return;
     try {
-      const data = await apiGet<{ contacts: Contact[] }>('/contacts?limit=200', token);
+      const data = await apiGet<{ contacts: Contact[] }>('/contacts?limit=500', token);
       setContacts(data.contacts);
-    } catch { /* ignore */ }
+    } catch (err) {
+      console.error('Failed to load contacts for broadcast:', err);
+    }
   }
 
   function openCompose() {

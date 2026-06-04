@@ -9,7 +9,7 @@ import { adminGuard } from '../middleware/admin-guard';
 import { signAdminToken, verifyAdminToken } from '../utils/jwt';
 import { authLimiter } from '../middleware/rate-limit';
 import { env } from '../config/env';
-import { sendTestEmail, sendVerificationEmail, sendPasswordResetEmail, sendTeamInviteEmail, sendSubscriptionConfirmEmail, sendSubscriptionCancelledEmail, sendPhoneNumberAssignedEmail } from '../utils/email';
+import { sendTestEmail, sendVerificationEmail, sendPasswordResetEmail, sendTeamInviteEmail, sendSubscriptionConfirmEmail, sendSubscriptionCancelledEmail, sendPhoneNumberAssignedEmail, sendTrialEndedEmail } from '../utils/email';
 import { sendEscalationAlert, sendOrderConfirmation, sendAppointmentReminder, sendCallbackRequest, sendMissedCallAlert, sendWeeklySummary, sendWhatsAppText } from '../services/whatsapp';
 
 function isMissingDbObject(err: unknown) {
@@ -837,14 +837,38 @@ adminRouter.patch('/businesses/:id', async (req, res, next) => {
     }).parse(req.body);
 
     const update: Record<string, unknown> = { updatedAt: new Date() };
+    const tierMap: Record<string, string> = { Starter: 'STARTER', Growth: 'GROWTH', Enterprise: 'ENTERPRISE' };
+
     if (plan) {
-      const tierMap: Record<string, string> = { Starter: 'STARTER', Growth: 'GROWTH', Enterprise: 'ENTERPRISE' };
-      update.subscriptionTier = tierMap[plan] ?? plan.toUpperCase();
+      const tier = tierMap[plan] ?? plan.toUpperCase();
+      update.subscriptionTier = tier;
+      // Upgrading to a paid plan → reactivate and clear trial-ended flag
+      if (tier === 'GROWTH' || tier === 'ENTERPRISE') {
+        update.isActive = true;
+        update.trialEndedAt = null;
+      }
     }
-    if (status !== undefined) update.isActive = status === 'active' || status === 'trial';
+
+    if (status !== undefined) {
+      const active = status === 'active' || status === 'trial';
+      update.isActive = active;
+      // Manually reactivating → clear trial-ended flag so they aren't re-expired
+      if (active) update.trialEndedAt = null;
+    }
 
     const [result] = await db.update(businesses).set(update).where(eq(businesses.id, req.params.id)).returning();
     if (!result) return res.status(404).json({ error: 'Business not found' });
+
+    // Send confirmation email when admin upgrades to a paid tier
+    const newTier = update.subscriptionTier as string | undefined;
+    if (newTier && (newTier === 'GROWTH' || newTier === 'ENTERPRISE')) {
+      const owners = await db.select({ email: users.email }).from(users)
+        .where(eq(users.businessId, req.params.id));
+      for (const owner of owners) {
+        sendSubscriptionConfirmEmail(owner.email, newTier, result.name).catch(() => null);
+      }
+    }
+
     return res.json({ ok: true });
   } catch (err) {
     next(err);

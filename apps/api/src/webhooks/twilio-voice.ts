@@ -648,9 +648,14 @@ export async function handleTwilioVoiceWebhook(req: Request, res: Response) {
 
     const [[agentRow], [bizRow]] = await Promise.all([
       db.select().from(agentConfigs).where(eq(agentConfigs.businessId, businessId)).limit(1),
-      db.select({ name: businesses.name, subscriptionTier: businesses.subscriptionTier, createdAt: businesses.createdAt })
+      db.select({ name: businesses.name, subscriptionTier: businesses.subscriptionTier, createdAt: businesses.createdAt, isActive: businesses.isActive })
         .from(businesses).where(eq(businesses.id, businessId)).limit(1),
     ]);
+
+    // Block calls if business is inactive (trial ended or manually disabled)
+    if (bizRow && !bizRow.isActive) {
+      return res.send(twiml('<Say voice="alice">Sorry, this service is currently unavailable. Please contact the business directly.</Say><Hangup/>'));
+    }
 
     if (bizRow?.createdAt) {
       const plan = buildPlanFromBusinessRow({ subscriptionTier: bizRow.subscriptionTier ?? null, createdAt: bizRow.createdAt });
