@@ -191,7 +191,7 @@ async function sendBroadcastInBackground(
         sentAt: new Date(),
       }).where(and(
         eq(broadcastRecipients.broadcastId, broadcastId),
-        eq(broadcastRecipients.contactId, recipient.id),
+        eq(broadcastRecipients.phone, recipient.phone),
       ));
 
       sent++;
@@ -204,7 +204,7 @@ async function sendBroadcastInBackground(
         error: errMsg,
       }).where(and(
         eq(broadcastRecipients.broadcastId, broadcastId),
-        eq(broadcastRecipients.contactId, recipient.id),
+        eq(broadcastRecipients.phone, recipient.phone),
       ));
 
       failed++;

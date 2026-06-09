@@ -119,6 +119,18 @@ export default function BroadcastsPage() {
     return () => { if (pollingRef.current) clearInterval(pollingRef.current); };
   }, [broadcasts, loadBroadcasts]);
 
+  // One final recipient refresh when selected broadcast completes
+  useEffect(() => {
+    const cur = selectedRef.current;
+    if (cur && (cur.status === 'COMPLETED' || cur.status === 'FAILED')) {
+      const wasSending = selected?.status === 'SENDING';
+      if (wasSending) {
+        // Broadcast just completed, do a final recipient refresh
+        loadRecipients(cur.id);
+      }
+    }
+  }, [selected?.status]);
+
   async function loadRecipients(broadcastId: string) {
     if (!token) return;
     setRecipientsLoading(true);
