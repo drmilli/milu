@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { eq, and, desc, inArray } from 'drizzle-orm';
-import { db, messageBroadcasts, broadcastRecipients, contacts, businesses } from '../db';
+import { db, messageBroadcasts, broadcastRecipients, contacts, businesses, businessSettings } from '../db';
 import { authMiddleware } from '../middleware/auth';
 import { sendBroadcastMessage } from '../services/whatsapp';
 import { logger } from '../config/logger';
@@ -72,12 +72,17 @@ broadcastsRouter.post('/', async (req, res, next) => {
     }
 
     // Load business info
-    const [biz] = await db.select({ name: businesses.name, contactPhone: businesses.contactPhone })
-      .from(businesses).where(eq(businesses.id, bid)).limit(1);
+    const [[biz], [settings]] = await Promise.all([
+      db.select({ name: businesses.name, contactPhone: businesses.contactPhone })
+        .from(businesses).where(eq(businesses.id, bid)).limit(1),
+      db.select({ whatsappNumber: businessSettings.whatsappNumber, whatsappVerified: businessSettings.whatsappVerified })
+        .from(businessSettings).where(eq(businessSettings.businessId, bid)).limit(1),
+    ]);
     if (!biz) return res.status(404).json({ error: 'Business not found' });
 
     const businessName = biz.name;
-    const businessPhone = biz.contactPhone ?? '';
+    // Prefer the verified WhatsApp number from settings, fall back to general contact phone
+    const businessPhone = settings?.whatsappNumber?.trim() || biz.contactPhone?.trim() || '';
 
     // Resolve recipient contacts
     let targetContacts: { id: string; phone: string; name: string | null; tags: string[] | null }[] = [];
