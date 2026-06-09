@@ -1845,3 +1845,45 @@ adminRouter.get('/payments', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// POST /admin/payments — manually record a bank transfer payment for a business
+adminRouter.post('/payments', async (req, res, next) => {
+  try {
+    const body = z.object({
+      businessId: z.string().min(1),
+      amountUsd: z.number().positive(),
+      plan: z.enum(['STARTER', 'GROWTH', 'ENTERPRISE', 'ONE_TIME']),
+      description: z.string().max(300).optional(),
+      paidAt: z.string().optional(), // ISO date string, defaults to now
+      reference: z.string().max(200).optional(),
+      upgradeTier: z.boolean().default(true), // also update business subscription tier
+    }).parse(req.body);
+
+    const [biz] = await db.select({ id: businesses.id, name: businesses.name })
+      .from(businesses).where(eq(businesses.id, body.businessId)).limit(1);
+    if (!biz) return res.status(404).json({ error: 'Business not found' });
+
+    const paidAt = body.paidAt ? new Date(body.paidAt) : new Date();
+    const description = body.description?.trim() ||
+      `${body.plan.charAt(0) + body.plan.slice(1).toLowerCase()} plan — manual bank transfer`;
+
+    const [row] = await db.insert(payments).values({
+      businessId: body.businessId,
+      type: 'SUBSCRIPTION',
+      plan: body.plan,
+      description,
+      amountUsd: body.amountUsd,
+      whopRef: body.reference?.trim() || null,
+      paidAt,
+    }).returning({ id: payments.id });
+
+    if (body.upgradeTier) {
+      await db.update(businesses)
+        .set({ subscriptionTier: body.plan, isActive: true, trialEndedAt: null, updatedAt: new Date() })
+        .where(eq(businesses.id, body.businessId));
+    }
+
+    logger.info({ paymentId: row?.id, businessId: body.businessId, plan: body.plan, amountUsd: body.amountUsd }, 'Admin manually added payment');
+    return res.status(201).json({ ok: true, id: row?.id });
+  } catch (err) { next(err); }
+});
+

@@ -223,17 +223,30 @@ billingRouter.get('/subscription/:businessId', authMiddleware, async (req, res, 
 
 billingRouter.get('/invoices/:businessId', authMiddleware, async (req, res, next) => {
   try {
-    // If Whop API key available, try fetching real invoices
-    if (env.WHOP_API_KEY) {
-      try {
-        const data = await whopRequest<{ data?: unknown[] }>(`/memberships?metadata[businessId]=${req.params.businessId}`);
-        return res.json(data?.data ?? []);
-      } catch {
-        // fall through to empty
-      }
-    }
-    // Return empty — invoices managed on Whop's side
-    return res.json([]);
+    const rows = await db
+      .select({
+        id: payments.id,
+        description: payments.description,
+        amountUsd: payments.amountUsd,
+        plan: payments.plan,
+        whopRef: payments.whopRef,
+        paidAt: payments.paidAt,
+      })
+      .from(payments)
+      .where(eq(payments.businessId, req.params.businessId))
+      .orderBy(desc(payments.paidAt))
+      .limit(50);
+
+    return res.json(rows.map(r => ({
+      id: r.id,
+      date: r.paidAt.toISOString(),
+      amount: r.amountUsd,
+      currency: 'USD',
+      status: 'paid',
+      description: r.description,
+      plan: r.plan,
+      reference: r.whopRef,
+    })));
   } catch (err) {
     next(err);
   }

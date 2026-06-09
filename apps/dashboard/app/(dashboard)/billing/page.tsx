@@ -115,6 +115,9 @@ interface Invoice {
   amount: number;
   currency: string;
   status: 'paid' | 'open' | 'void';
+  description?: string;
+  plan?: string | null;
+  reference?: string | null;
   invoiceUrl?: string;
 }
 
@@ -382,31 +385,26 @@ export default function BillingPage() {
             ))}
           </div>
         ) : invoices.length === 0 ? (
-          <p className="text-sm text-primary-warm text-center py-8">No invoices yet.</p>
+          <p className="text-sm text-primary-warm text-center py-8">No payment history yet.</p>
         ) : (
           <div className="divide-y divide-cream-dark">
             {invoices.map(inv => (
               <div key={inv.id} className="flex items-center gap-4 px-6 py-3.5">
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-primary-dark">{inv.id}</p>
-                  <p className="text-xs text-primary-warm">{fmtDate(inv.date)}</p>
+                  <p className="text-sm font-medium text-primary-dark">
+                    {inv.description || inv.plan || 'Payment'}
+                  </p>
+                  <p className="text-xs text-primary-warm">
+                    {fmtDate(inv.date)}
+                    {inv.reference && <span className="ml-2 text-primary-warm/60">Ref: {inv.reference}</span>}
+                  </p>
                 </div>
-                <p className="text-sm font-medium text-primary-dark whitespace-nowrap">
+                <p className="text-sm font-semibold text-primary-dark whitespace-nowrap">
                   {fmtAmount(inv.amount, inv.currency)}
                 </p>
-                <span className={`text-xs font-medium px-2.5 py-1 rounded-full w-14 text-center flex-shrink-0 ${
-                  inv.status === 'paid' ? 'bg-success/10 text-success' :
-                  inv.status === 'open' ? 'bg-warning/10 text-warning' :
-                  'bg-cream-dark text-primary-warm'
-                }`}>
-                  {inv.status}
+                <span className="text-xs font-medium px-2.5 py-1 rounded-full bg-success/10 text-success flex-shrink-0">
+                  paid
                 </span>
-                {inv.invoiceUrl && (
-                  <a href={inv.invoiceUrl} target="_blank" rel="noopener noreferrer"
-                    className="text-xs text-primary hover:underline flex-shrink-0">
-                    Download
-                  </a>
-                )}
               </div>
             ))}
           </div>
