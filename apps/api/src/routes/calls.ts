@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { eq, and, desc, sql, ilike, or } from 'drizzle-orm';
 import { db, calls, transcripts, escalations } from '../db';
 import { authMiddleware } from '../middleware/auth';
+import { env } from '../config/env';
 
 export const callsRouter: Router = Router();
 callsRouter.use(authMiddleware);
@@ -232,7 +233,6 @@ callsRouter.get('/:id/recording/stream', async (req, res, next) => {
     }
 
     // Proxy Twilio recording with Basic Auth
-    const { env } = await import('../config/env');
     if (!env.TWILIO_ACCOUNT_SID || !env.TWILIO_AUTH_TOKEN) {
       return res.status(404).json({ error: 'Recording not accessible' });
     }
