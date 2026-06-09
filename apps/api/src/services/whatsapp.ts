@@ -381,12 +381,14 @@ export async function sendBroadcastMessage(
     // {{2}} = business name
     // {{3}} = title (if any) + body
     // {{4}} = business contact phone
-    const bodyWithTitle = title?.trim() ? `*${title.trim()}*\n\n${messageBody}` : messageBody;
+    const bodyWithTitle = title?.trim()
+      ? `*${title.trim()}* ${messageBody}`
+      : messageBody;
 
     const templateVars: Record<string, string> = {
       '1': contactName || 'there',
       '2': businessName || 'our business',
-      '3': bodyWithTitle,
+      '3': bodyWithTitle.replace(/\n+/g, ' ').trim(),
       '4': businessContactPhone?.trim() || businessName || 'us',
     };
 
