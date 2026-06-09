@@ -143,7 +143,7 @@ broadcastsRouter.post('/', async (req, res, next) => {
     });
 
     // Send messages in background (fire and forget with rate limiting)
-    sendBroadcastInBackground(broadcast.id, allRecipients, businessName, data.message, businessPhone)
+    sendBroadcastInBackground(broadcast.id, allRecipients, businessName, data.message, businessPhone, data.title)
       .catch(err => logger.error({ err, broadcastId: broadcast.id }, 'Broadcast background sender crashed'));
 
   } catch (err) { next(err); }
@@ -171,6 +171,7 @@ async function sendBroadcastInBackground(
   businessName: string,
   message: string,
   businessPhone: string,
+  title?: string,
 ) {
   let sent = 0;
   let failed = 0;
@@ -183,6 +184,7 @@ async function sendBroadcastInBackground(
         businessName,
         message,
         businessPhone,
+        title,
       );
 
       await db.update(broadcastRecipients).set({

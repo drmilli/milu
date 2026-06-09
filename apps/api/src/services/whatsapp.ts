@@ -112,12 +112,16 @@ async function sendViaTwilioWhatsAppTemplate(to: string, contentSid: string, con
     }
   }
 
+  // If no variables remain after cleaning, omit contentVariables entirely.
+  // Twilio returns 21656 if you pass contentVariables to a fixed-text template with no placeholders.
+  const hasVariables = Object.keys(cleanedVariables).length > 0;
+
   logger.info({
     to: maskPhone(toNormalized),
     from: maskPhone(fromNormalized),
     contentSid,
     statusCallbackUrl,
-    contentVariables: cleanedVariables,
+    contentVariables: hasVariables ? cleanedVariables : '(omitted — no-variable template)',
   }, 'WhatsApp template send attempt (Twilio)');
 
   try {
@@ -126,7 +130,7 @@ async function sendViaTwilioWhatsAppTemplate(to: string, contentSid: string, con
       to: toNormalized,
       ...(statusCallbackUrl ? { statusCallback: statusCallbackUrl } : {}),
       contentSid,
-      contentVariables: JSON.stringify(cleanedVariables),
+      ...(hasVariables ? { contentVariables: JSON.stringify(cleanedVariables) } : {}),
     } as any);
     logger.info({
       to: maskPhone(toNormalized),
@@ -149,7 +153,7 @@ async function sendViaTwilioWhatsAppTemplate(to: string, contentSid: string, con
         details: e?.details,
       },
       contentSid,
-      contentVariables: cleanedVariables,
+      contentVariables: hasVariables ? cleanedVariables : '(omitted)',
     }, 'WhatsApp template send failed (Twilio)');
     throw err;
   }
@@ -369,35 +373,29 @@ export async function sendBroadcastMessage(
   businessName: string,
   messageBody: string,
   businessContactPhone: string,
+  title?: string,
 ) {
   if (env.TWILIO_WHATSAPP_BROADCAST_CONTENT_SID) {
-    // Build template variables — only include non-empty values.
-    // The variable mapping must match exactly what your Twilio content template defines.
-    // Check your template in Twilio Console → Messaging → Content Template Builder.
-    //
-    // Common setups:
-    //   Single-var template:  {{1}} = message body
-    //   Multi-var template:   {{1}} = name, {{2}} = business, {{3}} = body, {{4}} = phone
-    //
-    // TWILIO_BROADCAST_TEMPLATE_VARS env var controls which layout to use:
-    //   "single"  → only {{1}} = messageBody  (default if not set)
-    //   "multi"   → {{1}} name, {{2}} business, {{3}} body, {{4}} phone
-    const layout = (env as any).TWILIO_BROADCAST_TEMPLATE_VARS ?? 'single';
+    // Template: "Hello {{1}}, you have a message from {{2}}. {{3}} Reply or call us on {{4}}"
+    // {{1}} = contact name
+    // {{2}} = business name
+    // {{3}} = title (if any) + body
+    // {{4}} = business contact phone
+    const bodyWithTitle = title?.trim() ? `*${title.trim()}*\n\n${messageBody}` : messageBody;
 
-    let templateVars: Record<string, string>;
-    if (layout === 'multi') {
-      templateVars = { '1': contactName || 'there', '2': businessName || 'our business', '3': messageBody };
-      if (businessContactPhone?.trim()) templateVars['4'] = businessContactPhone.trim();
-    } else {
-      // Single-variable template — just the message body
-      templateVars = { '1': messageBody };
-    }
+    const templateVars: Record<string, string> = {
+      '1': contactName || 'there',
+      '2': businessName || 'our business',
+      '3': bodyWithTitle,
+    };
+    if (businessContactPhone?.trim()) templateVars['4'] = businessContactPhone.trim();
 
     return sendViaTwilioWhatsAppTemplate(to, env.TWILIO_WHATSAPP_BROADCAST_CONTENT_SID, templateVars);
   }
   // Fallback: plain text if template SID not configured
+  const bodyWithTitle = title?.trim() ? `*${title.trim()}*\n\n${messageBody}` : messageBody;
   return sendWhatsAppText(
     to,
-    `Hello ${contactName}, this is a follow-up from *${businessName}*.\n\n${messageBody}\n\nContact us on ${businessContactPhone}`,
+    `Hello ${contactName}, this is a message from *${businessName}*.\n\n${bodyWithTitle}\n\nReply or call us on ${businessContactPhone} — we are happy to help.`,
   );
 }
