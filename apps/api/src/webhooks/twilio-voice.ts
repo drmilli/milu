@@ -923,10 +923,17 @@ export async function handleTwilioVoiceRecording(req: Request, res: Response) {
     if (!bytes) return;
 
     const cloudUrl = await uploadMp3ToCloudinary(callId, bytes);
-    const finalUrl = cloudUrl ?? mediaUrl;
+
+    // If Cloudinary isn't configured, the raw Twilio URL requires Basic Auth which
+    // the browser can't provide. Store a proxied URL through our own API instead.
+    const proto = (req.headers['x-forwarded-proto'] as string | undefined)?.split(',')[0]?.trim() ?? 'https';
+    const host = req.get('host');
+    const baseUrl = host ? `${proto}://${host}` : env.API_URL.replace(/\/$/, '');
+    const proxyUrl = `${baseUrl}/api/v1/calls/${callId}/recording/stream`;
+    const finalUrl = cloudUrl ?? proxyUrl;
 
     await db.update(calls).set({ recordingUrl: finalUrl }).where(eq(calls.id, callId));
-    logger.info({ callId, stored: cloudUrl ? 'cloudinary' : 'twilio' }, 'Call recording stored');
+    logger.info({ callId, stored: cloudUrl ? 'cloudinary' : 'proxy' }, 'Call recording stored');
   } catch (err) {
     logger.error({ err, callId }, 'Failed to store call recording');
   }

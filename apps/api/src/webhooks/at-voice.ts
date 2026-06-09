@@ -302,6 +302,9 @@ async function computeAtVoiceReply(
 
   await db.insert(transcripts).values({ callId: callDbId, speaker: 'caller', text: callerText });
 
+  // Persist the recording URL so business owners can play it back from the dashboard
+  await db.update(calls).set({ recordingUrl }).where(eq(calls.id, callDbId)).catch(() => null);
+
   const messages: ChatMessage[] = [
     ...history.slice().reverse().map(t => ({
       role: (t.speaker === 'agent' ? 'assistant' : 'user') as 'user' | 'assistant',

@@ -167,7 +167,19 @@ function CallsPageInner() {
     setRecordingError('');
     try {
       const res = await apiGet<{ url: string }>(`/calls/${selected.id}/recording`, token);
-      setPlayingUrl(res.url);
+      // Public CDN URLs (Cloudinary etc.) can be used directly by the audio element
+      // Twilio proxy URLs need to be fetched with auth and converted to a blob URL
+      if (res.url.includes('/recording/stream') || res.url.includes('api.twilio.com')) {
+        const apiBase = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000';
+        const streamRes = await fetch(`${apiBase}/api/v1/calls/${selected.id}/recording/stream`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!streamRes.ok) throw new Error('No recording available');
+        const blob = await streamRes.blob();
+        setPlayingUrl(URL.createObjectURL(blob));
+      } else {
+        setPlayingUrl(res.url);
+      }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : '';
       if (msg.toLowerCase().includes('upgrade')) {
@@ -478,7 +490,10 @@ function CallsPageInner() {
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg">
             <div className="flex items-center justify-between px-6 py-4 border-b border-cream-dark">
               <h2 className="font-semibold text-primary-dark">Call recording</h2>
-              <button onClick={() => setPlayingUrl(null)} className="w-8 h-8 flex items-center justify-center rounded-lg text-primary-warm hover:bg-cream transition-colors">
+              <button onClick={() => {
+                if (playingUrl.startsWith('blob:')) URL.revokeObjectURL(playingUrl);
+                setPlayingUrl(null);
+              }} className="w-8 h-8 flex items-center justify-center rounded-lg text-primary-warm hover:bg-cream transition-colors">
                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
               </button>
             </div>

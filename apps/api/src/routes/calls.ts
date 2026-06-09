@@ -197,3 +197,62 @@ callsRouter.get('/:id/recording', async (req, res, next) => {
     next(err);
   }
 });
+
+/**
+ * @openapi
+ * /api/v1/calls/{id}/recording/stream:
+ *   get:
+ *     tags: [Calls]
+ *     summary: Stream a call recording (proxies Twilio recordings that require auth)
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       200:
+ *         description: Audio stream
+ *       404:
+ *         description: No recording available
+ */
+callsRouter.get('/:id/recording/stream', async (req, res, next) => {
+  try {
+    if (req.user?.role === 'OWNER' && req.plan && !req.plan.features.callRecording) {
+      return res.status(402).json({ error: 'Upgrade to Growth to access call recordings.' });
+    }
+    const [call] = await db.select({ recordingUrl: calls.recordingUrl, businessId: calls.businessId })
+      .from(calls).where(eq(calls.id, req.params.id)).limit(1);
+    if (!call?.recordingUrl) return res.status(404).json({ error: 'No recording found' });
+
+    // If the stored URL is already a public CDN URL (Cloudinary, etc.) just redirect
+    if (!call.recordingUrl.includes('api.twilio.com')) {
+      return res.redirect(call.recordingUrl);
+    }
+
+    // Proxy Twilio recording with Basic Auth
+    const { env } = await import('../config/env');
+    if (!env.TWILIO_ACCOUNT_SID || !env.TWILIO_AUTH_TOKEN) {
+      return res.status(404).json({ error: 'Recording not accessible' });
+    }
+
+    const authHeader = Buffer.from(`${env.TWILIO_ACCOUNT_SID}:${env.TWILIO_AUTH_TOKEN}`).toString('base64');
+    const upstream = await fetch(call.recordingUrl, {
+      headers: { Authorization: `Basic ${authHeader}` },
+      signal: AbortSignal.timeout(30000),
+    });
+
+    if (!upstream.ok) return res.status(404).json({ error: 'Recording not found' });
+
+    res.setHeader('Content-Type', upstream.headers.get('content-type') ?? 'audio/mpeg');
+    const contentLength = upstream.headers.get('content-length');
+    if (contentLength) res.setHeader('Content-Length', contentLength);
+    res.setHeader('Cache-Control', 'private, max-age=3600');
+
+    const buf = Buffer.from(await upstream.arrayBuffer());
+    return res.send(buf);
+  } catch (err) {
+    next(err);
+  }
+});
