@@ -104,11 +104,20 @@ async function sendViaTwilioWhatsAppTemplate(to: string, contentSid: string, con
   const rawUrl = env.API_URL.replace(/\/$/, '');
   const statusCallbackUrl = rawUrl.startsWith('https://') ? `${rawUrl}/webhooks/twilio/message-status` : undefined;
 
+  // Filter out empty/undefined values and ensure all values are strings
+  const cleanedVariables: Record<string, string> = {};
+  for (const [key, value] of Object.entries(contentVariables)) {
+    if (value !== undefined && value !== null && String(value).trim() !== '') {
+      cleanedVariables[key] = String(value).trim();
+    }
+  }
+
   logger.info({
     to: maskPhone(toNormalized),
     from: maskPhone(fromNormalized),
     contentSid,
     statusCallbackUrl,
+    contentVariables: cleanedVariables,
   }, 'WhatsApp template send attempt (Twilio)');
 
   try {
@@ -117,7 +126,7 @@ async function sendViaTwilioWhatsAppTemplate(to: string, contentSid: string, con
       to: toNormalized,
       ...(statusCallbackUrl ? { statusCallback: statusCallbackUrl } : {}),
       contentSid,
-      contentVariables: JSON.stringify(contentVariables),
+      contentVariables: JSON.stringify(cleanedVariables),
     } as any);
     logger.info({
       to: maskPhone(toNormalized),
@@ -140,6 +149,7 @@ async function sendViaTwilioWhatsAppTemplate(to: string, contentSid: string, con
         details: e?.details,
       },
       contentSid,
+      contentVariables: cleanedVariables,
     }, 'WhatsApp template send failed (Twilio)');
     throw err;
   }
@@ -174,14 +184,20 @@ export async function sendWhatsAppText(to: string, message: string) {
 
 export async function sendWhatsAppOtp(to: string, code: string) {
   if (env.TWILIO_WHATSAPP_OTP_CONTENT_SID) {
-    return sendViaTwilioWhatsAppTemplate(to, env.TWILIO_WHATSAPP_OTP_CONTENT_SID, { '1': code, '2': '10' });
+    return sendViaTwilioWhatsAppTemplate(to, env.TWILIO_WHATSAPP_OTP_CONTENT_SID, { 
+      '1': code || '000000', 
+      '2': '10' 
+    });
   }
   return sendWhatsAppText(to, `Your Milu verification code is *${code}*. It expires in 10 minutes.`);
 }
 
 export async function sendWhatsAppNotification(to: string, title: string, body: string) {
   if (env.TWILIO_WHATSAPP_NOTIFICATION_CONTENT_SID) {
-    return sendViaTwilioWhatsAppTemplate(to, env.TWILIO_WHATSAPP_NOTIFICATION_CONTENT_SID, { '1': title, '2': body });
+    return sendViaTwilioWhatsAppTemplate(to, env.TWILIO_WHATSAPP_NOTIFICATION_CONTENT_SID, { 
+      '1': title || 'Notification', 
+      '2': body || '' 
+    });
   }
   return sendWhatsAppText(to, `*${title}*\n\n${body}`);
 }
@@ -197,8 +213,8 @@ export async function sendOrderConfirmation(to: string, orderNumber: string, ite
   const itemList = items.map((i) => `  • ${i.name} ×${i.qty}`).join('\n');
   if (env.TWILIO_WHATSAPP_ORDER_CONFIRM_CONTENT_SID) {
     return sendViaTwilioWhatsAppTemplate(to, env.TWILIO_WHATSAPP_ORDER_CONFIRM_CONTENT_SID, {
-      '1': businessName,
-      '2': orderNumber,
+      '1': businessName || 'our business',
+      '2': orderNumber || 'N/A',
       '3': itemList || '—',
     });
   }
@@ -220,9 +236,9 @@ export async function sendOrderStatusUpdate(to: string, orderNumber: string, sta
   const msg = statusMessages[status] ?? `Your order status has been updated to: ${status}`;
   if (env.TWILIO_WHATSAPP_ORDER_STATUS_CONTENT_SID) {
     return sendViaTwilioWhatsAppTemplate(to, env.TWILIO_WHATSAPP_ORDER_STATUS_CONTENT_SID, {
-      '1': orderNumber,
+      '1': orderNumber || 'N/A',
       '2': msg,
-      '3': businessName,
+      '3': businessName || 'our business',
     });
   }
   return sendWhatsAppText(to,
@@ -355,12 +371,18 @@ export async function sendBroadcastMessage(
   businessContactPhone: string,
 ) {
   if (env.TWILIO_WHATSAPP_BROADCAST_CONTENT_SID) {
-    return sendViaTwilioWhatsAppTemplate(to, env.TWILIO_WHATSAPP_BROADCAST_CONTENT_SID, {
-      '1': contactName,
-      '2': businessName,
+    // Ensure all values are non-empty strings
+    const templateVars: Record<string, string> = {
+      '1': contactName || 'there',
+      '2': businessName || 'our business',
       '3': messageBody,
-      '4': businessContactPhone,
-    });
+    };
+    // Only include phone if it's not empty
+    if (businessContactPhone && businessContactPhone.trim()) {
+      templateVars['4'] = businessContactPhone.trim();
+    }
+    
+    return sendViaTwilioWhatsAppTemplate(to, env.TWILIO_WHATSAPP_BROADCAST_CONTENT_SID, templateVars);
   }
   // Fallback: plain text if template SID not configured
   return sendWhatsAppText(
