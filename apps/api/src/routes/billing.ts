@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import crypto from 'crypto';
 import { z } from 'zod';
-import { and, eq, sql, gte } from 'drizzle-orm';
+import { and, eq, sql, gte, desc } from 'drizzle-orm';
 import { db, businesses, users, calls, affiliateAgents, affiliateCommissions, affiliateReferrals, affiliateSettings, payments } from '../db';
 import { authMiddleware } from '../middleware/auth';
 import { env } from '../config/env';
