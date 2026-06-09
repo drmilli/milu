@@ -371,17 +371,28 @@ export async function sendBroadcastMessage(
   businessContactPhone: string,
 ) {
   if (env.TWILIO_WHATSAPP_BROADCAST_CONTENT_SID) {
-    // Ensure all values are non-empty strings
-    const templateVars: Record<string, string> = {
-      '1': contactName || 'there',
-      '2': businessName || 'our business',
-      '3': messageBody,
-    };
-    // Only include phone if it's not empty
-    if (businessContactPhone && businessContactPhone.trim()) {
-      templateVars['4'] = businessContactPhone.trim();
+    // Build template variables — only include non-empty values.
+    // The variable mapping must match exactly what your Twilio content template defines.
+    // Check your template in Twilio Console → Messaging → Content Template Builder.
+    //
+    // Common setups:
+    //   Single-var template:  {{1}} = message body
+    //   Multi-var template:   {{1}} = name, {{2}} = business, {{3}} = body, {{4}} = phone
+    //
+    // TWILIO_BROADCAST_TEMPLATE_VARS env var controls which layout to use:
+    //   "single"  → only {{1}} = messageBody  (default if not set)
+    //   "multi"   → {{1}} name, {{2}} business, {{3}} body, {{4}} phone
+    const layout = (env as any).TWILIO_BROADCAST_TEMPLATE_VARS ?? 'single';
+
+    let templateVars: Record<string, string>;
+    if (layout === 'multi') {
+      templateVars = { '1': contactName || 'there', '2': businessName || 'our business', '3': messageBody };
+      if (businessContactPhone?.trim()) templateVars['4'] = businessContactPhone.trim();
+    } else {
+      // Single-variable template — just the message body
+      templateVars = { '1': messageBody };
     }
-    
+
     return sendViaTwilioWhatsAppTemplate(to, env.TWILIO_WHATSAPP_BROADCAST_CONTENT_SID, templateVars);
   }
   // Fallback: plain text if template SID not configured
