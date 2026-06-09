@@ -387,8 +387,8 @@ export async function sendBroadcastMessage(
       '1': contactName || 'there',
       '2': businessName || 'our business',
       '3': bodyWithTitle,
+      '4': businessContactPhone?.trim() || businessName || 'us',
     };
-    if (businessContactPhone?.trim()) templateVars['4'] = businessContactPhone.trim();
 
     return sendViaTwilioWhatsAppTemplate(to, env.TWILIO_WHATSAPP_BROADCAST_CONTENT_SID, templateVars);
   }
