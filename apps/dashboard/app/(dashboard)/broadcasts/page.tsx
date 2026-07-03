@@ -117,7 +117,7 @@ export default function BroadcastsPage() {
       if (pollingRef.current) clearInterval(pollingRef.current);
     }
     return () => { if (pollingRef.current) clearInterval(pollingRef.current); };
-  }, [broadcasts, loadBroadcasts]);
+  }, [broadcasts, loadBroadcasts, loadRecipients]);
 
   // One final recipient refresh when selected broadcast completes
   useEffect(() => {
@@ -129,7 +129,7 @@ export default function BroadcastsPage() {
         loadRecipients(cur.id);
       }
     }
-  }, [selected?.status]);
+  }, [selected?.status, loadRecipients]);
 
   async function loadRecipients(broadcastId: string) {
     if (!token) return;

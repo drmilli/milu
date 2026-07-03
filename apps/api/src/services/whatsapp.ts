@@ -105,10 +105,22 @@ async function sendViaTwilioWhatsAppTemplate(to: string, contentSid: string, con
   const statusCallbackUrl = rawUrl.startsWith('https://') ? `${rawUrl}/webhooks/twilio/message-status` : undefined;
 
   // Filter out empty/undefined values and ensure all values are strings
+  // Also remove newlines and excessive whitespace that Twilio doesn't accept in template variables
   const cleanedVariables: Record<string, string> = {};
   for (const [key, value] of Object.entries(contentVariables)) {
     if (value !== undefined && value !== null && String(value).trim() !== '') {
-      cleanedVariables[key] = String(value).trim();
+      // Clean the value: remove newlines, tabs, and excessive whitespace
+      const cleaned = String(value)
+        .replace(/\r\n/g, ' ')
+        .replace(/\n/g, ' ')
+        .replace(/\r/g, ' ')
+        .replace(/\t/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+      
+      if (cleaned) {
+        cleanedVariables[key] = cleaned;
+      }
     }
   }
 
@@ -385,10 +397,17 @@ export async function sendBroadcastMessage(
       ? `*${title.trim()}* ${messageBody}`
       : messageBody;
 
+    // Clean the message body - remove newlines and extra whitespace for template compatibility
+    const cleanedBody = bodyWithTitle
+      .replace(/\r\n/g, ' ')
+      .replace(/\n/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
     const templateVars: Record<string, string> = {
       '1': contactName || 'there',
       '2': businessName || 'our business',
-      '3': bodyWithTitle.replace(/\n+/g, ' ').trim(),
+      '3': cleanedBody,
       '4': businessContactPhone?.trim() || businessName || 'us',
     };
 

@@ -4,6 +4,7 @@ import { eq, and, desc, sql, ilike, or } from 'drizzle-orm';
 import { db, calls, transcripts, escalations } from '../db';
 import { authMiddleware } from '../middleware/auth';
 import { env } from '../config/env';
+import { logger } from '../config/logger';
 
 export const callsRouter: Router = Router();
 callsRouter.use(authMiddleware);
@@ -192,7 +193,11 @@ callsRouter.get('/:id/recording', async (req, res, next) => {
       return res.status(402).json({ error: 'Upgrade to Growth to access call recordings.' });
     }
     const [call] = await db.select({ recordingUrl: calls.recordingUrl }).from(calls).where(eq(calls.id, req.params.id)).limit(1);
-    if (!call?.recordingUrl) return res.status(404).json({ error: 'No recording found' });
+    if (!call) return res.status(404).json({ error: 'Call not found' });
+    if (!call.recordingUrl) {
+      logger.warn({ callId: req.params.id }, 'Recording URL not found for call');
+      return res.status(404).json({ error: 'No recording available for this call. The call may not have been recorded or the recording is still processing.' });
+    }
     return res.json({ url: call.recordingUrl });
   } catch (err) {
     next(err);
@@ -225,7 +230,11 @@ callsRouter.get('/:id/recording/stream', async (req, res, next) => {
     }
     const [call] = await db.select({ recordingUrl: calls.recordingUrl, businessId: calls.businessId })
       .from(calls).where(eq(calls.id, req.params.id)).limit(1);
-    if (!call?.recordingUrl) return res.status(404).json({ error: 'No recording found' });
+    if (!call) return res.status(404).json({ error: 'Call not found' });
+    if (!call.recordingUrl) {
+      logger.warn({ callId: req.params.id }, 'Recording URL not found for call (stream)');
+      return res.status(404).json({ error: 'No recording available for this call. The call may not have been recorded or the recording is still processing.' });
+    }
 
     // If the stored URL is already a public CDN URL (Cloudinary, etc.) just redirect
     if (!call.recordingUrl.includes('api.twilio.com')) {

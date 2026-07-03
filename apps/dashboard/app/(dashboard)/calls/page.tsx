@@ -174,7 +174,10 @@ function CallsPageInner() {
         const streamRes = await fetch(`${apiBase}/api/v1/calls/${selected.id}/recording/stream`, {
           headers: { Authorization: `Bearer ${token}` },
         });
-        if (!streamRes.ok) throw new Error('No recording available');
+        if (!streamRes.ok) {
+          const errorData = await streamRes.json().catch(() => ({}));
+          throw new Error(errorData.error || 'No recording available');
+        }
         const blob = await streamRes.blob();
         setPlayingUrl(URL.createObjectURL(blob));
       } else {
@@ -185,7 +188,7 @@ function CallsPageInner() {
       if (msg.toLowerCase().includes('upgrade')) {
         setUpgradeMsg(msg);
       } else {
-        setRecordingError('No recording available for this call.');
+        setRecordingError(msg || 'No recording available for this call.');
       }
       setPlayingUrl(null);
     } finally {
