@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { eq, and, desc, sql } from 'drizzle-orm';
 import { db, orders, contacts, businesses } from '../db';
 import { authMiddleware } from '../middleware/auth';
+import { requireBusinessId } from '../middleware/ownership';
 import { notifyBusinessOwners } from '../services/notifications';
 import { dispatchWebhook } from '../services/webhooks';
 import { sendOrderConfirmation } from '../services/whatsapp';
@@ -52,16 +53,15 @@ ordersRouter.use((req, res, next) => {
  */
 ordersRouter.get('/', async (req, res, next) => {
   try {
-    const { businessId: qBid, status, page, limit } = z.object({
-      businessId: z.string().optional(),
+    const { status, page, limit } = z.object({
       status: z.enum(['PENDING', 'CONFIRMED', 'PROCESSING', 'COMPLETED', 'CANCELLED']).optional(),
       page: z.coerce.number().min(1).default(1),
       limit: z.coerce.number().min(1).max(100).default(20),
     }).parse(req.query);
 
-    const bid = req.user?.businessId ?? qBid;
-    const conditions: any[] = [];
-    if (bid) conditions.push(eq(orders.businessId, bid));
+    const bid = requireBusinessId(req, res);
+    if (!bid) return;
+    const conditions: any[] = [eq(orders.businessId, bid)];
     if (status) conditions.push(eq(orders.status, status));
     const where = conditions.length ? and(...conditions) : undefined;
 
@@ -112,8 +112,9 @@ ordersRouter.get('/', async (req, res, next) => {
  */
 ordersRouter.post('/', async (req, res, next) => {
   try {
-    const data = z.object({
-      businessId: z.string(),
+    const businessId = requireBusinessId(req, res);
+    if (!businessId) return;
+    const parsed = z.object({
       customerPhone: z.string(),
       customerName: z.string().optional(),
       contactId: z.string().optional(),
@@ -124,6 +125,9 @@ ordersRouter.post('/', async (req, res, next) => {
       deliveryAddress: z.string().optional(),
       notes: z.string().optional(),
     }).parse(req.body);
+
+    // Force the order onto the caller's own business — never trust a body businessId.
+    const data = { ...parsed, businessId };
 
     const orderNumber = `ORD-${Date.now().toString(36).toUpperCase()}`;
     const [order] = await db.insert(orders).values({ ...data, orderNumber }).returning();
@@ -162,7 +166,10 @@ ordersRouter.post('/', async (req, res, next) => {
  */
 ordersRouter.get('/:id', async (req, res, next) => {
   try {
-    const [order] = await db.select().from(orders).where(eq(orders.id, req.params.id)).limit(1);
+    const businessId = requireBusinessId(req, res);
+    if (!businessId) return;
+    const [order] = await db.select().from(orders)
+      .where(and(eq(orders.id, req.params.id), eq(orders.businessId, businessId))).limit(1);
     if (!order) return res.status(404).json({ error: 'Order not found' });
     return res.json(order);
   } catch (err) { next(err); }
@@ -202,8 +209,10 @@ ordersRouter.patch('/:id', async (req, res, next) => {
       deliveryAddress: z.string().optional(),
     }).parse(req.body);
 
+    const businessId = requireBusinessId(req, res);
+    if (!businessId) return;
     const [order] = await db.update(orders).set({ ...data, updatedAt: new Date() })
-      .where(eq(orders.id, req.params.id)).returning();
+      .where(and(eq(orders.id, req.params.id), eq(orders.businessId, businessId))).returning();
     if (!order) return res.status(404).json({ error: 'Order not found' });
 
     await audit(req, 'order.updated', 'order', order.id, { status: data.status });
@@ -233,7 +242,9 @@ ordersRouter.patch('/:id', async (req, res, next) => {
  */
 ordersRouter.delete('/:id', async (req, res, next) => {
   try {
-    await db.delete(orders).where(eq(orders.id, req.params.id));
+    const businessId = requireBusinessId(req, res);
+    if (!businessId) return;
+    await db.delete(orders).where(and(eq(orders.id, req.params.id), eq(orders.businessId, businessId)));
     return res.status(204).send();
   } catch (err) { next(err); }
 });

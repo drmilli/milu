@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { eq, and, desc, sql, ilike, or } from 'drizzle-orm';
 import { db, calls, transcripts, escalations } from '../db';
 import { authMiddleware } from '../middleware/auth';
+import { requireBusinessId } from '../middleware/ownership';
 import { env } from '../config/env';
 import { logger } from '../config/logger';
 
@@ -62,19 +63,20 @@ callsRouter.get('/', async (req, res, next) => {
     const schema = z.object({
       page: z.coerce.number().min(1).default(1),
       limit: z.coerce.number().min(1).max(100).default(20),
-      businessId: z.string().optional(),
       status: z.enum(['ACTIVE', 'COMPLETED', 'FAILED']).optional(),
       resolution: z.enum(['AI', 'HUMAN', 'ABANDONED']).optional(),
       intent: z.string().optional(), // free-text search on callerNumber/name/location
     });
-    const { page, limit, businessId, status, resolution, intent } = schema.parse(req.query);
+    const { page, limit, status, resolution, intent } = schema.parse(req.query);
     const like = intent ? `%${intent}%` : null;
 
-    const scopedBusinessId = req.user?.role === 'OWNER' ? req.user.businessId : businessId;
+    // Always scope to the caller's own business — never trust a client-supplied businessId.
+    const scopedBusinessId = requireBusinessId(req, res);
+    if (!scopedBusinessId) return;
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const conditions: any[] = [
-      ...(scopedBusinessId ? [eq(calls.businessId, scopedBusinessId)] : []),
+      eq(calls.businessId, scopedBusinessId),
       ...(status ? [eq(calls.status, status)] : []),
       ...(resolution ? [eq(calls.resolution, resolution)] : []),
       ...(like ? [or(
@@ -121,7 +123,10 @@ callsRouter.get('/', async (req, res, next) => {
  */
 callsRouter.get('/:id', async (req, res, next) => {
   try {
-    const [call] = await db.select().from(calls).where(eq(calls.id, req.params.id)).limit(1);
+    const businessId = requireBusinessId(req, res);
+    if (!businessId) return;
+    const [call] = await db.select().from(calls)
+      .where(and(eq(calls.id, req.params.id), eq(calls.businessId, businessId))).limit(1);
     if (!call) return res.status(404).json({ error: 'Call not found' });
 
     const [callTranscripts, escalation] = await Promise.all([
@@ -154,6 +159,13 @@ callsRouter.get('/:id', async (req, res, next) => {
  */
 callsRouter.get('/:id/transcript', async (req, res, next) => {
   try {
+    const businessId = requireBusinessId(req, res);
+    if (!businessId) return;
+    // Verify the call belongs to the caller's business before exposing its transcript.
+    const [owned] = await db.select({ id: calls.id }).from(calls)
+      .where(and(eq(calls.id, req.params.id), eq(calls.businessId, businessId))).limit(1);
+    if (!owned) return res.status(404).json({ error: 'Call not found' });
+
     const rows = await db.select().from(transcripts).where(eq(transcripts.callId, req.params.id)).orderBy(transcripts.createdAt);
     // Map speaker/text → role/content for frontend
     return res.json(rows.map(r => ({ id: r.id, role: r.speaker, content: r.text, createdAt: r.createdAt })));
@@ -192,7 +204,10 @@ callsRouter.get('/:id/recording', async (req, res, next) => {
     if (req.user?.role === 'OWNER' && req.plan && !req.plan.features.callRecording) {
       return res.status(402).json({ error: 'Upgrade to Growth to access call recordings.' });
     }
-    const [call] = await db.select({ recordingUrl: calls.recordingUrl }).from(calls).where(eq(calls.id, req.params.id)).limit(1);
+    const businessId = requireBusinessId(req, res);
+    if (!businessId) return;
+    const [call] = await db.select({ recordingUrl: calls.recordingUrl }).from(calls)
+      .where(and(eq(calls.id, req.params.id), eq(calls.businessId, businessId))).limit(1);
     if (!call) return res.status(404).json({ error: 'Call not found' });
     if (!call.recordingUrl) {
       logger.warn({ callId: req.params.id }, 'Recording URL not found for call');
@@ -228,8 +243,10 @@ callsRouter.get('/:id/recording/stream', async (req, res, next) => {
     if (req.user?.role === 'OWNER' && req.plan && !req.plan.features.callRecording) {
       return res.status(402).json({ error: 'Upgrade to Growth to access call recordings.' });
     }
+    const businessId = requireBusinessId(req, res);
+    if (!businessId) return;
     const [call] = await db.select({ recordingUrl: calls.recordingUrl, businessId: calls.businessId })
-      .from(calls).where(eq(calls.id, req.params.id)).limit(1);
+      .from(calls).where(and(eq(calls.id, req.params.id), eq(calls.businessId, businessId))).limit(1);
     if (!call) return res.status(404).json({ error: 'Call not found' });
     if (!call.recordingUrl) {
       logger.warn({ callId: req.params.id }, 'Recording URL not found for call (stream)');

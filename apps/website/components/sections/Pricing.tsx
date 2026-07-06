@@ -33,24 +33,29 @@ const plans = [
 
 export function Pricing() {
   return (
-    <section className="py-28 px-6 md:px-10 bg-cream">
-      <div className="max-w-5xl mx-auto">
-        <AnimateIn className="text-center mb-20">
-          <p className="text-sm font-medium text-primary-warm uppercase tracking-widest mb-3">Pricing</p>
-          <h2 className="font-heading font-bold text-4xl md:text-5xl text-primary-dark">
+    <section id="pricing" className="relative py-28 px-6 md:px-10">
+      <div className="absolute inset-0 -z-10 overflow-hidden pointer-events-none">
+        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[50vw] h-[40vw] rounded-full warm-glow-a blur-3xl opacity-70" />
+      </div>
+      <div className="max-w-6xl mx-auto">
+        <AnimateIn className="text-center mb-16">
+          <span className="inline-flex items-center gap-2 glass-chip text-primary text-xs font-medium tracking-widest uppercase px-3 py-1.5 rounded-full shadow-sm mb-6">
+            Fair pricing, no fine print
+          </span>
+          <h2 className="font-heading font-bold text-4xl md:text-5xl text-primary-dark tracking-tight">
             Simple, transparent pricing
           </h2>
           <p className="mt-4 text-primary-warm">10-day free trial on all plans. No credit card required.</p>
         </AnimateIn>
 
-        <StaggerContainer className="grid md:grid-cols-3 gap-6 items-start" staggerDelay={0.12}>
+        <StaggerContainer className="grid md:grid-cols-3 gap-6 sm:gap-8 items-center" staggerDelay={0.12}>
           {plans.map((plan) => (
             <StaggerItem key={plan.name}>
               <div
-                className={`relative rounded-3xl p-8 transition-all duration-300 hover:-translate-y-1 ${
+                className={`relative rounded-[32px] p-8 flex flex-col transition-all duration-300 hover:-translate-y-1.5 ${
                   plan.highlighted
-                    ? 'bg-primary text-cream-light shadow-2xl shadow-primary/30 scale-105'
-                    : 'bg-cream-light border border-cream-dark hover:shadow-lg hover:shadow-primary/8'
+                    ? 'bg-primary/90 backdrop-blur-2xl border border-white/20 text-cream-light shadow-[0_30px_60px_-15px_rgba(59,35,20,0.5)] md:-translate-y-4'
+                    : 'glass-panel'
                 }`}
               >
                 {plan.highlighted && (

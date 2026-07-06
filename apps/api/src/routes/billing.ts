@@ -308,15 +308,26 @@ export async function handleWhopWebhook(req: import('express').Request, res: imp
   const sig = req.headers['whop-signature'] as string | undefined;
   const rawBody = (req as any).rawBody as Buffer | undefined;
 
-  if (env.WHOP_WEBHOOK_SECRET && sig && rawBody) {
-    const expected = crypto
-      .createHmac('sha256', env.WHOP_WEBHOOK_SECRET)
-      .update(rawBody)
-      .digest('hex');
-    if (sig !== expected) {
-      logger.warn('Invalid Whop webhook signature');
-      return res.status(401).json({ error: 'Invalid signature' });
-    }
+  // Fail closed: a signing secret MUST be configured, and every request MUST
+  // carry a valid signature over the raw body. Skipping verification when the
+  // header is absent would let anyone forge plan upgrades / commission payouts.
+  if (!env.WHOP_WEBHOOK_SECRET) {
+    logger.error('WHOP_WEBHOOK_SECRET is not configured — rejecting Whop webhook');
+    return res.status(500).json({ error: 'Webhook not configured' });
+  }
+  if (!sig || !rawBody) {
+    logger.warn('Whop webhook missing signature or raw body');
+    return res.status(401).json({ error: 'Invalid signature' });
+  }
+  const expected = crypto
+    .createHmac('sha256', env.WHOP_WEBHOOK_SECRET)
+    .update(rawBody)
+    .digest('hex');
+  const sigBuf = Buffer.from(sig);
+  const expectedBuf = Buffer.from(expected);
+  if (sigBuf.length !== expectedBuf.length || !crypto.timingSafeEqual(sigBuf, expectedBuf)) {
+    logger.warn('Invalid Whop webhook signature');
+    return res.status(401).json({ error: 'Invalid signature' });
   }
 
   const event = req.body as { action: string; data: Record<string, unknown> };

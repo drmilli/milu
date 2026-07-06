@@ -1,4 +1,7 @@
 import { Hero } from '../components/sections/Hero';
+import { Problem } from '../components/sections/Problem';
+import { Showcase } from '../components/sections/Showcase';
+import { Stats } from '../components/sections/Stats';
 import { HowItWorks } from '../components/sections/HowItWorks';
 import { Features } from '../components/sections/Features';
 import { Pricing } from '../components/sections/Pricing';
@@ -75,6 +78,9 @@ export default function HomePage() {
         dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
       />
       <Hero />
+      <Problem />
+      <Showcase />
+      <Stats />
       <HowItWorks />
       <Features />
       <Testimonials />

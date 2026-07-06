@@ -104,20 +104,28 @@ const features = [
 
 export function Features() {
   return (
-    <section className="py-28 px-6 md:px-10 bg-cream-light">
-      <div className="max-w-5xl mx-auto">
-        <AnimateIn className="text-center mb-20">
-          <p className="text-sm font-medium text-primary-warm uppercase tracking-widest mb-3">Features</p>
-          <h2 className="font-heading font-bold text-4xl md:text-5xl text-primary-dark">
+    <section id="features" className="relative py-28 px-6 md:px-10">
+      <div className="absolute inset-0 -z-10 overflow-hidden pointer-events-none">
+        <div className="absolute top-1/3 right-0 w-[40vw] h-[40vw] rounded-full warm-glow-b blur-3xl" />
+      </div>
+      <div className="max-w-6xl mx-auto">
+        <AnimateIn className="text-center mb-16">
+          <span className="inline-flex items-center gap-2 glass-chip text-primary text-xs font-medium tracking-widest uppercase px-3 py-1.5 rounded-full shadow-sm mb-6">
+            Features
+          </span>
+          <h2 className="font-heading font-bold text-4xl md:text-5xl text-primary-dark tracking-tight">
             Everything your phone line needs
           </h2>
+          <p className="mt-5 text-primary-warm max-w-2xl mx-auto leading-relaxed">
+            One AI agent that answers, sells, books, and keeps a perfect record — then hands the hard calls to you.
+          </p>
         </AnimateIn>
 
-        <StaggerContainer className="grid sm:grid-cols-2 md:grid-cols-3 gap-5" staggerDelay={0.1}>
+        <StaggerContainer className="grid sm:grid-cols-2 md:grid-cols-3 gap-5" staggerDelay={0.08}>
           {features.map((f) => (
             <StaggerItem key={f.title}>
-              <div className="group bg-cream border border-cream-dark hover:border-primary/30 rounded-2xl p-6 transition-all duration-300 hover:shadow-md hover:shadow-primary/5 hover:-translate-y-1 cursor-default">
-                <div className="w-10 h-10 rounded-xl bg-primary/8 flex items-center justify-center text-primary mb-4 group-hover:bg-primary/15 transition-colors duration-200">
+              <div className="group glass-card rounded-2xl p-6 h-full transition-all duration-300 hover:-translate-y-1.5 hover:shadow-[0_16px_32px_-12px_rgba(92,61,46,0.18)] cursor-default">
+                <div className="w-11 h-11 rounded-2xl bg-white/70 border border-white/70 flex items-center justify-center text-primary mb-4 group-hover:scale-110 transition-transform duration-300">
                   {f.icon}
                 </div>
                 <h3 className="font-semibold text-primary-dark mb-2">{f.title}</h3>

@@ -30,6 +30,49 @@ body {
   background-clip: text;
 }
 
+/* ─── Glassmorphism system (Milu warm palette) ─────────────────────────────── */
+.glass-panel {
+  background: rgba(250, 246, 238, 0.6);          /* cream-light */
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  box-shadow:
+    0 24px 40px -12px rgba(59, 35, 20, 0.10),     /* primary-dark tint */
+    inset 0 1px 0 rgba(255, 255, 255, 0.9);
+}
+
+.glass-card {
+  background: rgba(255, 255, 255, 0.5);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  box-shadow: 0 8px 24px -8px rgba(92, 61, 46, 0.10);
+}
+
+.glass-header {
+  background: rgba(250, 246, 238, 0.75);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.5);
+}
+
+.glass-chip {
+  background: rgba(255, 255, 255, 0.55);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.6);
+}
+
+/* Ambient warm blobs used behind hero / sections */
+.warm-glow-a { background: radial-gradient(circle at 50% 40%, rgba(201, 125, 46, 0.28), transparent 70%); }
+.warm-glow-b { background: radial-gradient(circle at 50% 50%, rgba(122, 82, 48, 0.18), transparent 70%); }
+
+@keyframes pulse-slow {
+  0%, 100% { opacity: 0.18; }
+  50% { opacity: 0.30; }
+}
+.animate-pulse-slow { animation: pulse-slow 6s ease-in-out infinite; }
+
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: var(--color-cream); }
 ::-webkit-scrollbar-thumb { background: var(--color-cream-dark); border-radius: 9999px; }

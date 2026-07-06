@@ -57,7 +57,10 @@
       "Bash(git -C /Users/ok/Documents/projects/milu push origin main)",
       "Bash(git -C /Users/ok/Documents/projects/milu remote -v)",
       "Bash(pnpm add *)",
-      "Bash(grep -n \"currency\\\\|NGN\\\\|USD\\\\|usd\\\\|PRICE_PER\\\\|\\\\$\" /Users/ok/Documents/projects/milu/apps/api/src/routes/campaigns.ts)"
+      "Bash(grep -n \"currency\\\\|NGN\\\\|USD\\\\|usd\\\\|PRICE_PER\\\\|\\\\$\" /Users/ok/Documents/projects/milu/apps/api/src/routes/campaigns.ts)",
+      "Bash(grep -E \"\\\\.env$|\\\\.env\\\\.local$|\\\\.env\\\\.production\")",
+      "Bash(grep -i \"DS_Store\\\\|\\\\.svg\\\\|landing_page\\\\|\\\\.md$\")",
+      "Bash(echo \"TSC EXIT: $?\")"
     ],
     "additionalDirectories": [
       "/Users/ok/Documents/projects/milu"

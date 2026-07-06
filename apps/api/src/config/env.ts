@@ -47,9 +47,13 @@ const envSchema = z.object({
   WHATSAPP_TOKEN: z.string().optional(),
   WHATSAPP_PHONE_ID: z.string().optional(),
   WHATSAPP_WEBHOOK_VERIFY_TOKEN: z.string().optional(),
+  WHATSAPP_APP_SECRET: z.string().optional(), // Meta app secret — verifies X-Hub-Signature-256
   // Africa's Talking
   AT_API_KEY: z.string().optional(),
   AT_USERNAME: z.string().optional(),
+  AT_WEBHOOK_SECRET: z.string().optional(), // Shared secret for AT voice webhook verification
+  // Sendchamp webhook
+  SENDCHAMP_WEBHOOK_SECRET: z.string().optional(),
   // Infobip
   INFOBIP_API_KEY: z.string().optional(),
   INFOBIP_BASE_URL: z.string().optional(),

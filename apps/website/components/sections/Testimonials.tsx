@@ -35,19 +35,21 @@ function Stars() {
 
 export function Testimonials() {
   return (
-    <section className="py-28 px-6 md:px-10 bg-cream-light">
-      <div className="max-w-5xl mx-auto">
-        <AnimateIn className="text-center mb-20">
-          <p className="text-sm font-medium text-primary-warm uppercase tracking-widest mb-3">Testimonials</p>
-          <h2 className="font-heading font-bold text-4xl md:text-5xl text-primary-dark">
-            Trusted by businesses across Africa & the UAE
+    <section className="relative py-28 px-6 md:px-10">
+      <div className="max-w-6xl mx-auto">
+        <AnimateIn className="text-center mb-16">
+          <span className="inline-flex items-center gap-2 glass-chip text-primary text-xs font-medium tracking-widest uppercase px-3 py-1.5 rounded-full shadow-sm mb-6">
+            Loved by operators
+          </span>
+          <h2 className="font-heading font-bold text-4xl md:text-5xl text-primary-dark tracking-tight">
+            Trusted by businesses across Africa &amp; the UAE
           </h2>
         </AnimateIn>
 
         <StaggerContainer className="grid md:grid-cols-3 gap-6" staggerDelay={0.12}>
           {testimonials.map((t) => (
             <StaggerItem key={t.name}>
-              <div className="bg-cream border border-cream-dark rounded-2xl p-7 h-full flex flex-col hover:shadow-md hover:shadow-primary/5 hover:-translate-y-0.5 transition-all duration-300">
+              <div className="glass-card rounded-3xl p-7 h-full flex flex-col hover:-translate-y-1.5 transition-all duration-300">
                 <Stars />
                 <p className="text-primary leading-relaxed mb-6 flex-1 text-sm">
                   &ldquo;{t.quote}&rdquo;

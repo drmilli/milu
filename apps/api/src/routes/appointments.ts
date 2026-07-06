@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { eq, and, gte, desc, sql } from 'drizzle-orm';
 import { db, appointments, businesses } from '../db';
 import { authMiddleware } from '../middleware/auth';
+import { requireBusinessId } from '../middleware/ownership';
 import { notifyBusinessOwners } from '../services/notifications';
 import { dispatchWebhook } from '../services/webhooks';
 import { sendAppointmentReminder } from '../services/whatsapp';
@@ -55,17 +56,16 @@ appointmentsRouter.use((req, res, next) => {
  */
 appointmentsRouter.get('/', async (req, res, next) => {
   try {
-    const { businessId: qBid, status, from, page, limit } = z.object({
-      businessId: z.string().optional(),
+    const { status, from, page, limit } = z.object({
       status: z.enum(['SCHEDULED', 'CONFIRMED', 'CANCELLED', 'COMPLETED', 'NO_SHOW']).optional(),
       from: z.string().optional(),
       page: z.coerce.number().min(1).default(1),
       limit: z.coerce.number().min(1).max(100).default(20),
     }).parse(req.query);
 
-    const bid = req.user?.businessId ?? qBid;
-    const conditions: any[] = [];
-    if (bid) conditions.push(eq(appointments.businessId, bid));
+    const bid = requireBusinessId(req, res);
+    if (!bid) return;
+    const conditions: any[] = [eq(appointments.businessId, bid)];
     if (status) conditions.push(eq(appointments.status, status));
     if (from) conditions.push(gte(appointments.scheduledAt, new Date(from)));
     const where = conditions.length ? and(...conditions) : undefined;
@@ -109,8 +109,9 @@ appointmentsRouter.get('/', async (req, res, next) => {
  */
 appointmentsRouter.post('/', async (req, res, next) => {
   try {
-    const data = z.object({
-      businessId: z.string(),
+    const businessId = requireBusinessId(req, res);
+    if (!businessId) return;
+    const parsed = z.object({
       contactId: z.string().optional(),
       callId: z.string().optional(),
       scheduledAt: z.string().transform((v) => new Date(v)),
@@ -120,6 +121,9 @@ appointmentsRouter.post('/', async (req, res, next) => {
       customerName: z.string().optional(),
       notes: z.string().optional(),
     }).parse(req.body);
+
+    // Force the appointment onto the caller's own business — never trust a body businessId.
+    const data = { ...parsed, businessId };
 
     const [appt] = await db.insert(appointments).values(data).returning();
 
@@ -156,7 +160,10 @@ appointmentsRouter.post('/', async (req, res, next) => {
  */
 appointmentsRouter.get('/:id', async (req, res, next) => {
   try {
-    const [appt] = await db.select().from(appointments).where(eq(appointments.id, req.params.id)).limit(1);
+    const businessId = requireBusinessId(req, res);
+    if (!businessId) return;
+    const [appt] = await db.select().from(appointments)
+      .where(and(eq(appointments.id, req.params.id), eq(appointments.businessId, businessId))).limit(1);
     if (!appt) return res.status(404).json({ error: 'Appointment not found' });
     return res.json(appt);
   } catch (err) { next(err); }
@@ -196,8 +203,10 @@ appointmentsRouter.patch('/:id', async (req, res, next) => {
       notes: z.string().optional(),
     }).parse(req.body);
 
+    const businessId = requireBusinessId(req, res);
+    if (!businessId) return;
     const [appt] = await db.update(appointments).set({ ...data, updatedAt: new Date() })
-      .where(eq(appointments.id, req.params.id)).returning();
+      .where(and(eq(appointments.id, req.params.id), eq(appointments.businessId, businessId))).returning();
     if (!appt) return res.status(404).json({ error: 'Appointment not found' });
 
     await audit(req, 'appointment.updated', 'appointment', appt.id, { status: data.status });
@@ -227,7 +236,9 @@ appointmentsRouter.patch('/:id', async (req, res, next) => {
  */
 appointmentsRouter.delete('/:id', async (req, res, next) => {
   try {
-    await db.delete(appointments).where(eq(appointments.id, req.params.id));
+    const businessId = requireBusinessId(req, res);
+    if (!businessId) return;
+    await db.delete(appointments).where(and(eq(appointments.id, req.params.id), eq(appointments.businessId, businessId)));
     return res.status(204).send();
   } catch (err) { next(err); }
 });

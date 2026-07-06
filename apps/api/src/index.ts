@@ -26,6 +26,7 @@ import { WebSocketServer } from 'ws';
 import { verifyWhatsAppWebhook, handleWhatsAppWebhook } from './webhooks/whatsapp';
 import { handleSendchampWebhook } from './webhooks/sendchamp';
 import { handleAtVoiceWebhook, handleAtHoldWebhook, handleAtRecordingWebhook } from './webhooks/at-voice';
+import { verifyTwilioSignature, verifyMetaSignature, verifySendchampSignature, verifyAtWebhook } from './webhooks/verify';
 import { contactsRouter } from './routes/contacts';
 import { ordersRouter } from './routes/orders';
 import { appointmentsRouter } from './routes/appointments';
@@ -89,7 +90,9 @@ app.get('/health', (_req, res) => res.json({
   whatsapp: !!env.WHATSAPP_TOKEN,
 }));
 
-// Webhooks (no auth, before rate limiting)
+// Webhooks (provider-signature authenticated, before rate limiting)
+// Verify Twilio's X-Twilio-Signature on every Twilio POST webhook.
+app.use('/webhooks/twilio', verifyTwilioSignature);
 app.post('/webhooks/twilio/voice', handleTwilioVoiceWebhook);
 app.post('/webhooks/twilio/voice/fallback-greeting', handleTwilioVoiceFallbackGreeting);
 app.post('/webhooks/twilio/voice/gather', handleTwilioVoiceGather);
@@ -97,7 +100,7 @@ app.post('/webhooks/twilio/voice/respond', handleTwilioVoiceRespond);
 app.post('/webhooks/twilio/voice/end', handleTwilioVoiceEnd);
 app.post('/webhooks/twilio/voice/recording', handleTwilioVoiceRecording);
 app.post('/webhooks/twilio/voice/status', handleTwilioVoiceStatus);
-app.post('/api/v1/twilio/voice/outbound', handleTwilioOutboundVoice);
+app.post('/api/v1/twilio/voice/outbound', verifyTwilioSignature, handleTwilioOutboundVoice);
 app.post('/webhooks/twilio/message-status', handleTwilioMessageStatus);
 app.post('/webhooks/twilio/incoming-message', handleTwilioIncomingMessage);
 app.post('/webhooks/twilio/incoming-message/fallback', handleTwilioIncomingMessageFallback);
@@ -142,6 +145,7 @@ app.get('/webhooks/tts/:id', async (req, res) => {
   return res.status(200).send(bytes);
 });
 
+app.use('/webhooks/at', verifyAtWebhook);
 app.post('/webhooks/at/voice', handleAtVoiceWebhook);
 app.get('/webhooks/at/voice', handleAtVoiceWebhook);
 app.post('/webhooks/at/voice/hold', handleAtHoldWebhook);
@@ -150,9 +154,9 @@ app.post('/webhooks/at/voice/record', handleAtRecordingWebhook);
 app.get('/webhooks/at/voice/record', handleAtRecordingWebhook);
 // Infobip voice webhooks removed — using Twilio only for calls
 app.get('/webhooks/whatsapp', verifyWhatsAppWebhook);
-app.post('/webhooks/whatsapp', handleWhatsAppWebhook);
+app.post('/webhooks/whatsapp', verifyMetaSignature, handleWhatsAppWebhook);
 app.post('/webhooks/whop', handleWhopWebhook);
-app.post('/webhooks/sendchamp', handleSendchampWebhook);
+app.post('/webhooks/sendchamp', verifySendchampSignature, handleSendchampWebhook);
 
 // Rate limiting on all API routes
 app.use('/api/v1', apiLimiter);

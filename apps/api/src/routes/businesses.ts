@@ -20,6 +20,18 @@ import { sendNotification } from '../services/notifications';
 export const businessesRouter: Router = Router();
 businessesRouter.use(authMiddleware);
 
+// Tenant guard: every `:id` in this router is a business id the caller must own.
+// authMiddleware has already resolved req.user.businessId (validated against the
+// optional X-Business-Id header) so this single choke point closes cross-tenant
+// IDOR for all `/:id` routes at once. Nested params (:itemId, :docId, :userId…)
+// remain scoped within the guarded business.
+businessesRouter.param('id', (req, res, next, id) => {
+  if (!req.user?.businessId || req.user.businessId !== id) {
+    return res.status(403).json({ error: 'Access denied to this business' });
+  }
+  next();
+});
+
 function requireMultiBusiness(req: any, res: any): boolean {
   if (req.user?.role === 'OWNER' && req.plan && !req.plan.features.multiBusiness) {
     res.status(402).json({ error: 'Managing multiple businesses requires the Enterprise plan. Contact us to upgrade.' });
