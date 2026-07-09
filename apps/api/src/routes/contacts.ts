@@ -116,7 +116,16 @@ contactsRouter.post('/', async (req, res, next) => {
       stage: z.enum(['LEAD', 'CONTACTED', 'QUALIFIED', 'PROPOSAL', 'CLOSED_WON', 'CLOSED_LOST']).optional(),
     }).parse(req.body);
 
-    const [contact] = await db.insert(contacts).values({ ...data, businessId: bid }).returning();
+    const [contact] = await db.insert(contacts).values({
+      businessId: bid,
+      phone: data.phone,
+      name: data.name,
+      location: data.location,
+      email: data.email,
+      notes: data.notes,
+      tags: data.tags,
+      stage: data.stage,
+    }).returning();
     await audit(req, 'contact.created', 'contact', contact.id);
     return res.status(201).json(contact);
   } catch (err) { next(err); }
