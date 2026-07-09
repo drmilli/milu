@@ -82,7 +82,13 @@ webhookConfigRouter.post('/', async (req, res, next) => {
 
     const secret = randomBytes(32).toString('hex');
     const [cfg] = await db.insert(webhookConfigs)
-      .values({ ...data, secret, isActive: true })
+      .values({ 
+        businessId: data.businessId,
+        url: data.url,
+        events: data.events,
+        secret, 
+        isActive: true 
+      })
       .returning();
 
     await audit(req, 'webhook.created', 'webhook_config', cfg.id);
