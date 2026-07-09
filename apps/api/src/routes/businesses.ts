@@ -253,9 +253,17 @@ businessesRouter.put('/:id/kb', async (req, res, next) => {
       voiceId: z.string().optional(),
     });
     const data = schema.parse(req.body);
+    
+    // Filter out FAQs with empty question/answer pairs to satisfy type requirements
+    const filteredFaqs = data.faqs?.filter(faq => faq.question && faq.answer);
+    
     const result = await db
       .update(knowledgeBases)
-      .set({ ...data, updatedAt: new Date() })
+      .set({ 
+        ...data, 
+        faqs: filteredFaqs || data.faqs,
+        updatedAt: new Date() 
+      })
       .where(eq(knowledgeBases.businessId, req.params.id))
       .returning();
     if (!result.length) return res.status(404).json({ error: 'Knowledge base not found' });
