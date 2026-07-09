@@ -156,7 +156,10 @@ notificationsRouter.post('/send', async (req, res, next) => {
     }).parse(req.body);
 
     await sendNotification({
-      ...data,
+      channel: data.channel,
+      title: data.title,
+      body: data.body,
+      recipient: data.recipient,
       businessId: data.businessId ?? req.user?.businessId,
       userId: data.userId ?? req.user?.userId,
     });
