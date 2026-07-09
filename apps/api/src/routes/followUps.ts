@@ -69,8 +69,12 @@ followUpsRouter.post('/', async (req, res, next) => {
     if (!contact) return res.status(400).json({ error: 'Contact not found' });
 
     const [row] = await db.insert(followUps).values({
-      ...data,
       businessId: bid,
+      contactId: data.contactId,
+      callId: data.callId,
+      type: data.type,
+      title: data.title,
+      notes: data.notes,
       scheduledAt: new Date(data.scheduledAt),
       createdBy: req.user?.userId,
     }).returning();
