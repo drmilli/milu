@@ -103,7 +103,14 @@ callbacksRouter.post('/', async (req, res, next) => {
       contactId: z.string().optional(),
     }).parse(req.body);
 
-    const [cb] = await db.insert(callbackRequests).values(data).returning();
+    const [cb] = await db.insert(callbackRequests).values({
+      businessId: data.businessId,
+      phoneNumber: data.phoneNumber,
+      customerName: data.customerName,
+      reason: data.reason,
+      callId: data.callId,
+      contactId: data.contactId,
+    }).returning();
 
     await notifyBusinessOwners(data.businessId, 'Callback Requested', `${data.customerName ?? data.phoneNumber} requested a callback${data.reason ? `: ${data.reason}` : ''}`);
     await dispatchWebhook(data.businessId, 'callback.requested', { callbackId: cb.id, phoneNumber: data.phoneNumber });

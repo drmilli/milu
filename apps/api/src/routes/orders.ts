@@ -130,7 +130,28 @@ ordersRouter.post('/', async (req, res, next) => {
     const data = { ...parsed, businessId };
 
     const orderNumber = `ORD-${Date.now().toString(36).toUpperCase()}`;
-    const [order] = await db.insert(orders).values({ ...data, orderNumber }).returning();
+    
+    // Ensure items have proper typing for database
+    const typedItems: { name: string; qty: number; price: number }[] = 
+      data.items.map(item => ({
+        name: item.name || 'Unknown Item',
+        qty: item.qty || 0,
+        price: item.price || 0,
+      }));
+
+    const [order] = await db.insert(orders).values({
+      businessId: data.businessId,
+      orderNumber,
+      contactId: data.contactId,
+      callId: data.callId,
+      customerName: data.customerName,
+      customerPhone: data.customerPhone,
+      deliveryAddress: data.deliveryAddress,
+      notes: data.notes,
+      totalAmount: data.totalAmount,
+      currency: data.currency,
+      items: typedItems,
+    }).returning();
 
     await audit(req, 'order.created', 'order', order.id);
     await notifyBusinessOwners(data.businessId, 'New Order', `Order #${orderNumber} from ${data.customerName ?? data.customerPhone}`);
@@ -140,7 +161,7 @@ ordersRouter.post('/', async (req, res, next) => {
       const [biz] = await db.select({ name: businesses.name }).from(businesses).where(eq(businesses.id, data.businessId)).limit(1);
       const businessName = biz?.name ?? 'your provider';
       await sendOrderSms(data.customerPhone, orderNumber).catch(() => null);
-      await sendOrderConfirmation(data.customerPhone, orderNumber, data.items, businessName).catch(() => null);
+      await sendOrderConfirmation(data.customerPhone, orderNumber, typedItems, businessName).catch(() => null);
     }
 
     return res.status(201).json(order);

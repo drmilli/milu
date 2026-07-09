@@ -61,6 +61,8 @@ affiliateAuthRouter.post('/register', authLimiter, async (req, res, next) => {
       password: hashed,
       referralCode,
       status: 'ACTIVE',
+      commissionPercent: null,
+      commissionMonths: null,
     }).returning({ id: affiliateAgents.id, name: affiliateAgents.name, email: affiliateAgents.email, referralCode: affiliateAgents.referralCode, status: affiliateAgents.status });
 
     sendNotification({

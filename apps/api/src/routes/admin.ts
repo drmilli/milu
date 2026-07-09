@@ -683,10 +683,17 @@ adminRouter.put('/affiliate/settings', async (req, res, next) => {
 
     const [existing] = await db.select({ id: affiliateSettings.id }).from(affiliateSettings).limit(1);
     if (existing?.id) {
-      await db.update(affiliateSettings).set({ ...data, updatedAt: new Date() }).where(eq(affiliateSettings.id, existing.id));
+      await db.update(affiliateSettings).set({ 
+        defaultCommissionPercent: data.defaultCommissionPercent,
+        defaultCommissionMonths: data.defaultCommissionMonths,
+        updatedAt: new Date() 
+      }).where(eq(affiliateSettings.id, existing.id));
       return res.json({ ok: true });
     }
-    await db.insert(affiliateSettings).values({ ...data }).returning();
+    await db.insert(affiliateSettings).values({
+      defaultCommissionPercent: data.defaultCommissionPercent,
+      defaultCommissionMonths: data.defaultCommissionMonths,
+    }).returning();
     return res.json({ ok: true });
   } catch (err) { next(err); }
 });
@@ -1448,6 +1455,8 @@ adminRouter.post('/whatsapp/send', async (req, res, next) => {
       body: message,
       recipient,
       data: { direction: 'outbound', to: recipient },
+      businessId: req.user?.businessId || null,
+      userId: req.user?.userId || null,
     }).returning();
 
     try {

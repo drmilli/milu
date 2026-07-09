@@ -125,7 +125,17 @@ appointmentsRouter.post('/', async (req, res, next) => {
     // Force the appointment onto the caller's own business — never trust a body businessId.
     const data = { ...parsed, businessId };
 
-    const [appt] = await db.insert(appointments).values(data).returning();
+    const [appt] = await db.insert(appointments).values({
+      businessId: data.businessId,
+      contactId: data.contactId,
+      callId: data.callId,
+      scheduledAt: data.scheduledAt,
+      duration: data.duration,
+      serviceType: data.serviceType,
+      customerPhone: data.customerPhone,
+      customerName: data.customerName,
+      notes: data.notes,
+    }).returning();
 
     await audit(req, 'appointment.created', 'appointment', appt.id);
     await notifyBusinessOwners(data.businessId, 'New Appointment', `${data.serviceType ?? 'Appointment'} booked for ${data.customerName ?? data.customerPhone} on ${data.scheduledAt.toLocaleString()}`);
