@@ -1666,9 +1666,13 @@ adminRouter.post('/businesses/:id/phone-numbers', async (req, res, next) => {
         providerNumberId: body.providerNumberId ?? null,
       }).where(eq(phoneNumbers.id, existing.id)).returning()
       : await db.insert(phoneNumbers).values({
-        ...body,
+        number: body.number,
         businessId: req.params.id,
         verified: true,
+        label: body.label ?? null,
+        isVirtual: body.isVirtual,
+        provider: body.provider,
+        providerNumberId: body.providerNumberId ?? null,
       }).returning();
 
     const [biz] = await db.select({ name: businesses.name }).from(businesses).where(eq(businesses.id, req.params.id)).limit(1);
