@@ -254,14 +254,20 @@ businessesRouter.put('/:id/kb', async (req, res, next) => {
     });
     const data = schema.parse(req.body);
     
-    // Filter out FAQs with empty question/answer pairs to satisfy type requirements
-    const filteredFaqs = data.faqs?.filter(faq => faq.question && faq.answer);
+    // Filter out FAQs with empty question/answer pairs and ensure proper typing
+    const filteredFaqs: { question: string; answer: string }[] | undefined = 
+      data.faqs
+        ?.filter(faq => faq.question && faq.answer)
+        .map(faq => ({ question: faq.question, answer: faq.answer }));
     
     const result = await db
       .update(knowledgeBases)
       .set({ 
-        ...data, 
-        faqs: filteredFaqs || data.faqs,
+        businessName: data.businessName,
+        operatingHours: data.operatingHours,
+        faqs: filteredFaqs,
+        escalationNumber: data.escalationNumber,
+        voiceId: data.voiceId,
         updatedAt: new Date() 
       })
       .where(eq(knowledgeBases.businessId, req.params.id))
