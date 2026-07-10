@@ -3,11 +3,15 @@ services:
     name: milu-api
     env: node
     plan: starter
+    runtime: node
+    nodeVersion: 20.16.0
     buildCommand: npm install && npm run build -w @milu/api
     startCommand: npm run -w @milu/api start
     healthCheckPath: /health
     envVars:
       - key: NODE_ENV
         value: production
+      - key: NODE_OPTIONS
+        value: --max-old-space-size=2048
       - fromGroup: milu-env # Make a group on Render with all your env vars
     autoDeploy: true

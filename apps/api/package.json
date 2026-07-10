@@ -6,13 +6,15 @@
     "predev": "npm run -w @milu/agent-core build",
     "dev": "tsx watch src/index.ts",
     "prebuild": "npm run -w @milu/agent-core build",
-    "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsc",
-    "prestart": "npm run build",
+    "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && NODE_OPTIONS=--max-old-space-size=2048 tsc",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
     "db:generate": "drizzle-kit generate",
     "db:push": "NODE_PATH=./node_modules drizzle-kit push:pg",
     "db:studio": "NODE_PATH=./node_modules drizzle-kit studio"
+  },
+  "engines": {
+    "node": ">=18.0.0 <=22.x"
   },
   "dependencies": {
     "@milu/agent-core": "0.1.0",
