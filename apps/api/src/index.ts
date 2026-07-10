@@ -79,6 +79,35 @@ app.use('/docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
 }));
 app.get('/docs.json', (_req, res) => res.json(swaggerSpec));
 
+// Root route
+app.get('/', (_req, res) => res.send(`
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Milu API</title>
+  <style>
+    body { font-family: system-ui, -apple-system, sans-serif; max-width: 600px; margin: 40px auto; padding: 0 20px; line-height: 1.6; }
+    h1 { color: #3B2314; }
+    a { color: #8B5A2B; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .container { background: #fff8f0; padding: 30px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Milu API</h1>
+    <p>The Milu API is up and running! 🚀</p>
+    <ul>
+      <li><strong>Docs:</strong> <a href="/docs">/docs</a></li>
+      <li><strong>Health Check:</strong> <a href="/health">/health</a></li>
+      <li><strong>API Base:</strong> <code>/api/v1</code></li>
+    </ul>
+  </div>
+</body>
+</html>
+`));
+
 // Health
 app.get('/health', (_req, res) => res.json({
   status: 'ok',
