@@ -3,7 +3,6 @@
   "buildCommand": "npm run build",
   "devCommand": "npm run dev",
   "installCommand": "npm install",
-  "framework": "other",
   "functions": {
     "apps/api/api/index.ts": {
       "runtime": "@vercel/node@3",
