@@ -245,108 +245,105 @@ app.use('/api/v1/campaigns', campaignsRouter);
 
 app.use(errorHandler);
 
-// Only start server/WebSockets if not running on Vercel
-if (!process.env.VERCEL) {
-  // ─── WebSocket server for Twilio Media Streams ────────────────────────────────
-  const wss = new WebSocketServer({ noServer: true });
+// ─── WebSocket server for Twilio Media Streams ────────────────────────────────
+const wss = new WebSocketServer({ noServer: true });
 
-  server.on('upgrade', (request, socket, head) => {
-    if (request.url?.startsWith('/webhooks/twilio/voice/stream')) {
-      wss.handleUpgrade(request, socket, head, (ws) => {
-        handleTwilioVoiceStream(ws, request);
-      });
-    } else {
-      socket.destroy();
+server.on('upgrade', (request, socket, head) => {
+  if (request.url?.startsWith('/webhooks/twilio/voice/stream')) {
+    wss.handleUpgrade(request, socket, head, (ws) => {
+      handleTwilioVoiceStream(ws, request);
+    });
+  } else {
+    socket.destroy();
+  }
+});
+
+server.listen(env.PORT, async () => {
+  logger.info({
+    port: env.PORT,
+    env: env.NODE_ENV,
+    cors: '*',
+    docs: `http://localhost:${env.PORT}/docs`,
+    db: env.DATABASE_URL.replace(/:\/\/.*@/, '://***@'), // hide credentials
+    twilio: !!env.TWILIO_ACCOUNT_SID,
+    openai: !!env.OPENAI_API_KEY,
+    elevenlabs: !!env.ELEVENLABS_API_KEY,
+    whatsapp: !!env.WHATSAPP_TOKEN,
+    email: !!env.GMAIL_USER,
+    whop: !!env.WHOP_API_KEY,
+  }, 'Milu API started');
+
+  async function closeStaleActiveCalls() {
+    try {
+      // Any call ACTIVE for more than 15 minutes is stuck — max legit call duration is ~10 min
+      const staleThreshold = new Date(Date.now() - 15 * 60 * 1000);
+      await db.update(calls)
+        .set({
+          status: 'COMPLETED',
+          resolution: drizzleSql`COALESCE(${calls.resolution}, 'ABANDONED'::resolution_type)`,
+          endedAt: new Date(),
+        })
+        .where(and(eq(calls.status, 'ACTIVE'), lt(calls.startedAt, staleThreshold)));
+    } catch (err) {
+      logger.warn({ err }, 'Stale call cleanup failed (non-fatal)');
     }
-  });
+  }
 
-  server.listen(env.PORT, async () => {
-    logger.info({
-      port: env.PORT,
-      env: env.NODE_ENV,
-      cors: '*',
-      docs: `http://localhost:${env.PORT}/docs`,
-      db: env.DATABASE_URL.replace(/:\/\/.*@/, '://***@'), // hide credentials
-      twilio: !!env.TWILIO_ACCOUNT_SID,
-      openai: !!env.OPENAI_API_KEY,
-      elevenlabs: !!env.ELEVENLABS_API_KEY,
-      whatsapp: !!env.WHATSAPP_TOKEN,
-      email: !!env.GMAIL_USER,
-      whop: !!env.WHOP_API_KEY,
-    }, 'Milu API started');
+  // Run once on startup to clear previously stuck calls
+  await closeStaleActiveCalls();
+  logger.info('Stale call cleanup ran on startup');
 
-    async function closeStaleActiveCalls() {
-      try {
-        // Any call ACTIVE for more than 15 minutes is stuck — max legit call duration is ~10 min
-        const staleThreshold = new Date(Date.now() - 15 * 60 * 1000);
-        await db.update(calls)
-          .set({
-            status: 'COMPLETED',
-            resolution: drizzleSql`COALESCE(${calls.resolution}, 'ABANDONED'::resolution_type)`,
-            endedAt: new Date(),
-          })
-          .where(and(eq(calls.status, 'ACTIVE'), lt(calls.startedAt, staleThreshold)));
-      } catch (err) {
-        logger.warn({ err }, 'Stale call cleanup failed (non-fatal)');
-      }
-    }
+  // Then run every 5 minutes as a safety net
+  setInterval(closeStaleActiveCalls, 5 * 60 * 1000);
 
-    // Run once on startup to clear previously stuck calls
-    await closeStaleActiveCalls();
-    logger.info('Stale call cleanup ran on startup');
+  // Check for scheduled campaigns every minute
+  setInterval(() => {
+    runScheduledCampaigns().catch(err => logger.error({ err }, 'Scheduled campaign runner error'));
+  }, 60 * 1000);
 
-    // Then run every 5 minutes as a safety net
-    setInterval(closeStaleActiveCalls, 5 * 60 * 1000);
+  // Check for expired trials every hour
+  async function expireTrials() {
+    try {
+      const TRIAL_MS = 10 * 24 * 60 * 60 * 1000;
+      const trialCutoff = new Date(Date.now() - TRIAL_MS);
 
-    // Check for scheduled campaigns every minute
-    setInterval(() => {
-      runScheduledCampaigns().catch(err => logger.error({ err }, 'Scheduled campaign runner error'));
-    }, 60 * 1000);
+      // Find STARTER businesses past their trial that haven't been marked yet
+      const expired = await db
+        .select({ id: businesses.id, name: businesses.name })
+        .from(businesses)
+        .where(and(
+          eq(businesses.subscriptionTier, 'STARTER'),
+          eq(businesses.isActive, true),
+          isNull(businesses.trialEndedAt),
+          lt(businesses.createdAt, trialCutoff),
+        ));
 
-    // Check for expired trials every hour
-    async function expireTrials() {
-      try {
-        const TRIAL_MS = 10 * 24 * 60 * 60 * 1000;
-        const trialCutoff = new Date(Date.now() - TRIAL_MS);
+      for (const biz of expired) {
+        await db.update(businesses)
+          .set({ isActive: false, trialEndedAt: new Date(), updatedAt: new Date() })
+          .where(eq(businesses.id, biz.id));
 
-        // Find STARTER businesses past their trial that haven't been marked yet
-        const expired = await db
-          .select({ id: businesses.id, name: businesses.name })
-          .from(businesses)
-          .where(and(
-            eq(businesses.subscriptionTier, 'STARTER'),
-            eq(businesses.isActive, true),
-            isNull(businesses.trialEndedAt),
-            lt(businesses.createdAt, trialCutoff),
-          ));
+        // Email all owners of this business
+        const owners = await db
+          .select({ email: users.email })
+          .from(users)
+          .where(eq(users.businessId, biz.id));
 
-        for (const biz of expired) {
-          await db.update(businesses)
-            .set({ isActive: false, trialEndedAt: new Date(), updatedAt: new Date() })
-            .where(eq(businesses.id, biz.id));
-
-          // Email all owners of this business
-          const owners = await db
-            .select({ email: users.email })
-            .from(users)
-            .where(eq(users.businessId, biz.id));
-
-          for (const owner of owners) {
-            sendTrialEndedEmail(owner.email, biz.name).catch(err =>
-              logger.error({ err, businessId: biz.id }, 'Failed to send trial ended email')
-            );
-          }
-
-          logger.info({ businessId: biz.id, name: biz.name }, 'Trial expired — business deactivated, email sent');
+        for (const owner of owners) {
+          sendTrialEndedEmail(owner.email, biz.name).catch(err =>
+            logger.error({ err, businessId: biz.id }, 'Failed to send trial ended email')
+          );
         }
-      } catch (err) {
-        logger.error({ err }, 'Trial expiry check failed');
-      }
-    }
 
-    await expireTrials();
-    setInterval(expireTrials, 60 * 60 * 1000); // every hour
-  });
-}
+        logger.info({ businessId: biz.id, name: biz.name }, 'Trial expired — business deactivated, email sent');
+      }
+    } catch (err) {
+      logger.error({ err }, 'Trial expiry check failed');
+    }
+  }
+
+  await expireTrials();
+  setInterval(expireTrials, 60 * 60 * 1000); // every hour
+});
 
 export default app;

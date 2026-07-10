@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: milu-api
+    env: node
+    plan: starter
+    buildCommand: npm install && npm run build -w @milu/api
+    startCommand: npm run -w @milu/api start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - fromGroup: milu-env # Make a group on Render with all your env vars
+    autoDeploy: true
