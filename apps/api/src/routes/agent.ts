@@ -6,6 +6,7 @@ import { authMiddleware } from '../middleware/auth';
 import { audit } from '../services/audit';
 import { env } from '../config/env';
 import { logger } from '../config/logger';
+import { AGENT_LANGUAGES, knownLanguageCodes, isTranscribable } from '../config/languages';
 import multer from 'multer';
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
@@ -37,6 +38,34 @@ agentRouter.use(authMiddleware);
  *       200:
  *         description: Agent config
  */
+/**
+ * @openapi
+ * /api/v1/agent/languages:
+ *   get:
+ *     tags: [Agent]
+ *     summary: Languages the agent can be configured with
+ *     description: >
+ *       `transcribable: false` means speech-to-text has no model for that
+ *       language yet — calls are handled in English. Clients should surface
+ *       those as unavailable rather than offering them as working options.
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Supported agent languages
+ */
+agentRouter.get('/languages', (_req, res) => {
+  return res.json(AGENT_LANGUAGES.map(l => ({
+    code: l.code,
+    label: l.label,
+    transcribable: isTranscribable(l.code),
+    // Whether the agent can reply in it, not just understand it.
+    canSpeak: l.canSpeak,
+    accuracy: l.accuracy ?? null,
+    note: l.note ?? null,
+  })));
+});
+
 agentRouter.get('/:businessId', async (req, res, next) => {
   try {
     const [config] = await db.select().from(agentConfigs).where(eq(agentConfigs.businessId, req.params.businessId)).limit(1);
@@ -100,7 +129,9 @@ agentRouter.put('/:businessId', async (req, res, next) => {
   try {
     const data = z.object({
       name: z.string().min(1).optional(),
-      language: z.string().optional(),
+      language: z.enum(knownLanguageCodes() as [string, ...string[]], {
+        errorMap: () => ({ message: `Unsupported language. Must be one of: ${knownLanguageCodes().join(', ')}` }),
+      }).optional(),
       tone: z.string().optional(),
       greeting: z.string().optional().nullable(),
       fallbackMessage: z.string().optional().nullable(),

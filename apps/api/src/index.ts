@@ -19,7 +19,7 @@ import { analyticsRouter } from './routes/analytics';
 import { adminRouter, adminAuthRouter } from './routes/admin';
 import { usersRouter } from './routes/users';
 import { billingRouter, handleWhopWebhook } from './routes/billing';
-import { handleTwilioVoiceWebhook, handleTwilioVoiceGather, handleTwilioVoiceRespond, handleTwilioVoiceEnd, handleTwilioVoiceRecording, handleTwilioVoiceStatus, handleTwilioMessageStatus, handleTwilioIncomingMessage, handleTwilioIncomingMessageFallback, handleTwilioVoiceFallbackGreeting, handleTwilioOutboundVoice } from './webhooks/twilio-voice';
+import { handleTwilioVoiceWebhook, handleTwilioVoiceGather, handleTwilioVoiceRespond, handleTwilioVoiceEnd, handleTwilioVoiceRecording, handleTwilioVoiceStatus, handleTwilioVoiceTransferStatus, handleTwilioMessageStatus, handleTwilioIncomingMessage, handleTwilioIncomingMessageFallback, handleTwilioVoiceFallbackGreeting, handleTwilioOutboundVoice } from './webhooks/twilio-voice';
 import { handleTwilioVoiceStream } from './webhooks/twilio-stream';
 import { WebSocketServer } from 'ws';
 // Infobip voice removed — using Twilio only for calls
@@ -129,6 +129,7 @@ app.post('/webhooks/twilio/voice/respond', handleTwilioVoiceRespond);
 app.post('/webhooks/twilio/voice/end', handleTwilioVoiceEnd);
 app.post('/webhooks/twilio/voice/recording', handleTwilioVoiceRecording);
 app.post('/webhooks/twilio/voice/status', handleTwilioVoiceStatus);
+app.post('/webhooks/twilio/voice/transfer-status', handleTwilioVoiceTransferStatus);
 app.post('/api/v1/twilio/voice/outbound', verifyTwilioSignature, handleTwilioOutboundVoice);
 app.post('/webhooks/twilio/message-status', handleTwilioMessageStatus);
 app.post('/webhooks/twilio/incoming-message', handleTwilioIncomingMessage);
@@ -310,6 +311,9 @@ server.listen(env.PORT, async () => {
         .set({
           status: 'COMPLETED',
           resolution: drizzleSql`COALESCE(${calls.resolution}, 'ABANDONED'::resolution_type)`,
+          // Duration deliberately left NULL: these calls got stuck, so elapsed
+          // time since startedAt (>15 min by definition) is not a real duration
+          // and would skew avg(duration). NULL is excluded from that average.
           endedAt: new Date(),
         })
         .where(and(eq(calls.status, 'ACTIVE'), lt(calls.startedAt, staleThreshold)));

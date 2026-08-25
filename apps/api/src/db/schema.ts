@@ -1,4 +1,4 @@
-import { pgTable, text, timestamp, integer, jsonb, pgEnum, boolean, real } from 'drizzle-orm/pg-core';
+import { pgTable, text, timestamp, integer, jsonb, pgEnum, boolean, real, index } from 'drizzle-orm/pg-core';
 import { relations } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 
@@ -98,7 +98,9 @@ export const knowledgeDocuments = pgTable('knowledge_documents', {
   summary: text('summary'), // AI-generated summary
   sizeBytes: integer('size_bytes'),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
-});
+}, (t) => ({
+  businessIdIdx: index('knowledge_documents_business_id_idx').on(t.businessId),
+}));
 
 // ─── KB Chat History ──────────────────────────────────────────────────────────
 export const kbChats = pgTable('kb_chats', {
@@ -203,7 +205,15 @@ export const calls = pgTable('calls', {
   campaignContactId: text('campaign_contact_id'),
   startedAt: timestamp('started_at', { withTimezone: true }).defaultNow().notNull(),
   endedAt: timestamp('ended_at', { withTimezone: true }),
-});
+}, (t) => ({
+  // Call lists, analytics and the monthly plan-limit count all scope by
+  // business and order/filter by start time.
+  businessStartedIdx: index('calls_business_started_idx').on(t.businessId, t.startedAt),
+  // Prior-conversation lookup for a returning caller, on the call hot path.
+  businessCallerIdx: index('calls_business_caller_idx').on(t.businessId, t.callerNumber),
+  // Stale-ACTIVE-call sweeper, which runs every five minutes.
+  statusStartedIdx: index('calls_status_started_idx').on(t.status, t.startedAt),
+}));
 
 export const transcripts = pgTable('transcripts', {
   id: text('id').primaryKey().$defaultFn(() => randomUUID()),
@@ -214,7 +224,11 @@ export const transcripts = pgTable('transcripts', {
   emotion: text('emotion'),
   emotionScore: real('emotion_score').default(0),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
-});
+}, (t) => ({
+  // Every turn of every call reads and writes here; without this each lookup
+  // is a sequential scan of the whole table.
+  callIdIdx: index('transcripts_call_id_idx').on(t.callId),
+}));
 
 export const escalations = pgTable('escalations', {
   id: text('id').primaryKey().$defaultFn(() => randomUUID()),
@@ -243,7 +257,10 @@ export const contacts = pgTable('contacts', {
   lastCallAt: timestamp('last_call_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
-});
+}, (t) => ({
+  // Caller identification on every inbound call, plus the contacts list.
+  businessPhoneIdx: index('contacts_business_phone_idx').on(t.businessId, t.phone),
+}));
 
 // ─── Follow-ups ───────────────────────────────────────────────────────────────
 export const followUps = pgTable('follow_ups', {
@@ -354,7 +371,10 @@ export const catalogItems = pgTable('catalog_items', {
   tags: jsonb('tags').$type<string[]>().default([]).notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
-});
+}, (t) => ({
+  // Read on every call to build the products/services context.
+  businessIdIdx: index('catalog_items_business_id_idx').on(t.businessId),
+}));
 
 // ─── Callback Requests ────────────────────────────────────────────────────────
 export const callbackRequests = pgTable('callback_requests', {

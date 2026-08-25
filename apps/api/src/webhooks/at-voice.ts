@@ -6,6 +6,7 @@ import { env } from '../config/env';
 import { voiceChat, type ChatMessage } from '../services/document-extract';
 import { transcribeRecordingSnippet } from '../services/transcription';
 import { notifyBusinessOwners } from '../services/notifications';
+import { recordCallIntent, setCallIntentIfUnset } from '../services/intent';
 import { sendEscalationAlert } from '../services/whatsapp';
 import crypto from 'crypto';
 import { redis, ttsStoreSet } from '../utils/redis';
@@ -373,6 +374,7 @@ async function computeAtVoiceReply(
         customerName: appt.customerName,
         notes: appt.notes,
       }).returning({ id: appointments.id });
+      await setCallIntentIfUnset(callDbId, 'BOOKING');
       logger.info({ callDbId, appointmentId: row?.id }, 'Appointment created from call');
       await notifyBusinessOwners(callRow.businessId, 'New Appointment', `Booked for ${appt.customerName ?? appt.customerPhone ?? phone} on ${scheduledAt.toLocaleString()}`);
     }
@@ -396,6 +398,7 @@ async function computeAtVoiceReply(
       deliveryAddress: order.deliveryAddress,
       notes: order.notes,
     }).returning({ id: orders.id });
+    await setCallIntentIfUnset(callDbId, 'BOOKING');
     logger.info({ callDbId, orderId: row?.id, orderNumber }, 'Order created from call');
     await notifyBusinessOwners(callRow.businessId, 'New Order', `Order #${orderNumber} from ${order.customerName ?? order.customerPhone ?? phone}`);
   }
@@ -420,12 +423,14 @@ async function computeAtVoiceReply(
 
     await notifyBusinessOwners(callRow.businessId, 'Call Escalated', `Caller ${callerNumber ?? callRow.callerNumber ?? ''} needs your attention. ${summary}`);
     await db.update(calls).set({ status: 'COMPLETED', resolution: 'HUMAN', endedAt: new Date() }).where(eq(calls.id, callDbId));
+    await db.update(calls).set({ intent: 'ESCALATE' }).where(eq(calls.id, callDbId)).catch(() => null);
 
     return xml(`${speak}<Hangup></Hangup>`);
   }
 
   if (action === 'end') {
     await db.update(calls).set({ status: 'COMPLETED', resolution: 'AI', endedAt: new Date() }).where(eq(calls.id, callDbId));
+    recordCallIntent(callDbId).catch(() => null);
     return xml(`${speak}<Hangup></Hangup>`);
   }
 
@@ -667,6 +672,7 @@ async function handleAtCallEnd(body: Record<string, string>) {
           endedAt: new Date(),
         })
         .where(and(eq(calls.id, latestCallId), eq(calls.status, 'ACTIVE')));
+      recordCallIntent(latestCallId).catch(() => null);
     }
     logger.info({ callerNumber, durationInSeconds }, 'AT call ended');
   } catch (err) {

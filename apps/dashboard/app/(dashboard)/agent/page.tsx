@@ -28,15 +28,29 @@ const PRESET_VOICES = [
 
 const TONES = ['professional', 'friendly', 'concise', 'empathetic', 'formal'];
 
-const LANGUAGES = [
-  { code: 'en', label: 'English' },
-  { code: 'ar', label: 'Arabic (العربية)' },
-  { code: 'yo', label: 'Yoruba' },
-  { code: 'ig', label: 'Igbo' },
-  { code: 'ha', label: 'Hausa' },
-  { code: 'pcm', label: 'Nigerian Pidgin' },
-  { code: 'sw', label: 'Swahili' },
-  { code: 'fr', label: 'French' },
+interface AgentLanguage {
+  code: string;
+  label: string;
+  /** False when speech-to-text has no model for it — calls fall back to English. */
+  transcribable: boolean;
+  /** False when the agent understands the language but must reply in English. */
+  canSpeak: boolean;
+  /** 'moderate' = usable, but expect mistakes on names and numbers. */
+  accuracy?: 'good' | 'moderate' | null;
+  note?: string | null;
+}
+
+// Mirrors apps/api/src/config/languages.ts. Only used if the API call fails —
+// the server list is authoritative.
+const FALLBACK_LANGUAGES: AgentLanguage[] = [
+  { code: 'en', label: 'English', transcribable: true, canSpeak: true },
+  { code: 'pcm', label: 'Nigerian Pidgin', transcribable: true, canSpeak: true },
+  { code: 'ar', label: 'Arabic (العربية)', transcribable: true, canSpeak: true },
+  { code: 'fr', label: 'French', transcribable: true, canSpeak: true },
+  { code: 'ha', label: 'Hausa', transcribable: true, canSpeak: false, accuracy: 'good' },
+  { code: 'yo', label: 'Yoruba', transcribable: true, canSpeak: false, accuracy: 'moderate' },
+  { code: 'ig', label: 'Igbo', transcribable: true, canSpeak: false, accuracy: 'moderate' },
+  { code: 'sw', label: 'Swahili', transcribable: true, canSpeak: false, accuracy: 'moderate' },
 ];
 
 const inputCls = 'w-full px-4 py-2.5 rounded-xl border border-cream-dark bg-cream-light text-sm text-primary-dark placeholder:text-cream-dark focus:outline-none focus:border-primary/50 focus:ring-2 focus:ring-primary/10 transition-all';
@@ -81,6 +95,7 @@ export default function AgentPage() {
     businessHoursOnly: false,
     maxCallDuration: 600,
   });
+  const [languages, setLanguages] = useState<AgentLanguage[]>(FALLBACK_LANGUAGES);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -103,6 +118,15 @@ export default function AgentPage() {
   }, [token, businessId]);
 
   useEffect(() => { if (ready) load(); }, [ready, load]);
+
+  // The server decides which languages actually work; keep the static list only
+  // as a fallback so the dropdown can never claim support the pipeline lacks.
+  useEffect(() => {
+    if (!ready || !token) return;
+    apiGet<AgentLanguage[]>('/agent/languages', token)
+      .then(list => { if (list?.length) setLanguages(list); })
+      .catch(() => null);
+  }, [ready, token]);
 
   async function handleSave() {
     if (!token) return;
@@ -177,8 +201,50 @@ export default function AgentPage() {
             <div>
               <label className="block text-xs font-medium text-primary-dark mb-1.5">Language</label>
               <select className={inputCls} value={config.language} onChange={e => set('language', e.target.value)}>
-                {LANGUAGES.map(l => <option key={l.code} value={l.code}>{l.label}</option>)}
+                {languages.map(l => (
+                  <option
+                    key={l.code}
+                    value={l.code}
+                    // Languages we can't even transcribe stay visible (so an
+                    // existing setting still renders) but can't be newly chosen.
+                    disabled={!l.transcribable && config.language !== l.code}
+                  >
+                    {!l.transcribable
+                      ? `${l.label} — coming soon`
+                      : l.canSpeak
+                        ? l.label
+                        : `${l.label} — understood, agent replies in English`}
+                  </option>
+                ))}
               </select>
+              {(() => {
+                const current = languages.find(l => l.code === config.language);
+                if (!current) return null;
+
+                if (!current.transcribable) {
+                  return (
+                    <p className="text-xs text-amber-700 mt-1.5">
+                      {current.label} speech recognition isn&apos;t available yet, so these calls are
+                      handled in English. Pick a supported language to change that.
+                    </p>
+                  );
+                }
+
+                if (!current.canSpeak) {
+                  return (
+                    <p className="text-xs text-amber-700 mt-1.5">
+                      The agent understands callers speaking {current.label} and replies in English —
+                      there is no {current.label} voice for live calls yet.
+                      {current.accuracy === 'moderate' && ' Recognition is less reliable than English, so double-check names, numbers and addresses on these calls.'}
+                    </p>
+                  );
+                }
+
+                if (current.note) {
+                  return <p className="text-xs text-primary-warm mt-1.5">{current.note}</p>;
+                }
+                return null;
+              })()}
             </div>
           </div>
         )}

@@ -9,6 +9,10 @@ import { env } from '../config/env';
 import { voiceChat, type ChatMessage } from '../services/document-extract';
 import { sendEscalationAlert } from '../services/whatsapp';
 import { notifyBusinessOwners } from '../services/notifications';
+import { buildDialVerb, resolveTransferCallerId, transferConnected } from '../services/transfer';
+import { callDurationSeconds } from '../db/duration';
+import { resolutionOnHangup } from '../db/resolution';
+import { recordCallIntent, setCallIntentIfUnset } from '../services/intent';
 import { redis, ttsStoreSet } from '../utils/redis';
 import { getElevenLabsVoiceId, ELEVENLABS_VOICES, DEFAULT_VOICE } from '../config/voices';
 
@@ -571,6 +575,7 @@ async function computeTwilioTurn(callId: string, speechResult: string, baseUrl: 
         customerName: appt.customerName,
         notes: appt.notes,
       }).returning({ id: appointments.id });
+      await setCallIntentIfUnset(callId, 'BOOKING');
       logger.info({ callId, appointmentId: row?.id }, 'Appointment created from call');
       await notifyBusinessOwners(callRow.businessId, 'New Appointment', `Booked for ${appt.customerName ?? appt.customerPhone ?? phone} on ${scheduledAt.toLocaleString()}`);
     }
@@ -594,19 +599,32 @@ async function computeTwilioTurn(callId: string, speechResult: string, baseUrl: 
       deliveryAddress: order.deliveryAddress,
       notes: order.notes,
     }).returning({ id: orders.id });
+    await setCallIntentIfUnset(callId, 'BOOKING');
     logger.info({ callId, orderId: row?.id, orderNumber }, 'Order created from call');
     await notifyBusinessOwners(callRow.businessId, 'New Order', `Order #${orderNumber} from ${order.customerName ?? order.customerPhone ?? phone}`);
   }
 
   if (action === 'escalate') {
     await handleEscalation(callId, callRow.businessId, callRow.callerNumber ?? '', speechResult);
-    await db.update(calls).set({ status: 'COMPLETED', resolution: 'HUMAN', endedAt: new Date() }).where(eq(calls.id, callId));
+    await db.update(calls).set({ intent: 'ESCALATE' }).where(eq(calls.id, callId)).catch(() => null);
     const speak = await speakTag(reply, agentRow?.voiceId, agentRow?.clonedVoiceId, language, baseUrl, 8000);
+
+    // Transfer the caller to a human rather than hanging up on them. The dial
+    // action callback records the outcome and final resolution.
+    const escalationNumber = kbRow?.escalationNumber?.trim();
+    if (escalationNumber) {
+      const callerId = await resolveTransferCallerId(callRow.businessId).catch(() => null);
+      logger.info({ callId, callerId }, 'Transferring call to human (gather path)');
+      return twiml(speak + buildDialVerb({ escalationNumber, callerId, callId, baseUrl }));
+    }
+
+    await db.update(calls).set({ status: 'COMPLETED', resolution: 'HUMAN', duration: callDurationSeconds(), endedAt: new Date() }).where(eq(calls.id, callId));
     return twiml(`${speak}<Hangup/>`);
   }
 
   if (action === 'end') {
-    await db.update(calls).set({ status: 'COMPLETED', resolution: 'AI', endedAt: new Date() }).where(eq(calls.id, callId));
+    await db.update(calls).set({ status: 'COMPLETED', resolution: 'AI', duration: callDurationSeconds(), endedAt: new Date() }).where(eq(calls.id, callId));
+    recordCallIntent(callId).catch(() => null);
     const speak = await speakTag(reply, agentRow?.voiceId, agentRow?.clonedVoiceId, language, baseUrl, 8000);
     return twiml(`${speak}<Hangup/>`);
   }
@@ -657,16 +675,26 @@ export async function handleTwilioVoiceWebhook(req: Request, res: Response) {
       return res.send(twiml('<Say voice="alice">Sorry, this service is currently unavailable. Please contact the business directly.</Say><Hangup/>'));
     }
 
-    if (bizRow?.createdAt) {
-      const plan = buildPlanFromBusinessRow({ subscriptionTier: bizRow.subscriptionTier ?? null, createdAt: bizRow.createdAt });
-      if (plan.limits.callsPerMonth != null) {
-        const startOfMonth = new Date(); startOfMonth.setDate(1); startOfMonth.setHours(0, 0, 0, 0);
-        const [count] = await db.select({ n: sql<number>`count(*)` }).from(calls)
-          .where(and(eq(calls.businessId, businessId), gte(calls.startedAt, startOfMonth)));
-        if (Number(count?.n ?? 0) >= plan.limits.callsPerMonth) {
-          const msg = 'Sorry, this business has reached its monthly call limit. Please call again later.';
-          return res.send(twiml(`<Say voice="alice">${escapeXml(msg)}</Say><Hangup/>`));
-        }
+    const plan = bizRow?.createdAt
+      ? buildPlanFromBusinessRow({ subscriptionTier: bizRow.subscriptionTier ?? null, createdAt: bizRow.createdAt })
+      : null;
+    const callsPerMonth = plan?.limits.callsPerMonth ?? null;
+    const startOfMonth = new Date(); startOfMonth.setDate(1); startOfMonth.setHours(0, 0, 0, 0);
+    const overLimitResponse = twiml(
+      `<Say voice="alice">${escapeXml('Sorry, this business has reached its monthly call limit. Please call again later.')}</Say><Hangup/>`,
+    );
+
+    // Monthly allowance is enforced twice, deliberately. Here, so a caller on an
+    // exhausted plan is turned away before we create a contact row; and again
+    // atomically inside the call INSERT below, because this driver has no
+    // transactions and simultaneous calls would otherwise all pass this check
+    // and every one of them would be admitted.
+    if (callsPerMonth != null) {
+      const [count] = await db.select({ n: sql<number>`count(*)` }).from(calls)
+        .where(and(eq(calls.businessId, businessId), gte(calls.startedAt, startOfMonth)));
+      if (Number(count?.n ?? 0) >= callsPerMonth) {
+        logger.info({ businessId, callsPerMonth }, 'Inbound call rejected — monthly limit reached');
+        return res.send(overLimitResponse);
       }
     }
 
@@ -686,25 +714,37 @@ export async function handleTwilioVoiceWebhook(req: Request, res: Response) {
       if (created) contactRow = { id: created.id, name: created.name ?? null, location: created.location ?? null, totalCalls: created.totalCalls ?? 1 };
     }
 
-    // Create call record
-    const [callRow] = await db.insert(calls).values({
-      businessId,
-      contactId: contactRow?.id ?? null,
-      callerNumber: fromNumber,
-      callerName: contactRow?.name ?? null,
-      callerLocation: contactRow?.location ?? null,
-      awaitingProfile: !contactRow?.name,
-      status: 'ACTIVE',
-    }).returning({ id: calls.id });
+    // Create the call record, re-checking the allowance in the same statement so
+    // the count and the insert cannot interleave. If the row is not returned,
+    // another concurrent call took the last slot between the check above and here.
+    const newCallId = crypto.randomUUID();
+    const limitGuard = callsPerMonth == null
+      ? sql`true`
+      : sql`(SELECT count(*) FROM ${calls} WHERE ${calls.businessId} = ${businessId} AND ${calls.startedAt} >= ${startOfMonth.toISOString()}::timestamptz) < ${callsPerMonth}`;
 
-    const callId = callRow?.id ?? '';
+    const insertResult = await db.execute(sql`
+      INSERT INTO ${calls} (id, business_id, contact_id, caller_number, caller_name, caller_location, awaiting_profile, status)
+      SELECT ${newCallId}::text, ${businessId}::text, ${contactRow?.id ?? null}::text, ${fromNumber}::text,
+             ${contactRow?.name ?? null}::text, ${contactRow?.location ?? null}::text,
+             ${!contactRow?.name}::boolean, 'ACTIVE'::call_status
+      WHERE ${limitGuard}
+      RETURNING id
+    `);
+
+    const insertedRows = (insertResult as unknown as { rows?: unknown[] })?.rows
+      ?? (insertResult as unknown as unknown[]);
+    if (!Array.isArray(insertedRows) || insertedRows.length === 0) {
+      logger.warn({ businessId, callsPerMonth }, 'Inbound call rejected — monthly limit reached during insert race');
+      return res.send(overLimitResponse);
+    }
+
+    const callId = newCallId;
     logger.info({ businessId, fromNumber, toNumber, callSid, callId }, 'Inbound Twilio call answered — starting Realtime stream');
 
     // Build stream URL (https → wss)
     const wsUrl = baseUrl.replace(/^http/, 'ws') + `/webhooks/twilio/voice/stream`;
 
     // Optional call recording (runs alongside the stream)
-    const plan = bizRow?.createdAt ? buildPlanFromBusinessRow({ subscriptionTier: bizRow.subscriptionTier ?? null, createdAt: bizRow.createdAt }) : null;
     const canRecord = (plan?.features.callRecording ?? true) && (agentRow?.enableRecording ?? true);
     const record = canRecord
       ? `<Start><Record recordingStatusCallback="${escapeXml(`${baseUrl}/webhooks/twilio/voice/recording?callId=${encodeURIComponent(callId)}`)}" recordingStatusCallbackMethod="POST" recordingChannels="dual" /></Start>`
@@ -864,8 +904,14 @@ export async function handleTwilioVoiceEnd(req: Request, res: Response) {
   try {
     const idToUpdate = callId ?? await findLatestActiveCallIdByNumber(toNumber, fromNumber);
     if (idToUpdate) {
-      await db.update(calls).set({ status: 'COMPLETED', resolution: 'AI', duration: callDuration, endedAt: new Date() })
-        .where(and(eq(calls.id, idToUpdate), eq(calls.status, 'ACTIVE')));
+      // Same rule as the streaming path: only a real exchange counts as AI.
+      await db.update(calls).set({
+        status: 'COMPLETED',
+        resolution: resolutionOnHangup(),
+        duration: callDuration,
+        endedAt: new Date(),
+      }).where(and(eq(calls.id, idToUpdate), eq(calls.status, 'ACTIVE')));
+      recordCallIntent(idToUpdate).catch(() => null);
     }
     logger.info({ fromNumber, toNumber, callDuration, callSid: callSid || null }, 'Twilio call ended');
 
@@ -937,6 +983,56 @@ export async function handleTwilioVoiceRecording(req: Request, res: Response) {
   } catch (err) {
     logger.error({ err, callId }, 'Failed to store call recording');
   }
+}
+
+/**
+ * `<Dial action=...>` callback for escalation transfers.
+ *
+ * Fires once the dial attempt finishes, whether or not a human answered. This is
+ * where the call record gets its final resolution: HUMAN when someone picked up,
+ * ABANDONED when the transfer failed — the caller reached neither the AI nor a
+ * person, and the escalation stays OPEN so the owner follows up.
+ */
+export async function handleTwilioVoiceTransferStatus(req: Request, res: Response) {
+  res.set('Content-Type', 'text/xml');
+
+  const callId = typeof req.query.callId === 'string' ? req.query.callId : '';
+  const dialCallStatus = (req.body.DialCallStatus as string | undefined) ?? '';
+  const dialDuration = parseInt((req.body.DialCallDuration as string | undefined) ?? '0', 10) || 0;
+  const totalDuration = parseInt((req.body.CallDuration as string | undefined) ?? '0', 10) || null;
+  const connected = transferConnected(dialCallStatus);
+
+  logger.info({ callId, dialCallStatus, dialDuration, connected }, 'Escalation transfer finished');
+
+  try {
+    if (callId) {
+      await db.update(calls).set({
+        status: 'COMPLETED',
+        resolution: connected ? 'HUMAN' : 'ABANDONED',
+        // Twilio only reliably sends CallDuration on status callbacks, not on
+        // the dial action — fall back to wall-clock since the call started.
+        duration: totalDuration ?? callDurationSeconds(),
+        endedAt: new Date(),
+      }).where(eq(calls.id, callId));
+
+      if (connected) {
+        // Someone picked up — the escalation is being handled.
+        await db.update(escalations).set({ status: 'ASSIGNED' })
+          .where(eq(escalations.callId, callId)).catch(() => null);
+      }
+    }
+  } catch (err) {
+    logger.error({ err, callId, dialCallStatus }, 'Failed to record transfer outcome');
+  }
+
+  if (connected) {
+    // The bridged call already ended when either party hung up.
+    return res.send(twiml('<Hangup/>'));
+  }
+
+  // Nobody answered — tell the caller rather than dropping them silently.
+  const message = 'Sorry, no one is available to take your call right now. The team has been notified and will get back to you shortly.';
+  return res.send(twiml(`<Say voice="alice">${escapeXml(message)}</Say><Hangup/>`));
 }
 
 export async function handleTwilioVoiceStatus(req: Request, res: Response) {
@@ -1140,7 +1236,7 @@ export async function handleTwilioOutboundVoice(req: Request, res: Response) {
           voicemailText = `${greeting}this is ${agent?.name ?? 'an assistant'} from ${biz?.name ?? 'us'}. I was calling regarding ${camp?.goal ?? 'a follow-up'}. Please call us back when you get a chance. Thank you.`;
         }
       }
-      await db.update(calls).set({ endedAt: new Date(), status: 'COMPLETED' }).where(eq(calls.id, callId));
+      await db.update(calls).set({ endedAt: new Date(), status: 'COMPLETED', duration: callDurationSeconds() }).where(eq(calls.id, callId));
       return res.send(twiml(`<Say voice="alice">${escapeXml(voicemailText)}</Say><Hangup/>`));
     } catch (err) {
       logger.error({ err, callId }, 'Error handling outbound voicemail');
